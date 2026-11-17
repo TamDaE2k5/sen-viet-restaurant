@@ -6,10 +6,11 @@ import { DesktopShell } from './components/layout/DesktopShell';
 import { Dashboard } from './components/dashboard/Dashboard';
 import { KitchenModule } from './components/kitchen/KitchenModule';
 import { ReconciliationModule } from './components/reconciliation/ReconciliationModule';
+import { HRModule } from './components/hr/HRModule';
 import { Loader2 } from 'lucide-react';
 
 export const App: React.FC = () => {
-  const { isAuthenticated, isLoading, isKitchen, isAccountant } = useAuth();
+  const { user, isAuthenticated, isLoading, isKitchen, isAccountant } = useAuth();
   // Nếu là tài khoản bếp thì tab mặc định là 'kitchen', kế toán là 'reconciliation', ngược lại là 'dashboard'
   const [mobileTab, setMobileTab] = useState(isKitchen ? 'kitchen' : 'dashboard');
   const [desktopMenu, setDesktopMenu] = useState(isKitchen ? 'kitchen' : (isAccountant ? 'reconciliation' : 'dashboard'));
@@ -40,10 +41,13 @@ export const App: React.FC = () => {
             <KitchenModule />
           ) : mobileTab === 'reconciliation' ? (
             <ReconciliationModule />
+          ) : mobileTab === 'attendance' || mobileTab === 'exam' || mobileTab === 'hr-attendance' ? (
+            <HRModule currentUser={user} />
           ) : (
             <Dashboard
               onNavigateToKitchen={() => setMobileTab('kitchen')}
               onNavigateToReconciliation={() => setMobileTab('reconciliation')}
+              onNavigateToHR={() => setMobileTab('hr-attendance')}
             />
           )}
         </MobileShell>
@@ -56,10 +60,13 @@ export const App: React.FC = () => {
             <KitchenModule />
           ) : desktopMenu === 'reconciliation' ? (
             <ReconciliationModule />
+          ) : desktopMenu === 'hr-attendance' ? (
+            <HRModule currentUser={user} />
           ) : (
             <Dashboard
               onNavigateToKitchen={() => setDesktopMenu('kitchen')}
               onNavigateToReconciliation={() => setDesktopMenu('reconciliation')}
+              onNavigateToHR={() => setDesktopMenu('hr-attendance')}
             />
           )}
         </DesktopShell>

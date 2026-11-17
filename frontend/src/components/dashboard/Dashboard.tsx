@@ -14,9 +14,14 @@ import {
 interface DashboardProps {
   onNavigateToKitchen?: () => void;
   onNavigateToReconciliation?: () => void;
+  onNavigateToHR?: () => void;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ onNavigateToKitchen, onNavigateToReconciliation }) => {
+export const Dashboard: React.FC<DashboardProps> = ({
+  onNavigateToKitchen,
+  onNavigateToReconciliation,
+  onNavigateToHR,
+}) => {
   const { user, isKitchen, isManager, isAccountant } = useAuth();
 
   if (!user) return null;
@@ -153,16 +158,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigateToKitchen, onNav
             </span>
           </div>
 
-          <div className="p-5 rounded-xl bg-white border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+          <div
+            onClick={onNavigateToHR}
+            className="p-5 rounded-xl bg-white border border-slate-200 shadow-sm hover:shadow-md transition-shadow cursor-pointer hover:border-purple-500"
+          >
             <div className="h-10 w-10 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center mb-3">
               <Clock className="h-6 w-6" />
             </div>
             <h4 className="font-semibold text-slate-900 text-sm">Giai Đoạn 4: Chấm Công GPS & Nhân Sự</h4>
             <p className="text-xs text-slate-500 mt-1">
-              Geofencing &lt; 50m, thi nghề theo giờ máy chủ, cảnh báo bỏ việc và thu hồi đồng phục.
+              Geofencing &lt; 100m, thi nghề theo giờ máy chủ, cảnh báo bỏ việc và thu hồi đồng phục.
             </p>
             <span className="inline-block mt-3 px-2 py-0.5 text-[11px] font-semibold text-purple-700 bg-purple-100 rounded">
-              📍 Phase 4
+              ✅ Hoàn Thành (Phase 4)
             </span>
           </div>
 
