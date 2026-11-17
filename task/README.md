@@ -12,8 +12,8 @@
 
 | Giai đoạn | Tên phân hệ / Giai đoạn | File chi tiết | Số task | Trạng thái | Tiến độ |
 | :---: | :--- | :--- | :---: | :---: | :---: |
-| **P1** | [Khởi tạo Kiến trúc & Hạ tầng Docker](file:///run/media/tamdae/Data/Source%20code/restaurant_project/task/phase-1-infrastructure.md) | `phase-1-infrastructure.md` | 6 | ⏳ Sẵn sàng | 0% |
-| **P2** | [Phân hệ Bếp 4 Nút & Chế Biến Mẻ](file:///run/media/tamdae/Data/Source%20code/restaurant_project/task/phase-2-kitchen-module.md) | `phase-2-kitchen-module.md` | 6 | ⏳ Chờ P1 | 0% |
+| **P1** | [Khởi tạo Kiến trúc & Hạ tầng Docker](file:///run/media/tamdae/Data/Source%20code/restaurant_project/task/phase-1-infrastructure.md) | `phase-1-infrastructure.md` | 6 | ✅ Hoàn thành | 100% |
+| **P2** | [Phân hệ Bếp 4 Nút & Chế Biến Mẻ](file:///run/media/tamdae/Data/Source%20code/restaurant_project/task/phase-2-kitchen-module.md) | `phase-2-kitchen-module.md` | 6 | ⏳ Sẵn sàng | 0% |
 | **P3** | [Động cơ Chống Thất Thoát & Bảng Cuối Ngày](file:///run/media/tamdae/Data/Source%20code/restaurant_project/task/phase-3-anti-loss-reconcile.md) | `phase-3-anti-loss-reconcile.md` | 6 | ⏳ Chờ P2 | 0% |
 | **P4** | [Chấm Công GPS & Quy Trình Nhân Sự](file:///run/media/tamdae/Data/Source%20code/restaurant_project/task/phase-4-hr-attendance.md) | `phase-4-hr-attendance.md` | 6 | ⏳ Chờ P1 | 0% |
 | **P5** | [Ứng Lương & Bảng Lương Tự Động](file:///run/media/tamdae/Data/Source%20code/restaurant_project/task/phase-5-payroll-advance.md) | `phase-5-payroll-advance.md` | 6 | ⏳ Chờ P4 | 0% |
