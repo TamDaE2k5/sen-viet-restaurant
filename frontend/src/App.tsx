@@ -5,13 +5,14 @@ import { MobileShell } from './components/layout/MobileShell';
 import { DesktopShell } from './components/layout/DesktopShell';
 import { Dashboard } from './components/dashboard/Dashboard';
 import { KitchenModule } from './components/kitchen/KitchenModule';
+import { ReconciliationModule } from './components/reconciliation/ReconciliationModule';
 import { Loader2 } from 'lucide-react';
 
 export const App: React.FC = () => {
-  const { isAuthenticated, isLoading, isKitchen } = useAuth();
-  // Nếu là tài khoản bếp thì tab mặc định là 'kitchen', ngược lại là 'dashboard'
+  const { isAuthenticated, isLoading, isKitchen, isAccountant } = useAuth();
+  // Nếu là tài khoản bếp thì tab mặc định là 'kitchen', kế toán là 'reconciliation', ngược lại là 'dashboard'
   const [mobileTab, setMobileTab] = useState(isKitchen ? 'kitchen' : 'dashboard');
-  const [desktopMenu, setDesktopMenu] = useState(isKitchen ? 'kitchen' : 'dashboard');
+  const [desktopMenu, setDesktopMenu] = useState(isKitchen ? 'kitchen' : (isAccountant ? 'reconciliation' : 'dashboard'));
 
   if (isLoading) {
     return (
@@ -37,8 +38,13 @@ export const App: React.FC = () => {
         <MobileShell activeTab={mobileTab} onTabChange={setMobileTab}>
           {mobileTab === 'kitchen' ? (
             <KitchenModule />
+          ) : mobileTab === 'reconciliation' ? (
+            <ReconciliationModule />
           ) : (
-            <Dashboard onNavigateToKitchen={() => setMobileTab('kitchen')} />
+            <Dashboard
+              onNavigateToKitchen={() => setMobileTab('kitchen')}
+              onNavigateToReconciliation={() => setMobileTab('reconciliation')}
+            />
           )}
         </MobileShell>
       </div>
@@ -48,8 +54,13 @@ export const App: React.FC = () => {
         <DesktopShell activeMenu={desktopMenu} onMenuChange={setDesktopMenu}>
           {desktopMenu === 'kitchen' ? (
             <KitchenModule />
+          ) : desktopMenu === 'reconciliation' ? (
+            <ReconciliationModule />
           ) : (
-            <Dashboard onNavigateToKitchen={() => setDesktopMenu('kitchen')} />
+            <Dashboard
+              onNavigateToKitchen={() => setDesktopMenu('kitchen')}
+              onNavigateToReconciliation={() => setDesktopMenu('reconciliation')}
+            />
           )}
         </DesktopShell>
       </div>

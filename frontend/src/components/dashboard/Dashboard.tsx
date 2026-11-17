@@ -13,9 +13,10 @@ import {
 
 interface DashboardProps {
   onNavigateToKitchen?: () => void;
+  onNavigateToReconciliation?: () => void;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ onNavigateToKitchen }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ onNavigateToKitchen, onNavigateToReconciliation }) => {
   const { user, isKitchen, isManager, isAccountant } = useAuth();
 
   if (!user) return null;
@@ -136,7 +137,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigateToKitchen }) => 
             </span>
           </div>
 
-          <div className="p-5 rounded-xl bg-white border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+          <div
+            onClick={onNavigateToReconciliation}
+            className="p-5 rounded-xl bg-white border border-slate-200 shadow-sm hover:shadow-md transition-shadow cursor-pointer hover:border-blue-500"
+          >
             <div className="h-10 w-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center mb-3">
               <FileSpreadsheet className="h-6 w-6" />
             </div>
@@ -145,7 +149,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigateToKitchen }) => 
               Đọc file Excel doanh thu, 6 công thức đối soát kho và cảnh báo đỏ thất thoát &gt; 300k.
             </p>
             <span className="inline-block mt-3 px-2 py-0.5 text-[11px] font-semibold text-blue-700 bg-blue-100 rounded">
-              📊 Phase 3
+              ✅ Hoàn Thành (Phase 3)
             </span>
           </div>
 
