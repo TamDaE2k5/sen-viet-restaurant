@@ -7,7 +7,7 @@
 
 ## Danh Sách Công Việc (Tasks)
 
-- [ ] **Task 1.1: Khởi tạo Cấu trúc Dự án & Docker Compose**
+- [x] **Task 1.1: Khởi tạo Cấu trúc Dự án & Docker Compose**
   - **Mô tả**: Tạo thư mục `backend/`, `frontend/`, file `docker-compose.yml` tích hợp 3 services (`postgres`, `backend`, `frontend`), cùng file `.env.example`.
   - **Tiêu chí nghiệm thu**: Lệnh `docker compose up -d` khởi động PostgreSQL 16 port 5432 và container giữ dữ liệu qua volume `postgres_data`.
   - **Độ ưu tiên**: P0 (Bắt buộc)
