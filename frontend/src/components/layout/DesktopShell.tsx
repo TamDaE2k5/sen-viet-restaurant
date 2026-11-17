@@ -1,6 +1,6 @@
 import React, { ReactNode } from 'react';
 import { Navbar } from './Navbar';
-import { LayoutDashboard, FileSpreadsheet, Users, Wallet, Settings } from 'lucide-react';
+import { LayoutDashboard, Flame, FileSpreadsheet, Users, Wallet, Settings } from 'lucide-react';
 
 interface DesktopShellProps {
   children: ReactNode;
@@ -15,6 +15,7 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({
 }) => {
   const menuItems = [
     { id: 'dashboard', label: 'Tổng quan Hệ thống', icon: LayoutDashboard },
+    { id: 'kitchen', label: 'Bếp 4 Nút & Cân Mẻ', icon: Flame },
     { id: 'reconciliation', label: 'Đối soát Cuối ngày (CukCuk)', icon: FileSpreadsheet },
     { id: 'kitchen-monitor', label: 'Giám sát Kho Bếp', icon: Settings },
     { id: 'hr-attendance', label: 'Nhân sự & Chấm công GPS', icon: Users },

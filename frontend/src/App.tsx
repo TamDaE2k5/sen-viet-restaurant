@@ -4,12 +4,14 @@ import { LoginPage } from './components/auth/LoginPage';
 import { MobileShell } from './components/layout/MobileShell';
 import { DesktopShell } from './components/layout/DesktopShell';
 import { Dashboard } from './components/dashboard/Dashboard';
+import { KitchenModule } from './components/kitchen/KitchenModule';
 import { Loader2 } from 'lucide-react';
 
 export const App: React.FC = () => {
   const { isAuthenticated, isLoading, isKitchen } = useAuth();
-  const [mobileTab, setMobileTab] = useState('kitchen');
-  const [desktopMenu, setDesktopMenu] = useState('dashboard');
+  // Nếu là tài khoản bếp thì tab mặc định là 'kitchen', ngược lại là 'dashboard'
+  const [mobileTab, setMobileTab] = useState(isKitchen ? 'kitchen' : 'dashboard');
+  const [desktopMenu, setDesktopMenu] = useState(isKitchen ? 'kitchen' : 'dashboard');
 
   if (isLoading) {
     return (
@@ -33,14 +35,22 @@ export const App: React.FC = () => {
       {/* Viewport Mobile / Tablet nhỏ */}
       <div className="block lg:hidden">
         <MobileShell activeTab={mobileTab} onTabChange={setMobileTab}>
-          <Dashboard />
+          {mobileTab === 'kitchen' ? (
+            <KitchenModule />
+          ) : (
+            <Dashboard onNavigateToKitchen={() => setMobileTab('kitchen')} />
+          )}
         </MobileShell>
       </div>
 
       {/* Viewport Desktop */}
       <div className="hidden lg:block">
         <DesktopShell activeMenu={desktopMenu} onMenuChange={setDesktopMenu}>
-          <Dashboard />
+          {desktopMenu === 'kitchen' ? (
+            <KitchenModule />
+          ) : (
+            <Dashboard onNavigateToKitchen={() => setDesktopMenu('kitchen')} />
+          )}
         </DesktopShell>
       </div>
     </>

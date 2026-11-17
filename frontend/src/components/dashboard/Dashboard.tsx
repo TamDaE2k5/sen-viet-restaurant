@@ -11,7 +11,11 @@ import {
   ArrowUpRight,
 } from 'lucide-react';
 
-export const Dashboard: React.FC = () => {
+interface DashboardProps {
+  onNavigateToKitchen?: () => void;
+}
+
+export const Dashboard: React.FC<DashboardProps> = ({ onNavigateToKitchen }) => {
   const { user, isKitchen, isManager, isAccountant } = useAuth();
 
   if (!user) return null;
@@ -45,11 +49,25 @@ export const Dashboard: React.FC = () => {
       {/* Phân hệ thao tác nhanh cho Bếp */}
       {isKitchen && (
         <div className="space-y-3">
-          <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500">
-            Khu Vực Bếp & Bar (Thao Tác Nhanh)
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500">
+              Khu Vực Bếp & Bar (Thao Tác Nhanh)
+            </h3>
+            {onNavigateToKitchen && (
+              <button
+                onClick={onNavigateToKitchen}
+                className="text-xs font-bold text-brand-600 hover:text-brand-700 flex items-center gap-1"
+              >
+                <span>Mở Giao Diện 4 Nút</span>
+                <ArrowUpRight className="h-4 w-4" />
+              </button>
+            )}
+          </div>
           <div className="grid grid-cols-2 gap-3">
-            <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex flex-col justify-between">
+            <div
+              onClick={onNavigateToKitchen}
+              className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex flex-col justify-between cursor-pointer hover:border-brand-500 transition-all"
+            >
               <div className="flex items-center gap-2 text-brand-600 font-bold text-sm">
                 <Flame className="h-5 w-5" />
                 <span>Mẻ Chế Biến</span>
@@ -58,12 +76,15 @@ export const Dashboard: React.FC = () => {
                 Cân mẻ đầu vào, thành phẩm và cảnh báo mẻ 2
               </p>
               <div className="mt-3 text-xs font-semibold text-brand-600 flex items-center gap-1">
-                <span>Sẵn sàng ở Phase 2</span>
+                <span>Vào thực hiện</span>
                 <ArrowUpRight className="h-4 w-4" />
               </div>
             </div>
 
-            <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex flex-col justify-between">
+            <div
+              onClick={onNavigateToKitchen}
+              className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex flex-col justify-between cursor-pointer hover:border-blue-500 transition-all"
+            >
               <div className="flex items-center gap-2 text-blue-600 font-bold text-sm">
                 <CheckCircle2 className="h-5 w-5" />
                 <span>Ra Line (+1)</span>
@@ -72,7 +93,7 @@ export const Dashboard: React.FC = () => {
                 Ghi nhận đĩa ra quầy buffet với chống double-click
               </p>
               <div className="mt-3 text-xs font-semibold text-blue-600 flex items-center gap-1">
-                <span>Sẵn sàng ở Phase 2</span>
+                <span>Vào thực hiện</span>
                 <ArrowUpRight className="h-4 w-4" />
               </div>
             </div>
@@ -99,16 +120,19 @@ export const Dashboard: React.FC = () => {
             </span>
           </div>
 
-          <div className="p-5 rounded-xl bg-white border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-            <div className="h-10 w-10 rounded-lg bg-orange-50 text-orange-600 flex items-center justify-center mb-3">
+          <div
+            onClick={onNavigateToKitchen}
+            className="p-5 rounded-xl bg-white border border-slate-200 shadow-sm hover:shadow-md transition-shadow cursor-pointer hover:border-emerald-500"
+          >
+            <div className="h-10 w-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center mb-3">
               <Flame className="h-6 w-6" />
             </div>
             <h4 className="font-semibold text-slate-900 text-sm">Giai Đoạn 2: Phân Hệ Bếp Di Động</h4>
             <p className="text-xs text-slate-500 mt-1">
               Màn hình 4 nút bấm lớn, cảnh báo mẻ 2, cân hao hụt % loss và nén ảnh báo hỏng.
             </p>
-            <span className="inline-block mt-3 px-2 py-0.5 text-[11px] font-semibold text-orange-700 bg-orange-100 rounded">
-              🚀 Kế tiếp (Phase 2)
+            <span className="inline-block mt-3 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 bg-emerald-100 rounded">
+              ✅ Hoàn Thành (Phase 2)
             </span>
           </div>
 
