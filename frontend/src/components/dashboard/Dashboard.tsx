@@ -15,12 +15,14 @@ interface DashboardProps {
   onNavigateToKitchen?: () => void;
   onNavigateToReconciliation?: () => void;
   onNavigateToHR?: () => void;
+  onNavigateToPayroll?: () => void;
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({
   onNavigateToKitchen,
   onNavigateToReconciliation,
   onNavigateToHR,
+  onNavigateToPayroll,
 }) => {
   const { user, isKitchen, isManager, isAccountant } = useAuth();
 
@@ -174,7 +176,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </span>
           </div>
 
-          <div className="p-5 rounded-xl bg-white border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+          <div
+            onClick={onNavigateToPayroll}
+            className="p-5 rounded-xl bg-white border border-slate-200 shadow-sm hover:shadow-md transition-shadow cursor-pointer hover:border-amber-500"
+          >
             <div className="h-10 w-10 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center mb-3">
               <Wallet className="h-6 w-6" />
             </div>
@@ -183,7 +188,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               Ứng lương duyệt thực chi, tự động tăng lương thi đỗ và xuất file chuyển khoản ngân hàng.
             </p>
             <span className="inline-block mt-3 px-2 py-0.5 text-[11px] font-semibold text-amber-700 bg-amber-100 rounded">
-              💰 Phase 5
+              ✅ Hoàn Thành (Phase 5)
             </span>
           </div>
 

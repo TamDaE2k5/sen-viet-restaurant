@@ -45,6 +45,19 @@ public class User extends BaseEntity {
     @Builder.Default
     private String status = "ACTIVE";
 
+    @Column(name = "bank_name", length = 100)
+    private String bankName;
+
+    @Column(name = "bank_account_number", length = 50)
+    private String bankAccountNumber;
+
+    @Column(name = "bank_account_holder", length = 150)
+    private String bankAccountHolder;
+
+    @Column(name = "base_salary", precision = 15, scale = 2)
+    @Builder.Default
+    private java.math.BigDecimal baseSalary = new java.math.BigDecimal("7500000.00");
+
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(
         name = "user_roles",

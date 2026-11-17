@@ -7,6 +7,7 @@ import { Dashboard } from './components/dashboard/Dashboard';
 import { KitchenModule } from './components/kitchen/KitchenModule';
 import { ReconciliationModule } from './components/reconciliation/ReconciliationModule';
 import { HRModule } from './components/hr/HRModule';
+import { PayrollModule } from './components/payroll/PayrollModule';
 import { Loader2 } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -43,11 +44,14 @@ export const App: React.FC = () => {
             <ReconciliationModule />
           ) : mobileTab === 'attendance' || mobileTab === 'exam' || mobileTab === 'hr-attendance' ? (
             <HRModule currentUser={user} />
+          ) : mobileTab === 'payroll' || mobileTab === 'profile' ? (
+            <PayrollModule currentUser={user} />
           ) : (
             <Dashboard
               onNavigateToKitchen={() => setMobileTab('kitchen')}
               onNavigateToReconciliation={() => setMobileTab('reconciliation')}
               onNavigateToHR={() => setMobileTab('hr-attendance')}
+              onNavigateToPayroll={() => setMobileTab('payroll')}
             />
           )}
         </MobileShell>
@@ -62,11 +66,14 @@ export const App: React.FC = () => {
             <ReconciliationModule />
           ) : desktopMenu === 'hr-attendance' ? (
             <HRModule currentUser={user} />
+          ) : desktopMenu === 'payroll' ? (
+            <PayrollModule currentUser={user} />
           ) : (
             <Dashboard
               onNavigateToKitchen={() => setDesktopMenu('kitchen')}
               onNavigateToReconciliation={() => setDesktopMenu('reconciliation')}
               onNavigateToHR={() => setDesktopMenu('hr-attendance')}
+              onNavigateToPayroll={() => setDesktopMenu('payroll')}
             />
           )}
         </DesktopShell>
