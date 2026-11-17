@@ -17,7 +17,7 @@
 | **P3** | [Động cơ Chống Thất Thoát & Bảng Cuối Ngày](file:///run/media/tamdae/Data/Source%20code/restaurant_project/task/phase-3-anti-loss-reconcile.md) | `phase-3-anti-loss-reconcile.md` | 6 | ✅ Hoàn thành | 100% |
 | **P4** | [Chấm Công GPS & Quy Trình Nhân Sự](file:///run/media/tamdae/Data/Source%20code/restaurant_project/task/phase-4-hr-attendance.md) | `phase-4-hr-attendance.md` | 6 | ✅ Hoàn thành | 100% |
 | **P5** | [Ứng Lương & Bảng Lương Tự Động](file:///run/media/tamdae/Data/Source%20code/restaurant_project/task/phase-5-payroll-advance.md) | `phase-5-payroll-advance.md` | 6 | ✅ Hoàn thành | 100% |
-| **P6** | [Kiểm Thử E2E, Seed Data & Đóng Gói Demo](file:///run/media/tamdae/Data/Source%20code/restaurant_project/task/phase-6-testing-deployment.md) | `phase-6-testing-deployment.md` | 6 | ⏳ Chờ P1-P5 | 0% |
+| **P6** | [Kiểm Thử E2E, Seed Data & Đóng Gói Demo](file:///run/media/tamdae/Data/Source%20code/restaurant_project/task/phase-6-testing-deployment.md) | `phase-6-testing-deployment.md` | 6 | ✅ Hoàn thành | 100% |
 
 ---
 
