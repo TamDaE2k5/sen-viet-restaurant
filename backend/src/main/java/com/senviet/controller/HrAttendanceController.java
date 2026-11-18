@@ -106,6 +106,16 @@ public class HrAttendanceController {
         return ResponseEntity.ok(ApiResponse.ok("Đã xác nhận nhân viên tự ý bỏ việc", res));
     }
 
+    @PostMapping({"/abandoned/{id}/cancel", "/attendance/abandoned/{id}/cancel"})
+    @PreAuthorize("hasRole('ROLE_GENERAL_ACCOUNTANT')")
+    @Operation(summary = "Kế toán tổng hủy xác nhận bỏ việc nhầm", description = "Khôi phục trạng thái nhân viên về ACTIVE và tính toán lại lương tháng")
+    public ResponseEntity<ApiResponse<ResignationRequest>> cancelAbandonment(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+        ResignationRequest res = attendanceService.cancelAbandonment(id, currentUser);
+        return ResponseEntity.ok(ApiResponse.ok("Đã hủy xác nhận bỏ việc nhầm và khôi phục nhân viên thành công", res));
+    }
+
     // ==========================================
     // 2. KỲ THI ĐỊNH KỲ TRỰC TUYẾN
     // ==========================================

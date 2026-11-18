@@ -6,6 +6,7 @@ import com.senviet.domain.entity.ResignationRequest;
 import com.senviet.domain.entity.UniformAllocation;
 import com.senviet.domain.entity.UniformItem;
 import com.senviet.domain.entity.User;
+import com.senviet.domain.repository.PayrollRepository;
 import com.senviet.domain.repository.ResignationRequestRepository;
 import com.senviet.domain.repository.UniformAllocationRepository;
 import com.senviet.domain.repository.UniformItemRepository;
@@ -26,7 +27,7 @@ import java.util.stream.Collectors;
  * Nghiệp vụ cốt lõi:
  * - Khi nhân viên nghỉ việc, bắt buộc phải trả lại 100% đồng phục đã cấp.
  * - Nếu thiếu dù chỉ 1 món, hệ thống tự động gắn trạng thái 'DANG_GIU_LUONG'
- *   để kế toán khóa thanh toán đợt lương cuối.
+ *   kèm chi tiết danh sách thiếu: 'Đang giữ — thiếu [Danh sách món]' để khóa lương.
  * - Chỉ khi quản lý xác nhận đã thu hồi toàn bộ, đơn mới chuyển thành 'HOAN_TAT'
  *   để mở khóa trả lương.
  */
@@ -39,6 +40,7 @@ public class UniformAndResignationService {
     private final UniformAllocationRepository uniformAllocationRepository;
     private final ResignationRequestRepository resignationRequestRepository;
     private final UserRepository userRepository;
+    private final PayrollRepository payrollRepository;
 
     /**
      * Lấy danh mục tất cả các loại đồng phục của hệ thống.
@@ -141,20 +143,42 @@ public class UniformAndResignationService {
         if (!unreturned.isEmpty()) {
             // Còn thiếu đồng phục -> Khóa lương
             String missingItems = unreturned.stream()
-                    .map(a -> a.getUniformItem().getItemName())
-                    .distinct()
+                    .map(a -> "1 " + a.getUniformItem().getItemName())
                     .collect(Collectors.joining(", "));
 
+            String holdReason = "Đang giữ — thiếu " + missingItems;
             resignation.setStatus("DANG_GIU_LUONG");
-            resignation.setMissingUniformDetails("Chưa hoàn trả: " + missingItems);
+            resignation.setMissingUniformDetails(holdReason);
             log.warn("Đơn nghỉ việc #{} của {} chuyển trạng thái DANG_GIU_LUONG do thiếu: {}",
                     resignation.getId(), employee.getFullName(), missingItems);
+
+            // Tự động đồng bộ lý do giữ lương vào bảng lương tháng hiện tại
+            String currentMonth = LocalDate.now().toString().substring(0, 7);
+            payrollRepository.findByUserIdAndPayrollMonth(employee.getId(), currentMonth).ifPresent(p -> {
+                p.setStatus("DANG_GIU_LUONG");
+                p.setIsUniformRetained(true);
+                p.setHoldReason(holdReason);
+                p.setNote(holdReason);
+                payrollRepository.save(p);
+            });
         } else {
             // Đã trả đầy đủ 100% -> Mở khóa
             resignation.setStatus("HOAN_TAT");
             resignation.setMissingUniformDetails("Đã hoàn trả đủ 100% đồng phục");
             log.info("Đơn nghỉ việc #{} của {} đã hoàn tất bàn giao 100% đồng phục",
                     resignation.getId(), employee.getFullName());
+
+            // Mở khóa bảng lương nếu đang bị giữ vì đồng phục
+            String currentMonth = LocalDate.now().toString().substring(0, 7);
+            payrollRepository.findByUserIdAndPayrollMonth(employee.getId(), currentMonth).ifPresent(p -> {
+                if ("DANG_GIU_LUONG".equals(p.getStatus())) {
+                    p.setStatus("CHO_DUYET");
+                    p.setIsUniformRetained(false);
+                    p.setHoldReason(null);
+                    p.setNote("Đã trả đủ đồng phục — mở khóa lương");
+                    payrollRepository.save(p);
+                }
+            });
         }
 
         return resignationRequestRepository.save(resignation);

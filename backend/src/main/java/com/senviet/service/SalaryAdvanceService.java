@@ -2,13 +2,17 @@ package com.senviet.service;
 
 import com.senviet.domain.dto.request.DisburseAdvanceRequest;
 import com.senviet.domain.dto.request.SalaryAdvanceRequest;
+import com.senviet.domain.dto.request.UpdateAdvanceRequest;
 import com.senviet.domain.dto.response.SalaryAdvanceResponse;
 import com.senviet.domain.entity.Branch;
+import com.senviet.domain.entity.PayrollPeriod;
 import com.senviet.domain.entity.SalaryAdvance;
 import com.senviet.domain.entity.User;
 import com.senviet.domain.repository.BranchRepository;
+import com.senviet.domain.repository.PayrollPeriodRepository;
 import com.senviet.domain.repository.SalaryAdvanceRepository;
 import com.senviet.domain.repository.UserRepository;
+import com.senviet.exception.ApiException;
 import com.senviet.security.UserPrincipal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,6 +36,25 @@ public class SalaryAdvanceService {
     private final SalaryAdvanceRepository salaryAdvanceRepository;
     private final UserRepository userRepository;
     private final BranchRepository branchRepository;
+    private final PayrollPeriodRepository payrollPeriodRepository;
+
+    /**
+     * Kiểm tra xem kỳ bảng lương tương ứng có đang bị khóa (LOCKED) hay không.
+     */
+    public boolean isPeriodLocked(String periodMonth, Long branchId) {
+        if (periodMonth == null) {
+            return false;
+        }
+        if (branchId != null) {
+            Optional<PayrollPeriod> periodOpt = payrollPeriodRepository.findByPeriodMonthAndBranchId(periodMonth, branchId);
+            if (periodOpt.isPresent() && "LOCKED".equalsIgnoreCase(periodOpt.get().getStatus())) {
+                return true;
+            }
+        }
+        // Kiểm tra phạm vi toàn chuỗi
+        return payrollPeriodRepository.findByPeriodMonth(periodMonth).stream()
+                .anyMatch(p -> "LOCKED".equalsIgnoreCase(p.getStatus()));
+    }
 
     /**
      * Nhân viên gửi đơn xin tạm ứng lương.
@@ -88,6 +111,12 @@ public class SalaryAdvanceService {
             throw new IllegalArgumentException("Số tiền thực chi không được vượt quá số tiền xin ứng (" + advance.getRequestedAmount() + " đ)");
         }
 
+        // Kiểm tra xem kỳ bảng lương tháng deductionMonth đã chốt/khóa hay chưa
+        Long branchId = advance.getBranch() != null ? advance.getBranch().getId() : null;
+        if (isPeriodLocked(request.getDeductionMonth(), branchId)) {
+            throw new ApiException("Kỳ lương " + request.getDeductionMonth() + " đã được chốt và khóa. Không thể giải ngân khấu trừ vào kỳ lương này!");
+        }
+
         User accountantUser = userRepository.findById(accountant.getId()).orElse(null);
 
         advance.setDisbursedAmount(request.getDisbursedAmount());
@@ -102,6 +131,74 @@ public class SalaryAdvanceService {
                 accountant.getUsername(), request.getDisbursedAmount(), advance.getId(), advance.getUser().getFullName(), request.getDeductionMonth());
 
         return mapToResponse(advance);
+    }
+
+    /**
+     * Chỉnh sửa thông tin đơn ứng lương (Số tiền, lý do, tháng khấu trừ).
+     * Quy tắc chặt chẽ: Đơn chỉ được sửa khi kỳ bảng lương tháng đó CHƯA KHÓA.
+     * Khi kỳ bảng lương đã khóa -> Từ chối với HTTP 400 Bad Request.
+     */
+    @Transactional
+    public SalaryAdvanceResponse updateAdvance(Long advanceId, UpdateAdvanceRequest request, UserPrincipal currentUser) {
+        SalaryAdvance advance = salaryAdvanceRepository.findById(advanceId)
+                .orElseThrow(() -> new ApiException("Không tìm thấy đơn ứng lương ID: " + advanceId));
+
+        Long branchId = advance.getBranch() != null ? advance.getBranch().getId() : null;
+
+        // Xác định tháng khấu trừ cần kiểm tra khóa
+        String targetMonth = request.getDeductionMonth() != null ? request.getDeductionMonth() : advance.getDeductionMonth();
+        if (targetMonth == null && advance.getRequestDate() != null) {
+            targetMonth = advance.getRequestDate().toString().substring(0, 7);
+        }
+
+        if (isPeriodLocked(targetMonth, branchId)) {
+            throw new ApiException("Kỳ lương " + targetMonth + " đã được chốt và khóa. Không được phép chỉnh sửa đơn ứng lương!");
+        }
+
+        if (request.getRequestedAmount() != null) {
+            advance.setRequestedAmount(request.getRequestedAmount());
+        }
+        if (request.getDisbursedAmount() != null) {
+            advance.setDisbursedAmount(request.getDisbursedAmount());
+        }
+        if (request.getReason() != null) {
+            advance.setReason(request.getReason());
+        }
+        if (request.getDeductionMonth() != null) {
+            advance.setDeductionMonth(request.getDeductionMonth());
+        }
+        if (request.getManagerNote() != null) {
+            advance.setManagerNote(request.getManagerNote());
+        }
+
+        SalaryAdvance saved = salaryAdvanceRepository.save(advance);
+        log.info("Người dùng [{}] cập nhật đơn ứng lương #{}. Tháng khấu trừ: {}",
+                currentUser.getUsername(), advanceId, targetMonth);
+        return mapToResponse(saved);
+    }
+
+    /**
+     * Hủy đơn ứng lương.
+     * Quy tắc chặt chẽ: Đơn chỉ được hủy khi kỳ bảng lương tháng đó CHƯA KHÓA.
+     * Khi kỳ bảng lương đã khóa -> Từ chối với HTTP 400 Bad Request.
+     */
+    @Transactional
+    public void deleteAdvance(Long advanceId, UserPrincipal currentUser) {
+        SalaryAdvance advance = salaryAdvanceRepository.findById(advanceId)
+                .orElseThrow(() -> new ApiException("Không tìm thấy đơn ứng lương ID: " + advanceId));
+
+        Long branchId = advance.getBranch() != null ? advance.getBranch().getId() : null;
+        String targetMonth = advance.getDeductionMonth();
+        if (targetMonth == null && advance.getRequestDate() != null) {
+            targetMonth = advance.getRequestDate().toString().substring(0, 7);
+        }
+
+        if (isPeriodLocked(targetMonth, branchId)) {
+            throw new ApiException("Kỳ lương " + targetMonth + " đã được chốt và khóa. Không được phép hủy đơn ứng lương!");
+        }
+
+        salaryAdvanceRepository.delete(advance);
+        log.info("Người dùng [{}] đã hủy đơn ứng lương #{}", currentUser.getUsername(), advanceId);
     }
 
     @Transactional(readOnly = true)

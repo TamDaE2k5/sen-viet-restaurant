@@ -16,7 +16,8 @@ import {
   AlertCircle,
   HelpCircle,
   ShieldCheck,
-  ExternalLink
+  ExternalLink,
+  RotateCcw
 } from 'lucide-react';
 import {
   hrApi,
@@ -85,6 +86,10 @@ export const HRModule: React.FC<HRModuleProps> = ({ currentUser }) => {
 
   const isManagerOrAccountant = currentUser?.roles.some((r: RoleName) =>
     ['ROLE_RESTAURANT_MANAGER', 'ROLE_BRANCH_ACCOUNTANT', 'ROLE_GENERAL_ACCOUNTANT'].includes(r)
+  );
+
+  const isGeneralAccountant = currentUser?.roles.some((r: RoleName) =>
+    ['ROLE_GENERAL_ACCOUNTANT', 'ROLE_ADMIN', 'ROLE_CHU_CHUOI'].includes(r)
   );
 
   // Haversine distance calculator for client preview
@@ -456,6 +461,25 @@ export const HRModule: React.FC<HRModuleProps> = ({ currentUser }) => {
       await loadUniformData();
     } catch (err: any) {
       setMessage({ text: err.response?.data?.message || 'Lỗi xác nhận bỏ việc', type: 'error' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCancelAbandonment = async (resignationId: number, fullName: string) => {
+    if (!window.confirm(`Xác nhận HỦY đánh dấu bỏ việc nhầm cho nhân viên [${fullName}]? Hệ thống sẽ khôi phục trạng thái hoạt động và tính toán lại bảng lương tháng.`)) {
+      return;
+    }
+    try {
+      setLoading(true);
+      await hrApi.cancelAbandonment(resignationId);
+      setMessage({
+        text: `Đã hủy bỏ việc nhầm cho nhân viên [${fullName}]. Trạng thái tài khoản đã được kích hoạt lại!`,
+        type: 'success'
+      });
+      await loadUniformData();
+    } catch (err: any) {
+      setMessage({ text: err.response?.data?.message || 'Lỗi khi hủy xác nhận bỏ việc', type: 'error' });
     } finally {
       setLoading(false);
     }
@@ -1215,6 +1239,8 @@ export const HRModule: React.FC<HRModuleProps> = ({ currentUser }) => {
                                     ? 'bg-rose-100 text-rose-800 animate-pulse'
                                     : r.status === 'BO_VIEC'
                                     ? 'bg-slate-200 text-slate-800'
+                                    : r.status === 'CANCELLED'
+                                    ? 'bg-blue-100 text-blue-800'
                                     : 'bg-amber-100 text-amber-800'
                                 }`}
                               >
@@ -1224,18 +1250,33 @@ export const HRModule: React.FC<HRModuleProps> = ({ currentUser }) => {
                                   ? 'ĐANG GIỮ LƯƠNG'
                                   : r.status === 'BO_VIEC'
                                   ? 'Tự ý bỏ việc (Lương = 0)'
+                                  : r.status === 'CANCELLED'
+                                  ? 'Đã hủy bỏ việc (Khôi phục)'
                                   : 'Chờ duyệt'}
                               </span>
                             </td>
                             <td className="py-3 px-3 text-right">
-                              {r.status !== 'BO_VIEC' && (
-                                <button
-                                  onClick={() => openVerifyModal(r)}
-                                  className="py-1 px-3 bg-purple-100 hover:bg-purple-200 text-purple-900 rounded-lg text-xs font-semibold whitespace-nowrap"
-                                >
-                                  Kiểm Đếm Thu Hồi
-                                </button>
-                              )}
+                              <div className="flex justify-end gap-1.5 items-center">
+                                {r.status !== 'BO_VIEC' && r.status !== 'CANCELLED' && (
+                                  <button
+                                    onClick={() => openVerifyModal(r)}
+                                    className="py-1 px-3 bg-purple-100 hover:bg-purple-200 text-purple-900 rounded-lg text-xs font-semibold whitespace-nowrap"
+                                  >
+                                    Kiểm Đếm Thu Hồi
+                                  </button>
+                                )}
+                                {(r.status === 'BO_VIEC' || r.isAbandoned) && isGeneralAccountant && (
+                                  <button
+                                    onClick={() => handleCancelAbandonment(r.id, r.user.fullName)}
+                                    disabled={loading}
+                                    title="Dành cho Kế toán tổng hủy xác nhận nhầm của Quản lý"
+                                    className="py-1 px-2.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-lg text-xs font-bold whitespace-nowrap flex items-center gap-1 shadow-sm transition-colors"
+                                  >
+                                    <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
+                                    Hủy xác nhận nhầm
+                                  </button>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         ))

@@ -29,6 +29,38 @@ export interface DisburseAdvanceRequest {
   managerNote?: string;
 }
 
+export interface UpdateAdvanceRequest {
+  requestedAmount?: number;
+  disbursedAmount?: number;
+  reason?: string;
+  deductionMonth?: string;
+  managerNote?: string;
+}
+
+export interface PayrollPeriod {
+  id?: number;
+  periodMonth: string;
+  branchId?: number;
+  branchName?: string;
+  status: 'OPEN' | 'LOCKED';
+  lockedAt?: string;
+  lockedByUsername?: string;
+  unlockReason?: string;
+}
+
+export interface PayrollSummary {
+  periodMonth: string;
+  branchId?: number;
+  branchName?: string;
+  periodStatus: 'OPEN' | 'LOCKED';
+  totalBranchCost: number;
+  totalUnpaidAbandonedSalary: number;
+  totalEmployees: number;
+  abandonedCount: number;
+  uniformRetainedCount: number;
+  payrolls: Payroll[];
+}
+
 export interface SalaryIncreaseProposal {
   id: number;
   userId: number;
@@ -66,9 +98,13 @@ export interface Payroll {
   advanceDeduction: number;
   penaltyDeduction: number;
   netSalary: number;
-  status: string; // 'CHO_DUYET', 'DA_DUYET', 'DANG_GIU_LUONG', 'BO_VIEC', 'DA_THANH_TOAN'
+  status: string; // 'CHO_DUYET', 'DA_DUYET', 'DANG_GIU_LUONG', 'BO_VIEC', 'DA_THANH_TOAN', 'LOCKED'
   isAbandoned: boolean;
   isUniformRetained: boolean;
+  excludedFromCost?: boolean;
+  holdReason?: string;
+  isLocked?: boolean;
+  lockedAt?: string;
   bankName?: string;
   bankAccountNumber?: string;
   bankAccountHolder?: string;
@@ -95,6 +131,92 @@ export const payrollApi = {
   disburseAdvance: async (id: number, data: DisburseAdvanceRequest): Promise<SalaryAdvance> => {
     const res = await apiClient.put(`/hr/advances/${id}/disburse`, data);
     return res.data.data;
+  },
+
+  updateAdvance: async (id: number, data: UpdateAdvanceRequest): Promise<SalaryAdvance> => {
+    try {
+      const res = await apiClient.put(`/hr/advances/${id}`, data);
+      return res.data.data;
+    } catch (err: any) {
+      if (err.response?.status === 404) {
+        const res = await apiClient.put(`/v1/payroll/advances/${id}`, data);
+        return res.data.data;
+      }
+      throw err;
+    }
+  },
+
+  cancelAdvance: async (id: number): Promise<void> => {
+    try {
+      await apiClient.delete(`/hr/advances/${id}`);
+    } catch (err: any) {
+      if (err.response?.status === 404) {
+        await apiClient.delete(`/v1/payroll/advances/${id}`);
+      } else {
+        throw err;
+      }
+    }
+  },
+
+  // 1.1 Khóa / Mở Khóa Bảng Lương (Payroll Period Lock)
+  lockPeriod: async (periodMonth: string, branchId?: number): Promise<PayrollPeriod> => {
+    try {
+      const res = await apiClient.post(`/v1/payroll/lock/${periodMonth}`, null, { params: { branchId } });
+      return res.data.data;
+    } catch (err: any) {
+      if (err.response?.status === 404) {
+        const res = await apiClient.post(`/hr/payroll/lock/${periodMonth}`, null, { params: { branchId } });
+        return res.data.data;
+      }
+      throw err;
+    }
+  },
+
+  unlockPeriod: async (periodMonth: string, reason: string, branchId?: number): Promise<PayrollPeriod> => {
+    try {
+      const res = await apiClient.post(`/v1/payroll/unlock/${periodMonth}`, { reason }, { params: { branchId } });
+      return res.data.data;
+    } catch (err: any) {
+      if (err.response?.status === 404) {
+        const res = await apiClient.post(`/hr/payroll/unlock/${periodMonth}`, { reason }, { params: { branchId } });
+        return res.data.data;
+      }
+      throw err;
+    }
+  },
+
+  getPeriodStatus: async (periodMonth: string, branchId?: number): Promise<PayrollPeriod | null> => {
+    try {
+      const res = await apiClient.get(`/v1/payroll/periods/${periodMonth}`, { params: { branchId } });
+      return res.data.data;
+    } catch (err: any) {
+      if (err.response?.status === 404) {
+        try {
+          const res = await apiClient.get(`/v1/payroll/period/${periodMonth}`, { params: { branchId } });
+          return res.data.data;
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    }
+  },
+
+  getPayrollSummary: async (month?: string, branchId?: number): Promise<PayrollSummary | null> => {
+    try {
+      const res = await apiClient.get('/v1/payroll/summary', { params: { month, branchId } });
+      return res.data.data;
+    } catch (err: any) {
+      if (err.response?.status === 404) {
+        try {
+          const res = await apiClient.get('/hr/payroll/summary', { params: { month, branchId } });
+          return res.data.data;
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    }
   },
 
   // 2. Xét tăng lương quý

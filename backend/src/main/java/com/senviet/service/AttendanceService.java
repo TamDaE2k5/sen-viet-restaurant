@@ -4,14 +4,9 @@ import com.senviet.domain.dto.request.CheckInRequest;
 import com.senviet.domain.dto.request.CheckOutRequest;
 import com.senviet.domain.dto.response.AbandonmentScanResult;
 import com.senviet.domain.dto.response.AttendanceResponse;
-import com.senviet.domain.entity.Attendance;
-import com.senviet.domain.entity.Branch;
-import com.senviet.domain.entity.ResignationRequest;
-import com.senviet.domain.entity.User;
-import com.senviet.domain.repository.AttendanceRepository;
-import com.senviet.domain.repository.BranchRepository;
-import com.senviet.domain.repository.ResignationRequestRepository;
-import com.senviet.domain.repository.UserRepository;
+import com.senviet.domain.entity.*;
+import com.senviet.domain.repository.*;
+import com.senviet.exception.ApiException;
 import com.senviet.security.UserPrincipal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,6 +18,7 @@ import java.math.RoundingMode;
 import java.time.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -37,6 +33,9 @@ public class AttendanceService {
     private final BranchRepository branchRepository;
     private final UserRepository userRepository;
     private final ResignationRequestRepository resignationRequestRepository;
+    private final PayrollRepository payrollRepository;
+    private final AuditLogRepository auditLogRepository;
+    private final NotificationLogRepository notificationLogRepository;
 
     // Khoảng cách Geofencing tối đa cho phép: 100 mét
     public static final double MAX_GEOFENCE_DISTANCE_METERS = 100.0;
@@ -193,6 +192,89 @@ public class AttendanceService {
                 .build();
 
         return resignationRequestRepository.save(req);
+    }
+
+    /**
+     * Kế toán tổng hủy xác nhận bỏ việc nhầm.
+     * Khôi phục trạng thái nhân viên về ACTIVE, tính lại bảng lương và ghi nhận audit log.
+     *
+     * @param resignationRequestId ID bản ghi bỏ việc
+     * @param accountant           UserPrincipal kế toán tổng
+     * @return Bản ghi ResignationRequest sau khi hủy
+     */
+    @Transactional
+    public ResignationRequest cancelAbandonment(Long resignationRequestId, UserPrincipal accountant) {
+        ResignationRequest req = resignationRequestRepository.findById(resignationRequestId)
+                .orElseThrow(() -> new ApiException("Không tìm thấy đơn bỏ việc ID: " + resignationRequestId));
+
+        User employee = req.getUser();
+        User accountantUser = userRepository.findById(accountant.getId()).orElse(null);
+
+        // 1. Cập nhật bản ghi bỏ việc sang CANCELLED
+        req.setStatus("CANCELLED");
+        req.setIsAbandoned(false);
+        req.setCancelledByUser(accountantUser);
+        req.setCancelledAt(Instant.now());
+        req.setManagerNote("Đã hủy bỏ việc nhầm bởi Kế toán tổng " + accountant.getUsername());
+        resignationRequestRepository.save(req);
+
+        // 2. Khôi phục trạng thái nhân viên về ACTIVE
+        employee.setStatus("ACTIVE");
+        userRepository.save(employee);
+
+        // 3. Khôi phục và tính toán lại bảng lương tháng hiện tại
+        String currentMonth = LocalDate.now().toString().substring(0, 7);
+        Optional<Payroll> payrollOpt = payrollRepository.findByUserIdAndPayrollMonth(employee.getId(), currentMonth);
+        if (payrollOpt.isPresent()) {
+            Payroll p = payrollOpt.get();
+            p.setIsAbandoned(false);
+            p.setExcludedFromCost(false);
+            p.setStatus("CHO_DUYET");
+            p.setNote("Đã khôi phục lương sau khi hủy xác nhận bỏ việc nhầm");
+
+            BigDecimal base = p.getBaseSalary() != null && p.getBaseSalary().compareTo(BigDecimal.ZERO) > 0
+                    ? p.getBaseSalary() : (employee.getBaseSalary() != null ? employee.getBaseSalary() : new BigDecimal("7500000.00"));
+            p.setBaseSalary(base);
+            BigDecimal standard = p.getStandardWorkDays() != null && p.getStandardWorkDays().compareTo(BigDecimal.ZERO) > 0
+                    ? p.getStandardWorkDays() : new BigDecimal("26.0");
+            BigDecimal actual = p.getActualWorkDays() != null && p.getActualWorkDays().compareTo(BigDecimal.ZERO) > 0
+                    ? p.getActualWorkDays() : new BigDecimal("24.0");
+            BigDecimal raise = p.getSalaryRaise() != null ? p.getSalaryRaise() : BigDecimal.ZERO;
+            BigDecimal allowance = p.getAllowance() != null ? p.getAllowance() : new BigDecimal("500000.00");
+            BigDecimal prorated = base.add(raise).multiply(actual).divide(standard, 2, RoundingMode.HALF_UP);
+            BigDecimal gross = prorated.add(allowance);
+            p.setGrossSalary(gross);
+            BigDecimal advance = p.getAdvanceDeduction() != null ? p.getAdvanceDeduction() : BigDecimal.ZERO;
+            BigDecimal penalty = p.getPenaltyDeduction() != null ? p.getPenaltyDeduction() : BigDecimal.ZERO;
+            BigDecimal net = gross.subtract(advance).subtract(penalty);
+            p.setNetSalary(net.compareTo(BigDecimal.ZERO) > 0 ? net : BigDecimal.ZERO);
+            p.setUpdatedAt(Instant.now());
+            payrollRepository.save(p);
+        }
+
+        // 4. Ghi Audit Log & Notification Log
+        String logText = String.format("Kế toán tổng %s đã HỦY xác nhận bỏ việc nhầm cho nhân viên '%s' (ID: %d). Khôi phục trạng thái ACTIVE và tính lại lương.",
+                accountant.getUsername(), employee.getFullName(), employee.getId());
+        log.info("[CANCEL_ABANDONMENT] {}", logText);
+
+        auditLogRepository.save(AuditLog.builder()
+                .userId(accountant.getId())
+                .action("CANCEL_ABANDONMENT")
+                .targetEntity("ResignationRequest")
+                .targetId(req.getId())
+                .details(logText)
+                .build());
+
+        notificationLogRepository.save(NotificationLog.builder()
+                .branch(req.getBranch())
+                .channel("AUDIT_LOG")
+                .recipient("ROLE_MANAGEMENT")
+                .title("HỦY XÁC NHẬN BỎ VIỆC NHẦM")
+                .content(logText)
+                .status("SENT")
+                .build());
+
+        return req;
     }
 
     /**
