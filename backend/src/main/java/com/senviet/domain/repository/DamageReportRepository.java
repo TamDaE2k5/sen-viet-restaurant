@@ -15,4 +15,6 @@ public interface DamageReportRepository extends JpaRepository<DamageReport, Long
 
     @EntityGraph(attributePaths = {"item", "reportedByUser", "approvedByUser"})
     List<DamageReport> findByBranchIdAndStatusOrderByCreatedAtDesc(Long branchId, String status);
+
+    boolean existsByBranchIdAndItemIdAndStatus(Long branchId, Long itemId, String status);
 }

@@ -13,10 +13,22 @@ import {
   Sparkles,
   Info,
   Layers,
-  ArrowRight
+  ArrowRight,
+  Salad,
+  Plus,
+  Trash2,
+  ShieldAlert,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { kitchenApi, Item, Recipe, BatchResponse } from '../../api/kitchen';
+import {
+  kitchenApi,
+  Item,
+  Recipe,
+  BatchResponse,
+  DailyRemainingItem,
+  ConfirmDailyWasteRequest,
+  QuickAddLineItemRequest,
+} from '../../api/kitchen';
 import { warehouseApi, ImportBatch } from '../../api/warehouse';
 import { compressImage, CompressionResult } from '../../utils/imageCompressor';
 
@@ -52,6 +64,30 @@ export const KitchenModule: React.FC = () => {
   const [selectedFinishBatch, setSelectedFinishBatch] = useState<BatchResponse | null>(null);
   const [finishOutputWeight, setFinishOutputWeight] = useState<number>(0);
   const [isFinishingBatch, setIsFinishingBatch] = useState<boolean>(false);
+
+  // --- GIAI ĐOẠN 8: Chặn cứng mẻ có báo hỏng chưa duyệt (HTTP 422) ---
+  const [showUnapprovedDamageModal, setShowUnapprovedDamageModal] = useState<boolean>(false);
+  const [unapprovedDamageError, setUnapprovedDamageError] = useState<string>('');
+
+  // --- GIAI ĐOẠN 8: Món chỉ dùng trong ngày cuối ca ---
+  const [showDailyWasteModal, setShowDailyWasteModal] = useState<boolean>(false);
+  const [dailyItems, setDailyItems] = useState<DailyRemainingItem[]>([]);
+  const [dailyWasteShift, setDailyWasteShift] = useState<'CA_TOI' | 'CA_SANG'>('CA_TOI');
+  const [dailyWasteDate, setDailyWasteDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [dailyWasteQuantities, setDailyWasteQuantities] = useState<{ [itemId: number]: number }>({});
+  const [dailyWasteItemNotes, setDailyWasteItemNotes] = useState<{ [itemId: number]: string }>({});
+  const [dailyWasteGeneralNote, setDailyWasteGeneralNote] = useState<string>('');
+  const [isLoadingDailyItems, setIsLoadingDailyItems] = useState<boolean>(false);
+  const [isSubmittingDailyWaste, setIsSubmittingDailyWaste] = useState<boolean>(false);
+
+  // --- GIAI ĐOẠN 8: Thêm món nhanh ra line ---
+  const [showQuickAddModal, setShowQuickAddModal] = useState<boolean>(false);
+  const [quickItemName, setQuickItemName] = useState<string>('');
+  const [quickItemCategory, setQuickItemCategory] = useState<string>('MÓN NẤU / RA LINE');
+  const [quickItemUnit, setQuickItemUnit] = useState<string>('Đĩa');
+  const [quickItemCostPrice, setQuickItemCostPrice] = useState<number>(50000);
+  const [quickIsDailyOnly, setQuickIsDailyOnly] = useState<boolean>(false);
+  const [isSubmittingQuickAdd, setIsSubmittingQuickAdd] = useState<boolean>(false);
 
   // --- Nút 3: Ra line (+1) state & idempotency ---
   const [lineCounters, setLineCounters] = useState<{ [itemId: number]: number }>({});
@@ -185,6 +221,13 @@ export const KitchenModule: React.FC = () => {
         // Kích hoạt Modal Cảnh Báo Đỏ Mẻ Thứ Hai
         setPendingBatchRequest(reqData);
         setShowSecondBatchWarning(true);
+      } else if (err.response?.status === 422) {
+        // Giai đoạn 8: Chặn cứng do món có báo hỏng chờ Quản lý duyệt
+        setUnapprovedDamageError(
+          err.response?.data?.message ||
+          'Món này đang có mẻ/lô báo hỏng chờ Quản lý duyệt. Vui lòng liên hệ Quản lý phê duyệt trước khi mở mẻ mới!'
+        );
+        setShowUnapprovedDamageModal(true);
       } else {
         showNotice('error', err.response?.data?.message || 'Lỗi khi tạo mẻ');
       }
@@ -311,6 +354,102 @@ export const KitchenModule: React.FC = () => {
       showNotice('error', err.response?.data?.message || 'Lỗi khi gửi báo hỏng');
     } finally {
       setIsSubmittingDamage(false);
+    }
+  };
+
+  // -------------------------------------------------------------
+  // GIAI ĐOẠN 8: Xử lý Món Dùng Trong Ngày Cuối Ca
+  // -------------------------------------------------------------
+  const handleOpenDailyWasteModal = async () => {
+    try {
+      setIsLoadingDailyItems(true);
+      setShowDailyWasteModal(true);
+      const list = await kitchenApi.getDailyOnlyRemaining();
+      setDailyItems(list);
+      // Pre-fill quantities
+      const initialQtys: { [id: number]: number } = {};
+      list.forEach((item) => {
+        initialQtys[item.id] = item.remainingStock || item.suggestedWasteQty || 0;
+      });
+      setDailyWasteQuantities(initialQtys);
+    } catch (err: any) {
+      console.error('Lỗi nạp danh sách món dùng trong ngày:', err);
+      showNotice('error', 'Không thể nạp danh sách món dùng trong ngày');
+    } finally {
+      setIsLoadingDailyItems(false);
+    }
+  };
+
+  const handleSubmitDailyWaste = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const itemsToWaste = dailyItems
+      .filter((it) => (dailyWasteQuantities[it.id] || 0) > 0)
+      .map((it) => ({
+        itemId: it.itemId || it.id,
+        quantity: dailyWasteQuantities[it.id] || 0,
+        unit: it.unit,
+        note: dailyWasteItemNotes[it.id] || undefined,
+      }));
+
+    if (itemsToWaste.length === 0) {
+      showNotice('error', 'Vui lòng nhập số lượng ghi bỏ cho ít nhất 1 món');
+      return;
+    }
+
+    try {
+      setIsSubmittingDailyWaste(true);
+      const req: ConfirmDailyWasteRequest = {
+        shift: dailyWasteShift,
+        wasteDate: dailyWasteDate,
+        note: dailyWasteGeneralNote || undefined,
+        items: itemsToWaste,
+      };
+
+      await kitchenApi.confirmDailyWaste(req);
+      showNotice(
+        'success',
+        `✅ Đã xác nhận ghi bỏ ${itemsToWaste.length} món dùng trong ngày thành công! Đã hạch toán vào Hỏng/bỏ có báo.`
+      );
+      setShowDailyWasteModal(false);
+      loadInitialData();
+    } catch (err: any) {
+      console.error('Lỗi khi ghi bỏ món trong ngày:', err);
+      showNotice('error', err.response?.data?.message || 'Lỗi khi xác nhận ghi bỏ');
+    } finally {
+      setIsSubmittingDailyWaste(false);
+    }
+  };
+
+  // -------------------------------------------------------------
+  // GIAI ĐOẠN 8: Xử lý Thêm Món Nhanh Ra Line
+  // -------------------------------------------------------------
+  const handleQuickAddLineItem = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickItemName.trim()) {
+      showNotice('error', 'Tên món không được để trống');
+      return;
+    }
+
+    try {
+      setIsSubmittingQuickAdd(true);
+      const newItem = await kitchenApi.quickAddLineItem({
+        itemName: quickItemName.trim(),
+        category: quickItemCategory,
+        unit: quickItemUnit,
+        costPrice: quickItemCostPrice || 50000,
+        isDailyOnly: quickIsDailyOnly,
+      });
+
+      setItems((prev) => [...prev, newItem]);
+      showNotice('success', `✅ Đã thêm món "${newItem.itemName}" vào thực đơn ra line thành công!`);
+      setShowQuickAddModal(false);
+      setQuickItemName('');
+      setQuickIsDailyOnly(false);
+    } catch (err: any) {
+      console.error('Lỗi khi thêm món nhanh:', err);
+      showNotice('error', err.response?.data?.message || 'Lỗi khi thêm món nhanh ra line');
+    } finally {
+      setIsSubmittingQuickAdd(false);
     }
   };
 
@@ -458,6 +597,36 @@ export const KitchenModule: React.FC = () => {
             <div className="font-extrabold text-base sm:text-lg leading-tight">BÁO HỎNG</div>
             <div className="text-xs text-rose-100 mt-0.5">Kèm ảnh chụp nén &lt;200KB</div>
           </div>
+        </button>
+      </div>
+
+      {/* ============================================================== */}
+      {/* GIAI ĐOẠN 8: XỬ LÝ MÓN TƯƠI CHỈ DÙNG TRONG NGÀY CUỐI CA         */}
+      {/* ============================================================== */}
+      <div className="bg-gradient-to-r from-teal-700 via-emerald-700 to-teal-800 rounded-2xl p-4 text-white shadow-md flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="p-2.5 rounded-xl bg-white/20 backdrop-blur-sm flex-shrink-0">
+            <Salad className="h-6 w-6 text-emerald-200" />
+          </div>
+          <div className="min-w-0">
+            <div className="font-extrabold text-sm sm:text-base leading-tight flex items-center gap-2">
+              <span className="truncate">MÓN CHỈ DÙNG TRONG NGÀY</span>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/40 text-emerald-100 uppercase flex-shrink-0">
+                Phase 8
+              </span>
+            </div>
+            <p className="text-xs text-emerald-100/90 mt-0.5 truncate sm:whitespace-normal">
+              Cuối ca: Kiểm đếm tồn salad, kim chi, nộm & xác nhận ghi bỏ (không phạt bếp)
+            </p>
+          </div>
+        </div>
+
+        <button
+          onClick={handleOpenDailyWasteModal}
+          className="btn-touch px-3.5 py-2.5 rounded-xl bg-white text-emerald-900 font-extrabold text-xs hover:bg-emerald-50 flex items-center gap-1.5 shadow-sm active:scale-95 transition-all flex-shrink-0"
+        >
+          <Salad className="h-4 w-4 text-emerald-700" />
+          <span>XỬ LÝ CUỐI CA</span>
         </button>
       </div>
 
@@ -885,6 +1054,47 @@ export const KitchenModule: React.FC = () => {
       )}
 
       {/* ============================================================== */}
+      {/* GIAI ĐOẠN 8: POPUP CHẶN CỨNG BÁO HỎNG CHỜ DUYỆT (HTTP 422)    */}
+      {/* ============================================================== */}
+      {showUnapprovedDamageModal && (
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-[70] flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl border-2 border-rose-600 animate-in zoom-in-95">
+            <div className="flex items-center gap-3 text-rose-600 mb-3">
+              <div className="p-3 rounded-2xl bg-rose-100">
+                <ShieldAlert className="h-8 w-8 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="font-black text-base text-rose-700">CHẶN CỨNG: BÁO HỎNG CHỜ DUYỆT!</h3>
+                <p className="text-xs text-slate-500 font-semibold">Quy tắc chống thất thoát bếp (Phase 8)</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-950 text-xs sm:text-sm leading-relaxed space-y-2">
+              <p className="font-bold text-rose-800">
+                {unapprovedDamageError ||
+                  'Món này đang có mẻ/lô báo hỏng chờ Quản lý duyệt. Vui lòng liên hệ Quản lý phê duyệt trước khi mở mẻ mới!'}
+              </p>
+              <p className="text-slate-600 text-xs leading-normal">
+                Để xóa bỏ hoàn toàn việc mở mẻ mới nhằm che giấu hao hụt/hỏng hóc mẻ trước, hệ thống
+                <strong> chặn tuyệt đối</strong> thao tác bắt đầu mẻ mới cho đến khi Quản lý Chi nhánh phê duyệt
+                đơn báo hỏng trước đó.
+              </p>
+            </div>
+
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowUnapprovedDamageModal(false)}
+                className="btn-touch w-full h-12 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-sm shadow-lg shadow-rose-600/30 flex items-center justify-center gap-1.5"
+              >
+                <span>ĐÃ HIỂU & LIÊN HỆ QUẢN LÝ</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
       {/* MODAL 3: RA LINE (+1 ĐĨA)                                      */}
       {/* ============================================================== */}
       {activeModal === 'lineItem' && (
@@ -895,9 +1105,27 @@ export const KitchenModule: React.FC = () => {
                 <PlusCircle className="h-6 w-6" />
                 <span>NÚT 3: BẤM RA LINE BUFFET (+1)</span>
               </div>
-              <button onClick={() => setActiveModal(null)} className="p-2 text-slate-400 hover:text-slate-600">
-                <X className="h-5 w-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowQuickAddModal(true)}
+                  className="px-2.5 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 text-xs font-bold flex items-center gap-1 transition-colors"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>+ Thêm món nhanh</span>
+                </button>
+                <button onClick={() => setActiveModal(null)} className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Task 8.4 Business Rule Callout */}
+            <div className="mt-3 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 text-xs flex items-start gap-2">
+              <Info className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" />
+              <span>
+                <strong>Khẳng định nghiệp vụ:</strong> Nút Ra Line chỉ ghi nhận số lượt khay/đĩa đưa ra quầy buffet để đối soát với CukCuk POS, <strong>TUYỆT ĐỐI KHÔNG TRỪ TỒN KHO</strong>.
+              </span>
             </div>
 
             <p className="text-xs text-slate-500 mt-2">
@@ -1149,6 +1377,312 @@ export const KitchenModule: React.FC = () => {
                       <CheckCircle2 className="h-5 w-5" />
                       <span>GỬI ĐƠN BÁO HỎNG</span>
                     </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* GIAI ĐOẠN 8: MODAL XÁC NHẬN GHI BỎ MÓN DÙNG TRONG NGÀY         */}
+      {/* ============================================================== */}
+      {showDailyWasteModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in">
+          <div className="bg-white w-full max-w-2xl rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl max-h-[92vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2 text-emerald-700 font-black text-base">
+                <Salad className="h-6 w-6 text-emerald-600" />
+                <span>XÁC NHẬN GHI BỎ MÓN DÙNG TRONG NGÀY (CUỐI CA)</span>
+              </div>
+              <button
+                onClick={() => setShowDailyWasteModal(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitDailyWaste} className="space-y-4 mt-4">
+              {/* Business Rule Explanation */}
+              <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-950 text-xs leading-relaxed space-y-1">
+                <p className="font-bold text-emerald-800 flex items-center gap-1.5">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600 flex-shrink-0" />
+                  <span>Quy Chuẩn ATTP & Chống Thất Thoát (Task 8.3):</span>
+                </p>
+                <p className="text-emerald-900/90 text-xs">
+                  Món tươi sống chỉ dùng trong ngày (salad, nộm, kim chi, bánh bao...) không được lưu cữu qua đêm.
+                  Số lượng ghi bỏ này được hạch toán vào cột <strong>"Hỏng/bỏ có báo"</strong> của Bảng cuối ngày
+                  và <strong>KHÔNG phạt tiền nhân viên</strong>.
+                </p>
+              </div>
+
+              {/* Shift & Date Controls */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-1">CA GHI BỎ</label>
+                  <select
+                    value={dailyWasteShift}
+                    onChange={(e) => setDailyWasteShift(e.target.value as 'CA_TOI' | 'CA_SANG')}
+                    className="w-full h-11 px-3 rounded-xl border border-slate-300 font-bold text-slate-800 text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="CA_TOI">🌙 Ca Tối (Cuối ngày / Đóng ca)</option>
+                    <option value="CA_SANG">🌅 Ca Sáng (Chuyển giao trưa)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-1">NGÀY XỬ LÝ</label>
+                  <input
+                    type="date"
+                    value={dailyWasteDate}
+                    onChange={(e) => setDailyWasteDate(e.target.value)}
+                    className="w-full h-11 px-3 rounded-xl border border-slate-300 font-mono font-bold text-slate-800 text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1">GHI CHÚ CHUNG</label>
+                <input
+                  type="text"
+                  placeholder="Ghi bỏ salad và nộm cuối ngày..."
+                  value={dailyWasteGeneralNote}
+                  onChange={(e) => setDailyWasteGeneralNote(e.target.value)}
+                  className="w-full h-11 px-3 rounded-xl border border-slate-300 text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              {/* Items List */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-slate-700 uppercase">
+                    Danh Sách Món Tươi Chỉ Dùng Trong Ngày ({dailyItems.length})
+                  </label>
+                  <span className="text-[11px] text-slate-500">
+                    Nhập số lượng đĩa / kg ghi bỏ thực tế
+                  </span>
+                </div>
+
+                {isLoadingDailyItems ? (
+                  <div className="p-8 text-center text-slate-500">
+                    <Loader2 className="h-6 w-6 animate-spin mx-auto text-emerald-600 mb-2" />
+                    <span className="text-xs">Đang quét danh sách món chỉ dùng trong ngày...</span>
+                  </div>
+                ) : dailyItems.length === 0 ? (
+                  <div className="p-8 text-center text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                    <Salad className="h-8 w-8 mx-auto text-slate-300 mb-1" />
+                    <p className="text-xs font-semibold">Chưa có món nào được đánh dấu là "Chỉ dùng trong ngày"</p>
+                    <p className="text-[11px] mt-0.5">
+                      Bấm "+ Thêm món nhanh" trên màn hình Ra Line và tích chọn "Món chỉ dùng trong ngày".
+                    </p>
+                  </div>
+                ) : (
+                  <div className="border border-slate-200 rounded-xl overflow-hidden max-h-60 overflow-y-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-100 font-bold text-slate-600 sticky top-0">
+                        <tr>
+                          <th className="p-2.5">Món ăn</th>
+                          <th className="p-2.5">Tồn hiện tại</th>
+                          <th className="p-2.5">Số lượng ghi bỏ</th>
+                          <th className="p-2.5">Ghi chú</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {dailyItems.map((it) => (
+                          <tr key={it.id} className="hover:bg-slate-50">
+                            <td className="p-2.5">
+                              <div className="font-bold text-slate-900">{it.itemName}</div>
+                              <span className="text-[10px] text-slate-500">{it.category}</span>
+                            </td>
+                            <td className="p-2.5 font-mono text-slate-700 font-semibold">
+                              {it.remainingStock ?? 0} {it.unit}
+                            </td>
+                            <td className="p-2.5">
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  type="number"
+                                  step="0.5"
+                                  min="0"
+                                  value={dailyWasteQuantities[it.id] ?? 0}
+                                  onChange={(e) =>
+                                    setDailyWasteQuantities({
+                                      ...dailyWasteQuantities,
+                                      [it.id]: parseFloat(e.target.value) || 0,
+                                    })
+                                  }
+                                  className="w-20 h-9 px-2 rounded-lg border border-slate-300 font-mono font-extrabold text-sm focus:ring-2 focus:ring-emerald-500"
+                                />
+                                <span className="text-xs font-bold text-slate-600">{it.unit}</span>
+                              </div>
+                            </td>
+                            <td className="p-2.5">
+                              <input
+                                type="text"
+                                placeholder="Lý do hủy..."
+                                value={dailyWasteItemNotes[it.id] || ''}
+                                onChange={(e) =>
+                                  setDailyWasteItemNotes({
+                                    ...dailyWasteItemNotes,
+                                    [it.id]: e.target.value,
+                                  })
+                                }
+                                className="w-full h-8 px-2 rounded border border-slate-200 text-xs"
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Action Buttons */}
+              <div className="grid grid-cols-2 gap-3 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowDailyWasteModal(false)}
+                  className="btn-touch h-12 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm"
+                >
+                  HỦY BỎ
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingDailyWaste || dailyItems.length === 0}
+                  className="btn-touch h-12 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white font-extrabold text-sm shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2"
+                >
+                  {isSubmittingDailyWaste ? (
+                    <>
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                      <span>ĐANG XÁC NHẬN...</span>
+                    </>
+                  ) : (
+                    <span>XÁC NHẬN GHI BỎ CUỐI CA</span>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* GIAI ĐOẠN 8: MODAL THÊM MÓN NHANH TRỰC TIẾP RA LINE            */}
+      {/* ============================================================== */}
+      {showQuickAddModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[65] flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl animate-in zoom-in-95">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2 text-amber-600 font-black text-base">
+                <Plus className="h-6 w-6" />
+                <span>THÊM NHANH MÓN RA LINE BUFFET</span>
+              </div>
+              <button
+                onClick={() => setShowQuickAddModal(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleQuickAddLineItem} className="space-y-4 mt-4">
+              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs">
+                Thêm món mới ngay tại quầy bếp để bấm nút ra line (+1) mà không cần vào menu cấu hình của Quản trị viên.
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1">TÊN MÓN ĂN MỚI *</label>
+                <input
+                  type="text"
+                  placeholder="Ví dụ: Nộm hoa chuối tai heo, Bánh bao chiên..."
+                  value={quickItemName}
+                  onChange={(e) => setQuickItemName(e.target.value)}
+                  className="w-full h-11 px-3 rounded-xl border border-slate-300 font-bold text-slate-900 text-sm focus:ring-2 focus:ring-amber-500"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-1">NHÓM MÓN</label>
+                  <select
+                    value={quickItemCategory}
+                    onChange={(e) => setQuickItemCategory(e.target.value)}
+                    className="w-full h-11 px-3 rounded-xl border border-slate-300 font-semibold text-slate-800 text-xs focus:ring-2 focus:ring-amber-500"
+                  >
+                    <option value="MÓN KHAI VỊ / SALAD">Khai vị / Salad</option>
+                    <option value="MÓN NẤU / RA LINE">Món nấu / Ra line</option>
+                    <option value="MÓN NƯỚNG">Món nướng</option>
+                    <option value="HẢI SẢN">Hải sản</option>
+                    <option value="TRÁNG MIỆNG">Tráng miệng</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-1">ĐƠN VỊ TÍNH</label>
+                  <select
+                    value={quickItemUnit}
+                    onChange={(e) => setQuickItemUnit(e.target.value)}
+                    className="w-full h-11 px-3 rounded-xl border border-slate-300 font-semibold text-slate-800 text-xs focus:ring-2 focus:ring-amber-500"
+                  >
+                    <option value="Đĩa">Đĩa</option>
+                    <option value="Khay">Khay</option>
+                    <option value="Nồi">Nồi</option>
+                    <option value="Tô">Tô</option>
+                    <option value="Bát">Bát</option>
+                    <option value="Suất">Suất</option>
+                    <option value="con">Con</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1">GIÁ VỐN ƯỚC TÍNH (Đ)</label>
+                <input
+                  type="number"
+                  step="5000"
+                  min="0"
+                  value={quickItemCostPrice}
+                  onChange={(e) => setQuickItemCostPrice(parseFloat(e.target.value) || 0)}
+                  className="w-full h-11 px-3 rounded-xl border border-slate-300 font-mono text-sm focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              {/* Checkbox is_daily_only */}
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  id="chk-daily-only"
+                  checked={quickIsDailyOnly}
+                  onChange={(e) => setQuickIsDailyOnly(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                />
+                <label htmlFor="chk-daily-only" className="text-xs text-slate-700 font-medium cursor-pointer">
+                  <strong className="block font-bold text-emerald-800">Món tươi chỉ dùng trong ngày</strong>
+                  Tự động đưa vào danh sách kiểm đếm hủy bỏ cuối ca (salad, nộm, rau củ...).
+                </label>
+              </div>
+
+              {/* Submit Buttons */}
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowQuickAddModal(false)}
+                  className="btn-touch h-11 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs"
+                >
+                  HỦY
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingQuickAdd}
+                  className="btn-touch h-11 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/20"
+                >
+                  {isSubmittingQuickAdd ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <span>THÊM VÀO MENU LINE</span>
                   )}
                 </button>
               </div>

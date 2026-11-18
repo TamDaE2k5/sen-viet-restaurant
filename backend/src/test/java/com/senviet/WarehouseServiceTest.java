@@ -343,7 +343,7 @@ class WarehouseServiceTest {
         KitchenService kitchenService = new KitchenService(
                 mockItemRepo, null, null, null,
                 mockDamageReportRepo, null, mockBranchRepo, mockUserRepo,
-                mockBatchRepo, mockStockRepo, mockSupplierRepo
+                mockBatchRepo, mockStockRepo, mockSupplierRepo, null
         );
 
         when(mockBranchRepo.findById(1L)).thenReturn(Optional.of(branch));

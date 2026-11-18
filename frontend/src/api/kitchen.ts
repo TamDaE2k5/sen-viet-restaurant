@@ -9,6 +9,7 @@ export interface Item {
   unit: string;
   costPrice: number;
   isBuffetLine: boolean;
+  isDailyOnly?: boolean;
 }
 
 export interface Recipe {
@@ -63,6 +64,38 @@ export interface DamageReport {
   status: 'TU_DONG_DUYET' | 'CHO_DUYET' | 'DA_DUYET' | 'TU_CHOI';
   note?: string;
   createdAt: string;
+}
+
+export interface DailyRemainingItem {
+  id: number;
+  itemId?: number;
+  itemCode: string;
+  itemName: string;
+  category: string;
+  unit: string;
+  remainingStock: number;
+  suggestedWasteQty?: number;
+  isDailyOnly?: boolean;
+}
+
+export interface ConfirmDailyWasteRequest {
+  shift: string;
+  wasteDate?: string;
+  note?: string;
+  items: {
+    itemId: number;
+    quantity: number;
+    unit: string;
+    note?: string;
+  }[];
+}
+
+export interface QuickAddLineItemRequest {
+  itemName: string;
+  category: string;
+  unit: string;
+  costPrice?: number;
+  isDailyOnly?: boolean;
 }
 
 export const kitchenApi = {
@@ -137,6 +170,24 @@ export const kitchenApi = {
   // Lấy danh sách báo hỏng
   getDamageReports: async (): Promise<DamageReport[]> => {
     const res = await apiClient.get('/v1/kitchen/damage-reports');
+    return res.data.data;
+  },
+
+  // Giai đoạn 8: Lấy danh sách món tươi dùng trong ngày còn tồn cuối ca
+  getDailyOnlyRemaining: async (): Promise<DailyRemainingItem[]> => {
+    const res = await apiClient.get('/v1/kitchen/daily-only/remaining');
+    return res.data.data;
+  },
+
+  // Giai đoạn 8: Xác nhận ghi bỏ món dùng trong ngày cuối ca
+  confirmDailyWaste: async (data: ConfirmDailyWasteRequest) => {
+    const res = await apiClient.post('/v1/kitchen/daily-only/confirm-waste', data);
+    return res.data;
+  },
+
+  // Giai đoạn 8: Thêm nhanh món mới trên màn hình ra line
+  quickAddLineItem: async (data: QuickAddLineItemRequest): Promise<Item> => {
+    const res = await apiClient.post('/v1/kitchen/line-items/quick-add', data);
     return res.data.data;
   },
 };

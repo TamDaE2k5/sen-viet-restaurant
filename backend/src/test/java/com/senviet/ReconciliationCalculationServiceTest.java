@@ -111,4 +111,32 @@ class ReconciliationCalculationServiceTest {
         assertThat(result.getActualConsumptionPerGuest()).isEqualByComparingTo("0.0000");
         assertThat(result.getIsOverThreshold()).isFalse();
     }
+
+    @Test
+    @DisplayName("Task 8.6: Tách riêng hao hụt chế biến, không cộng dồn vào tỷ lệ con hàng (Kg/khách) của khách dùng")
+    void testProcessingLossSeparatedFromGuestConsumptionRate() {
+        // GIVEN: Xuất 50kg, Hụt chế biến 10kg, Hỏng 2kg, Khách ăn 38kg thực tế
+        // 100 khách ăn -> Tiêu hao thực tế/khách = (50 - 10 - 2) / 100 = 38 / 100 = 0.3800 kg/khách
+        // Hao hụt chế biến 10kg được ghi nhận vào cột riêng processingLossQty = 10kg, KHÔNG bị tính vào 0.3800 kg/khách!
+        CalculationFormulaInput input = CalculationFormulaInput.builder()
+                .openingStock(new BigDecimal("50.000"))
+                .inStock(BigDecimal.ZERO)
+                .closingStock(BigDecimal.ZERO)
+                .costPrice(new BigDecimal("200000.00"))
+                .adultGuests(100)
+                .childGuests(0)
+                .standardPerGuest(new BigDecimal("0.380"))
+                .processingLossQty(new BigDecimal("10.000"))
+                .reportedDamageQty(new BigDecimal("2.000"))
+                .build();
+
+        CalculationFormulaResult result = service.calculate(input);
+
+        // THEN: Hụt chế biến tách riêng là 10kg
+        assertThat(result.getProcessingLossQty()).isEqualByComparingTo("10.000");
+        // Tiêu hao thực tế/khách chỉ tính trên (50 - 10 - 2) = 38kg / 100 = 0.3800 kg/khách
+        assertThat(result.getActualConsumptionPerGuest()).isEqualByComparingTo("0.3800");
+        // Thất thoát không rõ = 50 - 38 - 10 - 2 = 0
+        assertThat(result.getUnexplainedLossQty()).isEqualByComparingTo("0.000");
+    }
 }
