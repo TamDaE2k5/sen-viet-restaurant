@@ -31,6 +31,7 @@ import {
   Tag
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useNotification } from '../../context/NotificationContext';
 import {
   warehouseApi,
   Supplier,
@@ -50,15 +51,25 @@ type WarehouseTab = 'documents' | 'batches' | 'suppliers' | 'inventory-check' | 
 
 export const WarehouseModule: React.FC = () => {
   const { user } = useAuth();
+  const { showError, showSuccess, showWarning } = useNotification();
 
   // Active top tab
   const [activeTab, setActiveTab] = useState<WarehouseTab>('documents');
 
   // Common notification
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const showNotice = (type: 'success' | 'error', text: string) => {
-    setNotice({ type, text });
+  const showNotice = (type: 'success' | 'error' | 'warning', text: string) => {
+    setNotice({ type: type === 'warning' ? 'error' : type, text });
     setTimeout(() => setNotice(null), 6000);
+
+    // Bắn alert nổi bật (Task 12.2: Prominent Visual Alerts)
+    if (type === 'error') {
+      showError(text, 'LỖI PHÂN HỆ KHO');
+    } else if (type === 'warning') {
+      showWarning(text, 'CẢNH BÁO KHO & LÔ HÀNG');
+    } else {
+      showSuccess(text, 'THAO TÁC KHO THÀNH CÔNG');
+    }
   };
 
   // Common data
@@ -388,7 +399,7 @@ export const WarehouseModule: React.FC = () => {
 
     if (unreasonedItems.length > 0) {
       showNotice(
-        'error',
+        'warning',
         `⚠️ Có ${unreasonedItems.length} mặt hàng chênh lệch chưa điền lý do! Quy chuẩn kiểm kê bắt buộc phải giải trình lý do lệch.`
       );
       return;

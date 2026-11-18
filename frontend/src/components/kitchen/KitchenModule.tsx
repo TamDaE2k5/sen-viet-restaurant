@@ -21,6 +21,7 @@ import {
   Image as ImageIcon,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useNotification } from '../../context/NotificationContext';
 import {
   kitchenApi,
   Item,
@@ -35,6 +36,7 @@ import { compressImage, CompressionResult } from '../../utils/imageCompressor';
 
 export const KitchenModule: React.FC = () => {
   const { user } = useAuth();
+  const { showError, showSuccess, showWarning } = useNotification();
 
   // Dữ liệu danh mục
   const [items, setItems] = useState<Item[]>([]);
@@ -159,9 +161,18 @@ export const KitchenModule: React.FC = () => {
     }
   }, [damageItemId]);
 
-  const showNotice = (type: 'success' | 'error', text: string) => {
-    setStatusMessage({ type, text });
+  const showNotice = (type: 'success' | 'error' | 'warning', text: string) => {
+    setStatusMessage({ type: type === 'warning' ? 'error' : type, text });
     setTimeout(() => setStatusMessage(null), 4500);
+
+    // Bắn alert nổi bật (Task 12.2: Prominent Visual Alerts)
+    if (type === 'error') {
+      showError(text, 'LỖI THAO TÁC BẾP');
+    } else if (type === 'warning') {
+      showWarning(text, 'CẢNH BÁO MẺ BẾP');
+    } else {
+      showSuccess(text, 'THAO TÁC BẾP THÀNH CÔNG');
+    }
   };
 
   // -------------------------------------------------------------

@@ -10,7 +10,7 @@
 
 ### Danh Sách Nhiệm Vụ (Task Checklist)
 
-- [ ] **Task 12.1: Triển Khai RBAC View Guard & Lọc Menu Điều Hướng (Navigation Filter)**
+- [x] **Task 12.1: Triển Khai RBAC View Guard & Lọc Menu Điều Hướng (Navigation Filter)**
   - **Desktop Navigation (`DesktopShell.tsx`)**:
     - Lọc danh sách menu `menuItems` theo danh sách vai trò (`user.roles`):
       * `ROLE_KITCHEN_STAFF`: Chỉ thấy menu **"Bếp 4 Nút & Cân Mẻ"** (nếu có `ROLE_EMPLOYEE` thì có thêm Cổng cá nhân). Tuyệt đối **ẨN** Kho cơ sở, Đối soát CukCuk, Giám sát, Quản trị phân quyền, Bảng lương tổng.
@@ -25,7 +25,7 @@
   - **Dashboard Cards Filtering (`Dashboard.tsx`)**:
     - Chỉ hiển thị các thẻ phân hệ quản trị mà người dùng có quyền truy cập; ẩn toàn bộ các thẻ phân hệ ngoài thẩm quyền.
 
-- [ ] **Task 12.2: Hệ Thống Cảnh Báo & Thông Báo Nổi Bật (Prominent Visual Alerts & Toast)**
+- [x] **Task 12.2: Hệ Thống Cảnh Báo & Thông Báo Nổi Bật (Prominent Visual Alerts & Toast)**
   - Xây dựng Component `<ProminentAlert />` và Context `<NotificationContext />`:
     - Vị trí hiển thị: Nổi bật ở phía trên cùng màn hình (Top-Center / Floating Banner), có bóng đổ sâu và viền tương phản cao.
     - Màu sắc nhận diện rõ nét:
@@ -35,7 +35,7 @@
     - Tự động đóng sau 5 giây hoặc bấm nút `[Đóng / Thử lại]` tức thì.
   - Thay thế các cảnh báo lỗi nhỏ chữ đỏ trong các form thao tác (Kho, Bếp, Báo hỏng, Ứng lương) bằng thông báo nổi bật này.
 
-- [ ] **Task 12.3: Xây Dựng Bộ Dữ Liệu Demo Chuẩn 5-10 Bản Ghi (Flyway Migration `V11`)**
+- [x] **Task 12.3: Xây Dựng Bộ Dữ Liệu Demo Chuẩn 5-10 Bản Ghi (Flyway Migration `V11`)**
   - **10 Mặt hàng & Nguyên liệu thực tế**:
     * Hải sản: Cua Cà Mau sống (350k/kg), Ghẹ Phú Quốc (280k/kg), Tôm càng xanh sống (240k/kg), Mực lá tươi (180k/kg).
     * Thịt & Nông sản: Ba chỉ bò Mỹ (195k/kg), Nấm kim châm (45k/kg).
@@ -56,7 +56,7 @@
   - **8 Bản ghi Bảng lương tháng**:
     * Tính toán công nhật đầy đủ, 1 trường hợp nhân viên nghỉ việc giữ lương ghi rõ *"Đang giữ — thiếu 1 Tạp dề, 1 Nón"*, và 1 trường hợp bỏ việc lương = 0 đ ghi rõ *"Bỏ việc — không trả theo quy định"*.
 
-- [ ] **Task 12.4: Kiểm Thử Nghiệm Thu Giao Diện & Kịch Bản Demo (End-to-End Walkthrough)**
+- [x] **Task 12.4: Kiểm Thử Nghiệm Thu Giao Diện & Kịch Bản Demo (End-to-End Walkthrough)**
   - Đăng nhập tài khoản `bep_thainguyen` (`ROLE_KITCHEN_STAFF`): Xác nhận giao diện CHỈ hiện Bếp 4 nút, hoàn toàn không thấy menu Kho, Đối soát, Bảng lương.
   - Đăng nhập tài khoản `quanly_thainguyen` (`ROLE_RESTAURANT_MANAGER`): Thấy Bếp, Duyệt hỏng, Đối soát chi nhánh, Nhân sự chi nhánh. Không thấy menu NCC toàn chuỗi hay Khóa lương.
   - Đăng nhập tài khoản `ketoan_tong` (`ROLE_GENERAL_ACCOUNTANT`): Thấy đầy đủ 7 phân hệ với 5-10 bản ghi dữ liệu mẫu phong phú.

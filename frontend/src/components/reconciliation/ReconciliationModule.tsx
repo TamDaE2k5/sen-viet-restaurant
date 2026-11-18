@@ -18,6 +18,7 @@ import {
   ShieldAlert
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useNotification } from '../../context/NotificationContext';
 import {
   reconciliationApi,
   ReconciliationSummary,
@@ -27,6 +28,7 @@ import {
 
 export const ReconciliationModule: React.FC = () => {
   const { user } = useAuth();
+  const { showError, showSuccess, showWarning } = useNotification();
 
   const [activeTab, setActiveTab] = useState<'summary' | 'cukcuk' | 'suppliers'>('summary');
   const [reconciliations, setReconciliations] = useState<ReconciliationSummary[]>([]);
@@ -73,9 +75,18 @@ export const ReconciliationModule: React.FC = () => {
     loadData();
   }, [filterDate, filterShift, overThresholdOnly]);
 
-  const showNotice = (type: 'success' | 'error', text: string) => {
-    setStatusMessage({ type, text });
+  const showNotice = (type: 'success' | 'error' | 'warning', text: string) => {
+    setStatusMessage({ type: type === 'warning' ? 'error' : type, text });
     setTimeout(() => setStatusMessage(null), 4500);
+
+    // Bắn alert nổi bật (Task 12.2: Prominent Visual Alerts)
+    if (type === 'error') {
+      showError(text, 'LỖI ĐỐI SOÁT CUKCUK');
+    } else if (type === 'warning') {
+      showWarning(text, 'CẢNH BÁO THẤT THOÁT ĐỐI SOÁT');
+    } else {
+      showSuccess(text, 'THAO TÁC ĐỐI SOÁT THÀNH CÔNG');
+    }
   };
 
   // Tính toán các chỉ số tóm tắt

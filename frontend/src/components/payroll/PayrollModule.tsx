@@ -31,16 +31,30 @@ import {
   PayrollPeriod
 } from '../../api/payroll';
 import { User, RoleName } from '../../types/auth';
+import { useNotification } from '../../context/NotificationContext';
 
 interface PayrollModuleProps {
   currentUser?: User | null;
 }
 
 export const PayrollModule: React.FC<PayrollModuleProps> = ({ currentUser }) => {
+  const { showError, showSuccess, showWarning } = useNotification();
   const [activeTab, setActiveTab] = useState<'payroll' | 'advance' | 'raise' | 'payslip'>('payroll');
   const [selectedMonth, setSelectedMonth] = useState<string>('2026-11');
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' | 'warning' } | null>(null);
+  const [message, setInternalMessage] = useState<{ text: string; type: 'success' | 'error' | 'warning' } | null>(null);
+
+  const setMessage = (msg: { text: string; type: 'success' | 'error' | 'warning' } | null) => {
+    setInternalMessage(msg);
+    if (!msg) return;
+    if (msg.type === 'error') {
+      showError(msg.text, 'LỖI BẢNG LƯƠNG & ỨNG LƯƠNG');
+    } else if (msg.type === 'warning') {
+      showWarning(msg.text, 'CẢNH BÁO BẢNG LƯƠNG');
+    } else {
+      showSuccess(msg.text, 'THAO TÁC THÀNH CÔNG');
+    }
+  };
 
   // Data states
   const [payrolls, setPayrolls] = useState<Payroll[]>([]);

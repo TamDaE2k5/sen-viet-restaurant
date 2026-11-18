@@ -32,15 +32,29 @@ import {
 } from '../../api/hr';
 import { User, RoleName } from '../../types/auth';
 import { getUsersApi, assignUserRolesApi } from '../../api/auth';
+import { useNotification } from '../../context/NotificationContext';
 
 interface HRModuleProps {
   currentUser?: User | null;
 }
 
 export const HRModule: React.FC<HRModuleProps> = ({ currentUser }) => {
+  const { showError, showSuccess, showWarning } = useNotification();
   const [activeTab, setActiveTab] = useState<'attendance' | 'exam' | 'uniform' | 'roles'>('attendance');
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' | 'warning' } | null>(null);
+  const [message, setInternalMessage] = useState<{ text: string; type: 'success' | 'error' | 'warning' } | null>(null);
+
+  const setMessage = (msg: { text: string; type: 'success' | 'error' | 'warning' } | null) => {
+    setInternalMessage(msg);
+    if (!msg) return;
+    if (msg.type === 'error') {
+      showError(msg.text, 'LỖI NHÂN SỰ & CHẤM CÔNG');
+    } else if (msg.type === 'warning') {
+      showWarning(msg.text, 'CẢNH BÁO NHÂN SỰ');
+    } else {
+      showSuccess(msg.text, 'THAO TÁC NHÂN SỰ THÀNH CÔNG');
+    }
+  };
 
   // Tab 4: Multi-Role RBAC Management state (Phase 9)
   const [allUsers, setAllUsers] = useState<User[]>([]);

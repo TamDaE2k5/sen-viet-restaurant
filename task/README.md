@@ -42,7 +42,7 @@
 
 | Giai đoạn | Tên phân hệ / Giai đoạn | Mục tiêu chính | File chi tiết | Số task | Trạng thái |
 | :---: | :--- | :--- | :--- | :---: | :---: |
-| **P12** | [Phân View Vai Trò, Cảnh Báo Nổi Bật & Dữ Liệu Demo](file:///run/media/tamdae/Data/Source%20code/restaurant_project/task/phase-12-role-view-guard-and-demo-data.md) | 1. Ẩn triệt để tính năng không có quyền ngay từ menu<br>2. Thông báo/cảnh báo nổi bật trực quan<br>3. Tạo bộ data mẫu 5-10 records demo khách | `phase-12-role-view-guard-and-demo-data.md` | 4 | 📋 Sẵn sàng thực hiện |
+| **P12** | [Phân View Vai Trò, Cảnh Báo Nổi Bật & Dữ Liệu Demo](file:///run/media/tamdae/Data/Source%20code/restaurant_project/task/phase-12-role-view-guard-and-demo-data.md) | 1. Ẩn triệt để tính năng không có quyền ngay từ menu<br>2. Thông báo/cảnh báo nổi bật trực quan<br>3. Tạo bộ data mẫu 5-10 records demo khách | `phase-12-role-view-guard-and-demo-data.md` | 4 | ✅ Hoàn thành |
 
 ---
 
