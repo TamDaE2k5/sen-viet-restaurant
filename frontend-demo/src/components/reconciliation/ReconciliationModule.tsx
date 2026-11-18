@@ -15,7 +15,8 @@ import {
   RotateCw,
   FileCheck,
   ChevronRight,
-  ShieldAlert
+  ShieldAlert,
+  Sparkles
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
@@ -107,6 +108,24 @@ export const ReconciliationModule: React.FC = () => {
       loadData();
     } catch (err: any) {
       showNotice('error', err.response?.data?.message || 'Lỗi khi tải lên file CukCuk');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  // Nạp 1-Click dữ liệu mẫu bán hàng CukCuk (Task 6)
+  const handleLoadSampleCukCuk = async () => {
+    try {
+      setIsUploading(true);
+      const res = await reconciliationApi.loadSampleCukCukData();
+      setImportResult(res);
+      showNotice(
+        'success',
+        `Nạp dữ liệu mẫu bán hàng CukCuk thành công! Đã ghi nhận ${res.totalGuestCount} khách, doanh thu ${res.totalRevenue.toLocaleString('vi-VN')} đ.`
+      );
+      loadData();
+    } catch (err: any) {
+      showNotice('error', 'Lỗi khi nạp dữ liệu mẫu CukCuk: ' + err.message);
     } finally {
       setIsUploading(false);
     }
@@ -499,6 +518,38 @@ export const ReconciliationModule: React.FC = () => {
               <p className="text-xs text-slate-500 mt-1">
                 Hệ thống tự động bóc tách doanh thu ca, số khách người lớn, số khách trẻ em và các gói vé buffet để đối soát.
               </p>
+            </div>
+
+            {/* Nút nạp dữ liệu mẫu 1-Click cho Demo */}
+            <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-sm">
+              <div className="flex items-center gap-2.5">
+                <div className="h-10 w-10 rounded-xl bg-amber-500 text-white flex items-center justify-center flex-shrink-0 shadow-sm">
+                  <Sparkles className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="font-bold text-slate-900 text-xs sm:text-sm">
+                    Trải nghiệm nhanh không cần file Excel thực tế
+                  </div>
+                  <div className="text-[11px] text-slate-600">
+                    Nạp ngay doanh số ca 48.500.000 đ, 186 khách buffet và tính toán chênh lệch tự động
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleLoadSampleCukCuk}
+                disabled={isUploading}
+                className="btn-touch px-4 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300 text-white font-extrabold text-xs rounded-xl shadow-md shadow-amber-600/25 flex items-center gap-1.5 flex-shrink-0"
+              >
+                {isUploading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <>
+                    <Sparkles className="h-4 w-4" />
+                    <span>Nạp Dữ Liệu Mẫu CukCuk (1-Click)</span>
+                  </>
+                )}
+              </button>
             </div>
 
             <form onSubmit={handleFileUpload} className="space-y-4">

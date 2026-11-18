@@ -318,14 +318,14 @@ export const HRModule: React.FC<HRModuleProps> = ({ currentUser }) => {
   const setPresetInLocation = () => {
     setCurrentLat(branchCoords.lat);
     setCurrentLon(branchCoords.lon);
-    setMessage({ text: 'Đã định vị tại nhà hàng (Khoảng cách: 0m - HỢP LỆ)', type: 'success' });
+    setMessage({ text: 'Đã định vị tại nhà hàng (Khoảng cách: 0m ≤ 50m - HỢP LỆ)', type: 'success' });
   };
 
   const setPresetOutLocation = () => {
-    // 500m away
-    setCurrentLat(branchCoords.lat + 0.0045);
+    // 450m away
+    setCurrentLat(branchCoords.lat + 0.0041);
     setCurrentLon(branchCoords.lon);
-    setMessage({ text: 'Đã chuyển tọa độ cách nhà hàng ~500m (CẢNH BÁO VI PHẠM GEOFENCE)', type: 'warning' });
+    setMessage({ text: 'Đã chuyển tọa độ cách nhà hàng ~450m > 50m (CẢNH BÁO VI PHẠM GEOFENCE)', type: 'warning' });
   };
 
   const getRealGPSLocation = () => {
@@ -368,7 +368,7 @@ export const HRModule: React.FC<HRModuleProps> = ({ currentUser }) => {
         longitude: currentLon
       });
       setMessage({
-        text: `Check-in thành công! Khoảng cách: ${res.checkInDistanceMeters}m. ${res.isValidLocation ? '✅ Vị trí hợp lệ' : '⚠️ Cảnh báo: Ngoài phạm vi 100m!'}`,
+        text: `Check-in thành công! Khoảng cách: ${res.checkInDistanceMeters}m. ${res.isValidLocation ? '✅ Vị trí hợp lệ (≤50m)' : '⚠️ Cảnh báo: Ngoài phạm vi chi nhánh (>50m)!' }`,
         type: res.isValidLocation ? 'success' : 'warning'
       });
       await loadAttendanceData();
@@ -719,9 +719,9 @@ export const HRModule: React.FC<HRModuleProps> = ({ currentUser }) => {
                 </div>
               </div>
               <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
-                distanceMeters <= 100 ? 'bg-emerald-200 text-emerald-900' : 'bg-rose-200 text-rose-900'
+                distanceMeters <= 50 ? 'bg-emerald-200 text-emerald-900' : 'bg-rose-200 text-rose-900'
               }`}>
-                {distanceMeters <= 100 ? 'Trong bán kính' : 'Vượt định mức'}
+                {distanceMeters <= 50 ? 'Trong bán kính (≤50m)' : 'Ngoài chi nhánh (>50m)'}
               </span>
             </div>
 
@@ -740,16 +740,16 @@ export const HRModule: React.FC<HRModuleProps> = ({ currentUser }) => {
                 <button
                   type="button"
                   onClick={setPresetInLocation}
-                  className="py-1.5 px-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded-lg text-xs font-medium text-center"
+                  className="py-1.5 px-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded-lg text-xs font-medium text-center shadow-sm"
                 >
-                  📍 Tại nhà hàng (0m - Hợp lệ)
+                  📍 Giả lập GPS tại nhà hàng (≤50m)
                 </button>
                 <button
                   type="button"
                   onClick={setPresetOutLocation}
-                  className="py-1.5 px-2 bg-rose-100 hover:bg-rose-200 text-rose-800 rounded-lg text-xs font-medium text-center"
+                  className="py-1.5 px-2 bg-rose-100 hover:bg-rose-200 text-rose-800 rounded-lg text-xs font-medium text-center shadow-sm"
                 >
-                  ⚠️ Cách 500m (Vi phạm)
+                  📍 Giả lập GPS ngoài chi nhánh (&gt;50m)
                 </button>
               </div>
             </div>

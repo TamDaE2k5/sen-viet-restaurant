@@ -11,6 +11,7 @@ import { HRModule } from './components/hr/HRModule';
 import { PayrollModule } from './components/payroll/PayrollModule';
 import { NetworkStatusBar } from './components/common/NetworkStatusBar';
 import { ProminentAlert } from './components/common/ProminentAlert';
+import { DemoToolbar } from './components/demo/DemoToolbar';
 import { isViewAuthorized, getDefaultAuthorizedView } from './utils/rbac';
 import { Loader2, ShieldAlert } from 'lucide-react';
 
@@ -65,7 +66,12 @@ export const App: React.FC = () => {
   }
 
   if (!isAuthenticated) {
-    return <LoginPage />;
+    return (
+      <>
+        <DemoToolbar />
+        <LoginPage />
+      </>
+    );
   }
 
   // Component chặn truy cập trái phép khi người dùng cố tình can thiệp state
@@ -94,6 +100,9 @@ export const App: React.FC = () => {
 
   return (
     <>
+      {/* Thanh công cụ Demo tương tác độc lập (DemoToolbar) */}
+      <DemoToolbar />
+
       {/* Banner thông báo nổi bật (Task 12.2: Prominent Visual Alerts) */}
       <ProminentAlert />
 
