@@ -18,6 +18,7 @@ import {
   Plus,
   Trash2,
   ShieldAlert,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -105,6 +106,7 @@ export const KitchenModule: React.FC = () => {
   const [isCompressing, setIsCompressing] = useState<boolean>(false);
   const [isSubmittingDamage, setIsSubmittingDamage] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
 
   // Tải dữ liệu ban đầu
   const loadInitialData = async () => {
@@ -208,7 +210,16 @@ export const KitchenModule: React.FC = () => {
 
     try {
       setIsStartingBatch(true);
+      if (!navigator.onLine) {
+        localStorage.setItem('senviet_offline_start_batch', JSON.stringify(reqData));
+        showNotice(
+          'error',
+          `⚠️ Mất kết nối mạng! Dữ liệu mẻ [${item.itemName} - ${batchInputWeight} kg] đã được lưu tạm trên máy. Vui lòng bấm 'Thử lại' khi có mạng lại.`
+        );
+        return;
+      }
       const res = await kitchenApi.startBatch(reqData);
+      localStorage.removeItem('senviet_offline_start_batch');
       showNotice('success', `Đã khởi tạo mẻ [${res.data.batchCode}] cho món ${item.itemName}`);
       setShowSecondBatchWarning(false);
       setPendingBatchRequest(null);
@@ -217,7 +228,20 @@ export const KitchenModule: React.FC = () => {
       setActiveBatches(updatedBatches);
       setActiveModal(null);
     } catch (err: any) {
-      if (err.response?.status === 409) {
+      const isNetworkErr =
+        !navigator.onLine ||
+        err.code === 'ERR_NETWORK' ||
+        err.message?.includes('Network Error') ||
+        err.message?.includes('timeout') ||
+        !err.response;
+
+      if (isNetworkErr) {
+        localStorage.setItem('senviet_offline_start_batch', JSON.stringify(reqData));
+        showNotice(
+          'error',
+          `⚠️ Mất kết nối mạng! Dữ liệu cân mẻ ${batchInputWeight} kg đã được lưu tạm an toàn trên máy. Vui lòng bấm 'Thử lại' khi có mạng lại.`
+        );
+      } else if (err.response?.status === 409) {
         // Kích hoạt Modal Cảnh Báo Đỏ Mẻ Thứ Hai
         setPendingBatchRequest(reqData);
         setShowSecondBatchWarning(true);
@@ -236,17 +260,26 @@ export const KitchenModule: React.FC = () => {
     }
   };
 
-  // Hoàn tất cân mẻ thành phẩm
+  // Hoàn tất cân mẻ thành phẩm (Offline Resilience)
   const handleFinishBatchSubmit = async () => {
     if (!selectedFinishBatch || finishOutputWeight <= 0) return;
 
     try {
       setIsFinishingBatch(true);
+      if (!navigator.onLine) {
+        localStorage.setItem(`senviet_offline_finish_batch_${selectedFinishBatch.id}`, finishOutputWeight.toString());
+        showNotice(
+          'error',
+          `⚠️ Mất kết nối mạng! Số cân thành phẩm ${finishOutputWeight} kg của mẻ [${selectedFinishBatch.batchCode}] đã được lưu tạm an toàn. Vui lòng bấm 'Thử lại' khi có mạng.`
+        );
+        return;
+      }
       const res = await kitchenApi.finishBatch({
         batchId: selectedFinishBatch.id,
         outputWeight: finishOutputWeight,
       });
 
+      localStorage.removeItem(`senviet_offline_finish_batch_${selectedFinishBatch.id}`);
       const batchData = res.data;
       if (batchData.overStandard) {
         showNotice(
@@ -263,7 +296,23 @@ export const KitchenModule: React.FC = () => {
       setActiveBatches(updatedBatches);
       setActiveModal(null);
     } catch (err: any) {
-      showNotice('error', err.response?.data?.message || 'Lỗi khi hoàn thành mẻ');
+      const isNetworkErr =
+        !navigator.onLine ||
+        err.code === 'ERR_NETWORK' ||
+        err.message?.includes('Network Error') ||
+        err.message?.includes('timeout') ||
+        !err.response;
+
+      if (isNetworkErr) {
+        // Giữ nguyên số kg nhân viên vừa cân xong, không làm mất dữ liệu
+        localStorage.setItem(`senviet_offline_finish_batch_${selectedFinishBatch.id}`, finishOutputWeight.toString());
+        showNotice(
+          'error',
+          `⚠️ Mất kết nối mạng! Dữ liệu cân mẻ ${finishOutputWeight} kg đã được lưu tạm an toàn trên máy. Vui lòng bấm 'Thử lại' khi có mạng lại.`
+        );
+      } else {
+        showNotice('error', err.response?.data?.message || 'Lỗi khi hoàn thành mẻ');
+      }
     } finally {
       setIsFinishingBatch(false);
     }
@@ -328,17 +377,29 @@ export const KitchenModule: React.FC = () => {
     e.preventDefault();
     if (!damageItemId || damageQty <= 0) return;
 
+    const damagePayload = {
+      itemId: Number(damageItemId),
+      quantity: damageQty,
+      reason: damageReason,
+      supplierCode: damageReason === 'HONG_DO_NHA_CUNG_CAP' ? damageSupplier : undefined,
+      batchNumber: selectedBatchCode || undefined,
+      note: damageNote || undefined,
+      imageUrls: damageImage?.dataUrl || undefined,
+    };
+
     try {
       setIsSubmittingDamage(true);
-      const res = await kitchenApi.recordDamageReport({
-        itemId: Number(damageItemId),
-        quantity: damageQty,
-        reason: damageReason,
-        supplierCode: damageReason === 'HONG_DO_NHA_CUNG_CAP' ? damageSupplier : undefined,
-        batchNumber: selectedBatchCode || undefined,
-        note: damageNote || undefined,
-        imageUrls: damageImage?.dataUrl || undefined,
-      });
+      if (!navigator.onLine) {
+        localStorage.setItem('senviet_offline_damage_report', JSON.stringify(damagePayload));
+        showNotice(
+          'error',
+          `⚠️ Mất kết nối mạng! Dữ liệu báo hỏng (${damageQty} kg) đã được lưu tạm an toàn trên máy. Vui lòng bấm "Thử lại" khi có mạng.`
+        );
+        return;
+      }
+
+      const res = await kitchenApi.recordDamageReport(damagePayload);
+      localStorage.removeItem('senviet_offline_damage_report');
 
       const report = res.data;
       if (report.status === 'TU_DONG_DUYET') {
@@ -351,7 +412,22 @@ export const KitchenModule: React.FC = () => {
       setDamageImage(null);
       setActiveModal(null);
     } catch (err: any) {
-      showNotice('error', err.response?.data?.message || 'Lỗi khi gửi báo hỏng');
+      const isNetworkErr =
+        !navigator.onLine ||
+        err.code === 'ERR_NETWORK' ||
+        err.message?.includes('Network Error') ||
+        err.message?.includes('timeout') ||
+        !err.response;
+
+      if (isNetworkErr) {
+        localStorage.setItem('senviet_offline_damage_report', JSON.stringify(damagePayload));
+        showNotice(
+          'error',
+          `⚠️ Mất kết nối mạng! Dữ liệu báo hỏng (${damageQty} kg) đã được lưu tạm trên máy. Vui lòng bấm "Thử lại" khi mạng ổn định.`
+        );
+      } else {
+        showNotice('error', err.response?.data?.message || 'Lỗi khi gửi báo hỏng');
+      }
     } finally {
       setIsSubmittingDamage(false);
     }
@@ -654,7 +730,13 @@ export const KitchenModule: React.FC = () => {
                 <button
                   onClick={() => {
                     setSelectedFinishBatch(b);
-                    setFinishOutputWeight(b.inputWeight ? Math.round(b.inputWeight * 0.8 * 10) / 10 : 0);
+                    const savedDraft = localStorage.getItem(`senviet_offline_finish_batch_${b.id}`);
+                    if (savedDraft) {
+                      setFinishOutputWeight(parseFloat(savedDraft));
+                      showNotice('success', `Đã khôi phục số cân lưu tạm: ${savedDraft} kg`);
+                    } else {
+                      setFinishOutputWeight(b.inputWeight ? Math.round(b.inputWeight * 0.8 * 10) / 10 : 0);
+                    }
                     setBatchTab('finish');
                     setActiveModal('batch');
                   }}
@@ -905,7 +987,13 @@ export const KitchenModule: React.FC = () => {
                             key={b.id}
                             onClick={() => {
                               setSelectedFinishBatch(b);
-                              setFinishOutputWeight(b.inputWeight ? Math.round(b.inputWeight * 0.8 * 10) / 10 : 0);
+                              const savedDraft = localStorage.getItem(`senviet_offline_finish_batch_${b.id}`);
+                              if (savedDraft) {
+                                setFinishOutputWeight(parseFloat(savedDraft));
+                                showNotice('success', `Đã khôi phục số cân lưu tạm: ${savedDraft} kg`);
+                              } else {
+                                setFinishOutputWeight(b.inputWeight ? Math.round(b.inputWeight * 0.8 * 10) / 10 : 0);
+                              }
                             }}
                             className={`p-3 rounded-xl border cursor-pointer transition-all ${
                               selectedFinishBatch?.id === b.id
@@ -1284,14 +1372,23 @@ export const KitchenModule: React.FC = () => {
                 </div>
               )}
 
-              {/* UPLOAD & NÉN ẢNH CANVAS */}
+              {/* UPLOAD & NÉN ẢNH CANVAS (Hỗ trợ 2 chế độ: Chụp trực tiếp & Chọn từ thư viện) */}
               <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">CHỤP ẢNH MINH CHỨNG (NÉN TỰ ĐỘNG)</label>
+                <label className="block text-xs font-bold text-slate-600 mb-1">ẢNH MINH CHỨNG (NÉN TỰ ĐỘNG DƯỚI 250KB)</label>
+                {/* Input 1: Chụp ảnh trực tiếp với camera sau */}
                 <input
                   type="file"
                   accept="image/*"
                   capture="environment"
                   ref={fileInputRef}
+                  onChange={handlePhotoSelect}
+                  className="hidden"
+                />
+                {/* Input 2: Chọn ảnh từ máy / thư viện nếu camera bị hạn chế quyền */}
+                <input
+                  type="file"
+                  accept="image/*"
+                  ref={galleryInputRef}
                   onChange={handlePhotoSelect}
                   className="hidden"
                 />
@@ -1323,21 +1420,38 @@ export const KitchenModule: React.FC = () => {
                     </button>
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isCompressing}
-                    className="btn-touch w-full h-14 rounded-xl border-2 border-dashed border-slate-300 hover:border-rose-400 text-slate-600 hover:text-rose-600 flex items-center justify-center gap-2 font-bold text-xs"
-                  >
-                    {isCompressing ? (
-                      <Loader2 className="h-5 w-5 animate-spin" />
-                    ) : (
-                      <>
-                        <Camera className="h-5 w-5" />
-                        <span>CHỤP ẢNH / TẢI ẢNH BÁO HỎNG</span>
-                      </>
-                    )}
-                  </button>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isCompressing}
+                      className="btn-touch h-14 rounded-xl border-2 border-dashed border-rose-300 hover:border-rose-500 bg-rose-50/40 text-rose-800 flex items-center justify-center gap-2 font-bold text-xs shadow-sm transition-all active:scale-95"
+                    >
+                      {isCompressing ? (
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                      ) : (
+                        <>
+                          <Camera className="h-5 w-5 text-rose-600" />
+                          <span>Chụp Ảnh Ngay</span>
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => galleryInputRef.current?.click()}
+                      disabled={isCompressing}
+                      className="btn-touch h-14 rounded-xl border-2 border-dashed border-slate-300 hover:border-slate-500 bg-slate-50 text-slate-700 flex items-center justify-center gap-2 font-bold text-xs shadow-sm transition-all active:scale-95"
+                    >
+                      {isCompressing ? (
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                      ) : (
+                        <>
+                          <ImageIcon className="h-5 w-5 text-slate-500" />
+                          <span>Chọn Từ Thư Viện</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                 )}
               </div>
 

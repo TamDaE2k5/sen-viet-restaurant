@@ -53,6 +53,16 @@ public class AttendanceService {
         Instant now = Instant.now();
         LocalDate today = LocalDate.now();
 
+        // Xử lý Idempotency cho tình huống retry ngoại tuyến (Offline Resilience):
+        // Nếu nhân viên vừa check-in ca này trong vòng 5 phút trước -> Trả lại bản ghi thành công
+        Optional<Attendance> existingCheckIn = attendanceRepository.findFirstByUserIdAndAttendanceDateOrderByCheckInTimeDesc(currentUser.getId(), today);
+        if (existingCheckIn.isPresent() && "DANG_LAM".equals(existingCheckIn.get().getStatus()) && existingCheckIn.get().getCheckOutTime() == null) {
+            if (Duration.between(existingCheckIn.get().getCheckInTime(), now).toMinutes() < 5) {
+                log.info("Xử lý idempotent check-in cho nhân viên [{}] ca [{}]", user.getFullName(), request.getShiftName());
+                return mapToResponse(existingCheckIn.get());
+            }
+        }
+
         // Tính khoảng cách Haversine từ GPS thiết bị đến tọa độ chi nhánh
         BigDecimal distanceMeters = calculateDistance(
                 request.getLatitude(), request.getLongitude(),
@@ -97,6 +107,15 @@ public class AttendanceService {
 
         Branch branch = attendance.getBranch();
         Instant now = Instant.now();
+
+        // Xử lý Idempotency cho tình huống retry ngoại tuyến (Offline Resilience):
+        // Nếu đã check-out trong vòng 5 phút trước -> Trả lại bản ghi đã hoàn tất
+        if (attendance.getCheckOutTime() != null) {
+            if (Duration.between(attendance.getCheckOutTime(), now).toMinutes() < 5) {
+                log.info("Xử lý idempotent check-out cho nhân viên [{}]", currentUser.getUsername());
+                return mapToResponse(attendance);
+            }
+        }
 
         BigDecimal distanceMeters = calculateDistance(
                 request.getLatitude(), request.getLongitude(),

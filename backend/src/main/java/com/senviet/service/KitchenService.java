@@ -177,6 +177,15 @@ public class KitchenService {
                 .orElseThrow(() -> new ResourceNotFoundException("ProcessingBatch", "id", request.getBatchId()));
 
         if (!"DANG_LAM".equals(batch.getStatus())) {
+            // Xử lý Idempotency cho tình huống retry ngoại tuyến (Offline Resilience):
+            // Nếu mẻ đã hoàn tất với cùng khối lượng cân thành phẩm, trả về bản ghi đã hoàn tất
+            if ("HOAN_THANH".equals(batch.getStatus()) && batch.getOutputWeight() != null
+                    && request.getOutputWeight() != null
+                    && batch.getOutputWeight().compareTo(request.getOutputWeight()) == 0) {
+                log.info("Xử lý idempotent retry hoàn thành mẻ {}: giữ nguyên kết quả {} kg",
+                        batch.getBatchCode(), request.getOutputWeight());
+                return mapToBatchResponse(batch, batch.getIsOverStandard() ? "Hao hụt thực tế vượt định mức chuẩn cho phép!" : null);
+            }
             throw new ApiException("Mẻ chế biến này đã hoàn thành hoặc đã bị hủy");
         }
 

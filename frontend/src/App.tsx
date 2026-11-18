@@ -9,6 +9,7 @@ import { ReconciliationModule } from './components/reconciliation/Reconciliation
 import { WarehouseModule } from './components/warehouse/WarehouseModule';
 import { HRModule } from './components/hr/HRModule';
 import { PayrollModule } from './components/payroll/PayrollModule';
+import { NetworkStatusBar } from './components/common/NetworkStatusBar';
 import { Loader2 } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -50,6 +51,9 @@ export const App: React.FC = () => {
   // Màn hình Desktop cho Quản lý & Kế toán dùng DesktopShell
   return (
     <>
+      {/* Thanh trạng thái kết nối mạng (Phase 11: Offline Resilience) */}
+      <NetworkStatusBar />
+
       {/* Viewport Mobile / Tablet nhỏ */}
       <div className="block lg:hidden">
         <MobileShell activeTab={mobileTab} onTabChange={setMobileTab}>

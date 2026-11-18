@@ -8,7 +8,7 @@
 
 ### Danh Sách Nhiệm Vụ (Task Checklist)
 
-- [ ] **Task 11.1: Cơ Chế Lưu Trữ Tạm Dữ Liệu Form Khi Mất Mạng (Offline Resilience)**
+- [x] **Task 11.1: Cơ Chế Lưu Trữ Tạm Dữ Liệu Form Khi Mất Mạng (Offline Resilience)**
   - **Đặc tả gốc**: *"Không dùng được khi mất mạng $\rightarrow$ Báo lỗi rõ, giữ số đã gõ trên màn hình để lưu lại."*
   - Phát triển Custom Hook `useOfflineFormState(formKey, initialData)`:
     - Tự động đồng bộ các giá trị đang nhập (kg xuất, kg thành phẩm, số lượng, ghi chú) vào `sessionStorage` / `localStorage`.
@@ -17,13 +17,13 @@
       - Giữ nguyên toàn bộ số kg nhân viên vừa cân xong.
       - Hiển thị Toast thông báo màu đỏ nổi bật: *"Mất kết nối mạng! Dữ liệu cân mẻ đã được lưu tạm trên máy. Vui lòng bấm 'Thử lại' khi có mạng lại."*
 
-- [ ] **Task 11.2: Thành Phần Lắng Nghe Trạng Thái Mạng (Online/Offline Network Banner)**
+- [x] **Task 11.2: Thành Phần Lắng Nghe Trạng Thái Mạng (Online/Offline Network Banner)**
   - Tạo Component `<NetworkStatusBar />` hiển thị trên đầu ứng dụng di động:
     - Lắng nghe sự kiện trình duyệt: `window.addEventListener('online')` và `window.addEventListener('offline')`.
     - Khi offline: Xuất hiện thanh màu cam cảnh báo: *"Đang ngoại tuyến — Mọi thay đổi sẽ được lưu tạm tại máy"*.
     - Khi có mạng trở lại: Tự động đổi sang màu xanh: *"Đã kết nối lại Internet — Bạn có thể tiếp tục lưu dữ liệu"*.
 
-- [ ] **Task 11.3: Thành Phần Hướng Dẫn Cấp Quyền Camera & Vị Trí (Permission Guide Modal)**
+- [x] **Task 11.3: Thành Phần Hướng Dẫn Cấp Quyền Camera & Vị Trí (Permission Guide Modal)**
   - **Đặc tả gốc**: *"Xin quyền lần đầu, hướng dẫn khi nhân viên lỡ bấm từ chối."*
   - Xây dựng Component `<PermissionGuideModal isOpen={isOpen} type={'CAMERA' | 'GEOLOCATION'} onClose={...} />`.
   - Nhận diện hệ điều hành và trình duyệt của người dùng (iOS Safari, Android Chrome, Zalo In-App Browser).
@@ -37,7 +37,7 @@
       2. Chọn "Cài đặt trang web" (Website Settings).
       3. Chuyển quyền Camera / Vị trí thành "Cho phép" (Allow) -> Tải lại trang.
 
-- [ ] **Task 11.4: Tích Hợp Bắt Lỗi Quyền Trên Các Màn Hình Chấm Công & Báo Hỏng**
+- [x] **Task 11.4: Tích Hợp Bắt Lỗi Quyền Trên Các Màn Hình Chấm Công & Báo Hỏng**
   - Tại màn hình Chấm công selfie + GPS:
     - Bắt mã lỗi `GeolocationPositionError.PERMISSION_DENIED` (code 1) -> Tự động bật Modal hướng dẫn cấp quyền Vị trí GPS.
     - Bắt lỗi `NotAllowedError` từ `navigator.mediaDevices.getUserMedia` -> Tự động bật Modal hướng dẫn cấp quyền Camera.

@@ -17,8 +17,10 @@ import {
   HelpCircle,
   ShieldCheck,
   ExternalLink,
-  RotateCcw
+  RotateCcw,
+  Upload
 } from 'lucide-react';
+import { PermissionGuideModal } from '../common/PermissionGuideModal';
 import {
   hrApi,
   Attendance,
@@ -83,6 +85,11 @@ export const HRModule: React.FC<HRModuleProps> = ({ currentUser }) => {
   const [employeeAllocations, setEmployeeAllocations] = useState<UniformAllocation[]>([]);
   const [selectedReturnIds, setSelectedReturnIds] = useState<number[]>([]);
   const [managerNoteInput, setManagerNoteInput] = useState<string>('');
+
+  // Hardware Permissions UX (Phase 11)
+  const [showPermissionModal, setShowPermissionModal] = useState<boolean>(false);
+  const [permissionModalType, setPermissionModalType] = useState<'CAMERA' | 'GEOLOCATION'>('GEOLOCATION');
+  const selfieFileInputRef = useRef<HTMLInputElement>(null);
 
   const isManagerOrAccountant = currentUser?.roles.some((r: RoleName) =>
     ['ROLE_RESTAURANT_MANAGER', 'ROLE_BRANCH_ACCOUNTANT', 'ROLE_GENERAL_ACCOUNTANT'].includes(r)
@@ -209,7 +216,7 @@ export const HRModule: React.FC<HRModuleProps> = ({ currentUser }) => {
     }
   };
 
-  // Camera handling
+  // Camera handling (Phase 11: Hardware Permissions & Fallback)
   const startCamera = async () => {
     try {
       setIsCameraActive(true);
@@ -217,11 +224,33 @@ export const HRModule: React.FC<HRModuleProps> = ({ currentUser }) => {
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
-    } catch (err) {
-      console.warn('Webcam not accessible, using simulated selfie capture', err);
-      // Fallback simulated camera canvas
-      generateSimulatedSelfie();
+    } catch (err: any) {
+      setIsCameraActive(false);
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setPermissionModalType('CAMERA');
+        setShowPermissionModal(true);
+        setMessage({
+          text: 'Quyền Máy ảnh bị chặn trên trình duyệt! Vui lòng làm theo hướng dẫn 3 bước để mở lại quyền.',
+          type: 'warning'
+        });
+      } else {
+        console.warn('Webcam not accessible, using fallback simulated/file upload', err);
+        generateSimulatedSelfie();
+      }
     }
+  };
+
+  const handleSelfieFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      setCapturedSelfie(dataUrl);
+      setIsCameraActive(false);
+      setMessage({ text: 'Đã tải ảnh selfie thành công từ thiết bị!', type: 'success' });
+    };
+    reader.readAsDataURL(file);
   };
 
   const capturePhoto = () => {
@@ -294,9 +323,21 @@ export const HRModule: React.FC<HRModuleProps> = ({ currentUser }) => {
           setMessage({ text: 'Đã nhận tọa độ GPS thực từ thiết bị di động', type: 'success' });
         },
         err => {
-          setMessage({ text: `Không lấy được GPS thực: ${err.message}. Sử dụng nút Demo bên dưới.`, type: 'warning' });
-        }
+          if (err.code === err.PERMISSION_DENIED || err.code === 1) {
+            setPermissionModalType('GEOLOCATION');
+            setShowPermissionModal(true);
+            setMessage({
+              text: 'Quyền Vị trí GPS bị chặn trên trình duyệt! Vui lòng làm theo hướng dẫn 3 bước để mở lại quyền.',
+              type: 'warning'
+            });
+          } else {
+            setMessage({ text: `Không lấy được GPS thực: ${err.message}. Sử dụng nút Demo bên dưới.`, type: 'warning' });
+          }
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
       );
+    } else {
+      setMessage({ text: 'Trình duyệt không hỗ trợ định vị GPS.', type: 'error' });
     }
   };
 
@@ -716,18 +757,35 @@ export const HRModule: React.FC<HRModuleProps> = ({ currentUser }) => {
             </div>
 
             {/* Camera Actions */}
-            <div className="flex gap-2 justify-center">
+            <div className="flex flex-wrap gap-2 justify-center">
+              {/* Fallback hidden file input for photo upload */}
+              <input
+                type="file"
+                accept="image/*"
+                capture="user"
+                ref={selfieFileInputRef}
+                onChange={handleSelfieFileSelect}
+                className="hidden"
+              />
               {!isCameraActive ? (
-                <button
-                  onClick={startCamera}
-                  className="py-2 px-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow"
-                >
-                  <Camera className="w-4 h-4" /> Mở Camera / Chụp Selfie
-                </button>
+                <>
+                  <button
+                    onClick={startCamera}
+                    className="py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow transition-all active:scale-95"
+                  >
+                    <Camera className="w-4 h-4" /> Mở Camera Chụp
+                  </button>
+                  <button
+                    onClick={() => selfieFileInputRef.current?.click()}
+                    className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all active:scale-95"
+                  >
+                    <Upload className="w-4 h-4 text-slate-500" /> Tải Ảnh Lên
+                  </button>
+                </>
               ) : (
                 <button
                   onClick={capturePhoto}
-                  className="py-2 px-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow"
+                  className="py-2.5 px-6 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all active:scale-95"
                 >
                   <Check className="w-4 h-4" /> Chụp Ngay
                 </button>
@@ -1680,6 +1738,21 @@ export const HRModule: React.FC<HRModuleProps> = ({ currentUser }) => {
           </div>
         </div>
       )}
+
+      {/* Hardware Permission Guide Modal (Phase 11: Hardware Permissions UX) */}
+      <PermissionGuideModal
+        isOpen={showPermissionModal}
+        type={permissionModalType}
+        onClose={() => setShowPermissionModal(false)}
+        onRetry={() => {
+          setShowPermissionModal(false);
+          if (permissionModalType === 'CAMERA') {
+            startCamera();
+          } else {
+            getRealGPSLocation();
+          }
+        }}
+      />
     </div>
   );
 };
