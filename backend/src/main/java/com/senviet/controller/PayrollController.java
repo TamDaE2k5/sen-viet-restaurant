@@ -44,6 +44,7 @@ public class PayrollController {
     // ==========================================
 
     @PostMapping("/advances")
+    @PreAuthorize("hasAnyRole('ROLE_EMPLOYEE', 'ROLE_KITCHEN_STAFF', 'ROLE_RESTAURANT_MANAGER', 'ROLE_BRANCH_ACCOUNTANT')")
     @Operation(summary = "Nhân viên gửi đơn xin ứng lương", description = "Tối đa 1 đơn chờ duyệt tại một thời điểm")
     public ResponseEntity<ApiResponse<SalaryAdvanceResponse>> requestAdvance(
             @Valid @RequestBody SalaryAdvanceRequest request,
@@ -64,6 +65,7 @@ public class PayrollController {
     }
 
     @GetMapping("/advances/my")
+    @PreAuthorize("hasAnyRole('ROLE_EMPLOYEE', 'ROLE_KITCHEN_STAFF', 'ROLE_RESTAURANT_MANAGER', 'ROLE_BRANCH_ACCOUNTANT')")
     @Operation(summary = "Lịch sử xin ứng lương cá nhân", description = "Nhân viên tra cứu các lần xin ứng lương của mình")
     public ResponseEntity<ApiResponse<List<SalaryAdvanceResponse>>> getMyAdvances(
             @AuthenticationPrincipal UserPrincipal currentUser) {
@@ -148,6 +150,7 @@ public class PayrollController {
     }
 
     @GetMapping("/payroll/my")
+    @PreAuthorize("hasAnyRole('ROLE_EMPLOYEE', 'ROLE_KITCHEN_STAFF', 'ROLE_RESTAURANT_MANAGER', 'ROLE_BRANCH_ACCOUNTANT')")
     @Operation(summary = "Xem phiếu lương cá nhân", description = "Nhân viên xem chi tiết thu nhập thực lĩnh của mình theo từng tháng")
     public ResponseEntity<ApiResponse<List<PayrollResponse>>> getMyPayrolls(
             @AuthenticationPrincipal UserPrincipal currentUser) {

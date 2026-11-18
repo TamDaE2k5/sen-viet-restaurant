@@ -3,7 +3,18 @@ export type RoleName =
   | 'ROLE_RESTAURANT_MANAGER'
   | 'ROLE_BRANCH_ACCOUNTANT'
   | 'ROLE_GENERAL_ACCOUNTANT'
-  | 'ROLE_EMPLOYEE';
+  | 'ROLE_EMPLOYEE'
+  | string;
+
+export type AppContextType = 'KITCHEN' | 'EMPLOYEE_PORTAL' | 'MANAGEMENT';
+
+export interface AppContextOption {
+  id: AppContextType;
+  label: string;
+  badge: string;
+  description: string;
+  icon: string;
+}
 
 export interface User {
   id: number;

@@ -12,10 +12,24 @@ import { PayrollModule } from './components/payroll/PayrollModule';
 import { Loader2 } from 'lucide-react';
 
 export const App: React.FC = () => {
-  const { user, isAuthenticated, isLoading, isKitchen, isAccountant } = useAuth();
+  const { user, isAuthenticated, isLoading, isKitchen, isAccountant, activeContext } = useAuth();
   // Nếu là tài khoản bếp thì tab mặc định là 'kitchen', kế toán là 'reconciliation', ngược lại là 'dashboard'
   const [mobileTab, setMobileTab] = useState(isKitchen ? 'kitchen' : 'dashboard');
   const [desktopMenu, setDesktopMenu] = useState(isKitchen ? 'kitchen' : (isAccountant ? 'reconciliation' : 'dashboard'));
+
+  // Giai đoạn 9: Tự động đồng bộ không gian làm việc khi người dùng chuyển đổi Context
+  React.useEffect(() => {
+    if (activeContext === 'KITCHEN') {
+      setMobileTab('kitchen');
+      setDesktopMenu('kitchen');
+    } else if (activeContext === 'EMPLOYEE_PORTAL') {
+      setMobileTab('attendance');
+      setDesktopMenu('hr-attendance');
+    } else if (activeContext === 'MANAGEMENT') {
+      setMobileTab('dashboard');
+      setDesktopMenu('dashboard');
+    }
+  }, [activeContext]);
 
   if (isLoading) {
     return (

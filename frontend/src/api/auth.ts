@@ -22,3 +22,27 @@ export async function getMeApi(): Promise<User> {
   }
   return response.data.data;
 }
+
+/**
+ * Lấy danh sách người dùng trong hệ thống (dành cho Kế toán tổng / Quản trị viên).
+ */
+export async function getUsersApi(): Promise<User[]> {
+  try {
+    const response = await apiClient.get<ApiResponse<User[]>>('/v1/admin/users');
+    return response.data.data;
+  } catch (err: any) {
+    if (err.response?.status === 404) {
+      const response = await apiClient.get<ApiResponse<User[]>>('/v1/users');
+      return response.data.data;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Gán danh sách vai trò cho người dùng (/api/v1/admin/users/{userId}/roles).
+ */
+export async function assignUserRolesApi(userId: number, roles: string[]): Promise<User> {
+  const response = await apiClient.post<ApiResponse<User>>(`/v1/admin/users/${userId}/roles`, { roles });
+  return response.data.data;
+}

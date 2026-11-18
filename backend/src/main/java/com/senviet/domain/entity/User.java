@@ -58,6 +58,9 @@ public class User extends BaseEntity {
     @Builder.Default
     private java.math.BigDecimal baseSalary = new java.math.BigDecimal("7500000.00");
 
+    @Column(name = "role", length = 50)
+    private String role;
+
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(
         name = "user_roles",
@@ -66,4 +69,25 @@ public class User extends BaseEntity {
     )
     @Builder.Default
     private Set<Role> roles = new HashSet<>();
+
+    /**
+     * Kiểm tra người dùng có sở hữu một vai trò cụ thể hay không.
+     */
+    public boolean hasRole(RoleName roleName) {
+        if (roles == null) return false;
+        return roles.stream().anyMatch(r -> r.getRoleName() == roleName);
+    }
+
+    /**
+     * Lấy vai trò chính đại diện cho người dùng (Primary Role).
+     */
+    public String getPrimaryRole() {
+        if (role != null && !role.isBlank()) {
+            return role;
+        }
+        if (roles != null && !roles.isEmpty()) {
+            return roles.iterator().next().getRoleName().name();
+        }
+        return "ROLE_EMPLOYEE";
+    }
 }

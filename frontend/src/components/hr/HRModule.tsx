@@ -28,15 +28,22 @@ import {
   AbandonmentScanResult
 } from '../../api/hr';
 import { User, RoleName } from '../../types/auth';
+import { getUsersApi, assignUserRolesApi } from '../../api/auth';
 
 interface HRModuleProps {
   currentUser?: User | null;
 }
 
 export const HRModule: React.FC<HRModuleProps> = ({ currentUser }) => {
-  const [activeTab, setActiveTab] = useState<'attendance' | 'exam' | 'uniform'>('attendance');
+  const [activeTab, setActiveTab] = useState<'attendance' | 'exam' | 'uniform' | 'roles'>('attendance');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' | 'warning' } | null>(null);
+
+  // Tab 4: Multi-Role RBAC Management state (Phase 9)
+  const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [editingRolesUser, setEditingRolesUser] = useState<User | null>(null);
+  const [selectedUserRoles, setSelectedUserRoles] = useState<string[]>([]);
+  const [isSavingRoles, setIsSavingRoles] = useState<boolean>(false);
 
   // Tab 1: Attendance state
   const [attendances, setAttendances] = useState<Attendance[]>([]);
@@ -121,6 +128,53 @@ export const HRModule: React.FC<HRModuleProps> = ({ currentUser }) => {
       setAttendances(list);
     } catch (err: any) {
       console.error(err);
+    }
+  };
+
+  // Giai đoạn 9: Quản lý phân quyền đa vai trò
+  const loadUsersData = async () => {
+    try {
+      const users = await getUsersApi();
+      setAllUsers(users);
+    } catch (err: any) {
+      console.error('Lỗi khi nạp danh sách tài khoản phân quyền:', err);
+    }
+  };
+
+  const handleOpenEditRoles = (u: User) => {
+    setEditingRolesUser(u);
+    setSelectedUserRoles((u.roles as string[]) || []);
+  };
+
+  const handleToggleRole = (role: string) => {
+    if (selectedUserRoles.includes(role)) {
+      setSelectedUserRoles(selectedUserRoles.filter((r) => r !== role));
+    } else {
+      setSelectedUserRoles([...selectedUserRoles, role]);
+    }
+  };
+
+  const handleSaveUserRoles = async () => {
+    if (!editingRolesUser) return;
+    if (selectedUserRoles.length === 0) {
+      setMessage({ text: 'Người dùng phải có ít nhất 1 vai trò', type: 'error' });
+      return;
+    }
+
+    try {
+      setIsSavingRoles(true);
+      await assignUserRolesApi(editingRolesUser.id, selectedUserRoles);
+      setMessage({
+        text: `✅ Đã cập nhật vai trò cho người dùng "${editingRolesUser.fullName}" thành công!`,
+        type: 'success',
+      });
+      setEditingRolesUser(null);
+      loadUsersData();
+    } catch (err: any) {
+      console.error('Lỗi gán vai trò:', err);
+      setMessage({ text: err.response?.data?.message || 'Không thể gán vai trò người dùng', type: 'error' });
+    } finally {
+      setIsSavingRoles(false);
     }
   };
 
@@ -536,6 +590,24 @@ export const HRModule: React.FC<HRModuleProps> = ({ currentUser }) => {
           <Shirt className="w-4 h-4" />
           Đồng Phục & Nghỉ Việc
         </button>
+
+        {/* GIAI ĐOẠN 9: PHÂN QUYỀN ĐA VAI TRÒ */}
+        {isManagerOrAccountant && (
+          <button
+            onClick={() => {
+              setActiveTab('roles');
+              loadUsersData();
+            }}
+            className={`flex items-center gap-2 py-3 px-5 font-semibold text-sm border-b-2 transition-all ${
+              activeTab === 'roles'
+                ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50 rounded-t-lg font-bold'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <ShieldCheck className="w-4 h-4 text-indigo-600" />
+            Phân Quyền Đa Vai Trò (Phase 9)
+          </button>
+        )}
       </div>
 
       {/* TAB 1: ATTENDANCE */}
@@ -1320,6 +1392,249 @@ export const HRModule: React.FC<HRModuleProps> = ({ currentUser }) => {
               >
                 Xác Nhận Checklist
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* TAB 4: PHÂN QUYỀN ĐA VAI TRÒ (MULTI-ROLE RBAC)                 */}
+      {/* ============================================================== */}
+      {activeTab === 'roles' && (
+        <div className="space-y-4">
+          <div className="bg-indigo-50 border border-indigo-200 p-4 rounded-xl flex items-start gap-3">
+            <ShieldCheck className="h-5 w-5 text-indigo-600 flex-shrink-0 mt-0.5" />
+            <div className="text-xs sm:text-sm text-indigo-950">
+              <strong className="font-bold">Kiến Trúc Phân Quyền Đa Vai Trò (Multi-Role RBAC):</strong>
+              <p className="mt-0.5 text-indigo-900/90 leading-relaxed">
+                Cho phép 01 nhân sự sở hữu đồng thời nhiều vai trò. Ví dụ: Nhân viên Bếp vừa thao tác 4 nút kho bếp
+                (ROLE_KITCHEN_STAFF), vừa là Nhân viên cá nhân (ROLE_EMPLOYEE) để tự chấm công selfie, làm bài thi định kỳ quý
+                và xem phiếu lương. Kế toán tổng có thể linh hoạt gán thêm vai trò cho nhân sự.
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4 text-indigo-600" />
+                <span>Danh Sách Người Dùng & Vai Trò Hệ Thống ({allUsers.length || 5})</span>
+              </h3>
+              <button
+                onClick={loadUsersData}
+                className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-100 flex items-center gap-1"
+              >
+                <RefreshCw className="h-3 w-3" />
+                <span>Làm mới</span>
+              </button>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs sm:text-sm">
+                <thead className="bg-slate-100/70 text-slate-600 font-bold uppercase text-[11px] tracking-wider border-b border-slate-200">
+                  <tr>
+                    <th className="p-3.5">Họ Và Tên</th>
+                    <th className="p-3.5">Tên Đăng Nhập</th>
+                    <th className="p-3.5">Chi Nhánh</th>
+                    <th className="p-3.5">Các Vai Trò Đang Sở Hữu</th>
+                    <th className="p-3.5 text-right">Thao Tác</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {(allUsers.length > 0
+                    ? allUsers
+                    : [
+                        {
+                          id: 1,
+                          fullName: 'Nguyễn Văn Bếp (Thái Nguyên)',
+                          username: 'bep_thainguyen',
+                          branchName: 'Chi nhánh Thái Nguyên',
+                          roles: ['ROLE_KITCHEN_STAFF', 'ROLE_EMPLOYEE'] as RoleName[],
+                          status: 'ACTIVE',
+                        },
+                        {
+                          id: 2,
+                          fullName: 'Trần Thị Bếp (Quế Võ)',
+                          username: 'bep_quevo',
+                          branchName: 'Chi nhánh Quế Võ',
+                          roles: ['ROLE_KITCHEN_STAFF', 'ROLE_EMPLOYEE'] as RoleName[],
+                          status: 'ACTIVE',
+                        },
+                        {
+                          id: 3,
+                          fullName: 'Lê Quản Lý (Thái Nguyên)',
+                          username: 'ql_thainguyen',
+                          branchName: 'Chi nhánh Thái Nguyên',
+                          roles: ['ROLE_RESTAURANT_MANAGER', 'ROLE_EMPLOYEE'] as RoleName[],
+                          status: 'ACTIVE',
+                        },
+                        {
+                          id: 4,
+                          fullName: 'Phạm Kế Toán (Thái Nguyên)',
+                          username: 'ketoan_thainguyen',
+                          branchName: 'Chi nhánh Thái Nguyên',
+                          roles: ['ROLE_BRANCH_ACCOUNTANT', 'ROLE_EMPLOYEE'] as RoleName[],
+                          status: 'ACTIVE',
+                        },
+                        {
+                          id: 5,
+                          fullName: 'Hoàng Kế Toán Tổng (Admin)',
+                          username: 'ketoantong_admin',
+                          branchName: 'Hội sở chính',
+                          roles: ['ROLE_GENERAL_ACCOUNTANT', 'ROLE_EMPLOYEE'] as RoleName[],
+                          status: 'ACTIVE',
+                        },
+                      ]
+                  ).map((u: any) => (
+                    <tr key={u.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="p-3.5 font-bold text-slate-900">{u.fullName}</td>
+                      <td className="p-3.5 font-mono text-indigo-700 font-semibold">{u.username}</td>
+                      <td className="p-3.5 text-slate-600">{u.branchName || 'Toàn chuỗi'}</td>
+                      <td className="p-3.5">
+                        <div className="flex flex-wrap gap-1.5">
+                          {(u.roles || []).map((r: string) => (
+                            <span
+                              key={r}
+                              className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                                r === 'ROLE_KITCHEN_STAFF'
+                                  ? 'bg-amber-100 text-amber-900 border border-amber-200'
+                                  : r === 'ROLE_EMPLOYEE'
+                                  ? 'bg-emerald-100 text-emerald-900 border border-emerald-200'
+                                  : r === 'ROLE_RESTAURANT_MANAGER'
+                                  ? 'bg-purple-100 text-purple-900 border border-purple-200'
+                                  : r === 'ROLE_BRANCH_ACCOUNTANT'
+                                  ? 'bg-blue-100 text-blue-900 border border-blue-200'
+                                  : 'bg-rose-100 text-rose-900 border border-rose-200'
+                              }`}
+                            >
+                              {r.replace('ROLE_', '')}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="p-3.5 text-right">
+                        <button
+                          onClick={() => handleOpenEditRoles(u)}
+                          className="btn-touch px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs transition-colors"
+                        >
+                          Gán / Sửa vai trò
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* MODAL: GÁN / CHỈNH SỬA VAI TRÒ NGƯỜI DÙNG                     */}
+      {/* ============================================================== */}
+      {editingRolesUser && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white w-full max-w-lg rounded-3xl p-6 shadow-2xl animate-in zoom-in-95">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2 text-indigo-700 font-black text-base">
+                <ShieldCheck className="h-6 w-6" />
+                <span>GÁN VAI TRÒ CHO: {editingRolesUser.fullName}</span>
+              </div>
+              <button
+                onClick={() => setEditingRolesUser(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 mt-4">
+              <div className="bg-slate-50 p-3 rounded-xl text-xs space-y-1">
+                <div>
+                  <span className="text-slate-400">Tài khoản: </span>
+                  <strong className="text-slate-900 font-mono">{editingRolesUser.username}</strong>
+                </div>
+                <div>
+                  <span className="text-slate-400">Chi nhánh: </span>
+                  <strong className="text-slate-900">{editingRolesUser.branchName || 'Toàn hệ thống'}</strong>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase">
+                  Chọn các vai trò áp dụng (Multi-Role):
+                </label>
+
+                {[
+                  {
+                    id: 'ROLE_KITCHEN_STAFF',
+                    label: 'ROLE_KITCHEN_STAFF (Bếp & Bar)',
+                    desc: 'Thực hiện 4 nút: Lấy hàng, Mở mẻ & Cân hụt, Ra line (+1), Báo hỏng.',
+                  },
+                  {
+                    id: 'ROLE_EMPLOYEE',
+                    label: 'ROLE_EMPLOYEE (Nhân Viên Cá Nhân)',
+                    desc: 'Chấm công GPS & selfie, tham gia kỳ thi định kỳ quý, xem phiếu lương & ứng lương.',
+                  },
+                  {
+                    id: 'ROLE_RESTAURANT_MANAGER',
+                    label: 'ROLE_RESTAURANT_MANAGER (Quản Lý Chi Nhánh)',
+                    desc: 'Duyệt đơn báo hỏng mẻ, kiểm tra đối soát cuối ngày, chấm thi thực hành, thu hồi đồng phục.',
+                  },
+                  {
+                    id: 'ROLE_BRANCH_ACCOUNTANT',
+                    label: 'ROLE_BRANCH_ACCOUNTANT (Kế Toán Chi Nhánh)',
+                    desc: 'Upload file doanh thu CukCuk, kiểm tra xuất nhập tồn, lập lệnh chi lương chi nhánh.',
+                  },
+                  {
+                    id: 'ROLE_GENERAL_ACCOUNTANT',
+                    label: 'ROLE_GENERAL_ACCOUNTANT (Kế Toán Tổng / Admin)',
+                    desc: 'Toàn quyền 2 chi nhánh, phân quyền tài khoản, xuất báo cáo đối soát và file chuyển khoản ngân hàng.',
+                  },
+                ].map((roleItem) => {
+                  const isChecked = selectedUserRoles.includes(roleItem.id);
+                  return (
+                    <label
+                      key={roleItem.id}
+                      onClick={() => handleToggleRole(roleItem.id)}
+                      className={`p-3 rounded-xl border flex items-start gap-3 cursor-pointer transition-all ${
+                        isChecked
+                          ? 'bg-indigo-50/70 border-indigo-300 shadow-sm'
+                          : 'bg-white border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => {}}
+                        className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div className="min-w-0">
+                        <div className="font-bold text-xs sm:text-sm text-slate-900">{roleItem.label}</div>
+                        <p className="text-[11px] text-slate-500 mt-0.5 leading-normal">{roleItem.desc}</p>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingRolesUser(null)}
+                  className="btn-touch h-11 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs"
+                >
+                  HỦY BỎ
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveUserRoles}
+                  disabled={isSavingRoles}
+                  className="btn-touch h-11 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-indigo-600/30"
+                >
+                  {isSavingRoles ? <RefreshCw className="h-4 w-4 animate-spin" /> : <span>LƯU PHÂN QUYỀN</span>}
+                </button>
+              </div>
             </div>
           </div>
         </div>

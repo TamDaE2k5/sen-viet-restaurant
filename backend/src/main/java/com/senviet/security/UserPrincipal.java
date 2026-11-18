@@ -11,10 +11,12 @@ import org.springframework.security.core.userdetails.UserDetails;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
  * Đại diện cho danh tính bảo mật của người dùng đăng nhập trong Spring Security context.
+ * Hỗ trợ mô hình phân quyền đa vai trò (Multi-Role RBAC).
  */
 @Getter
 @Builder
@@ -34,9 +36,9 @@ public class UserPrincipal implements UserDetails {
     private final boolean active;
 
     public static UserPrincipal create(User user) {
-        List<GrantedAuthority> authorities = user.getRoles().stream()
+        Set<GrantedAuthority> authorities = user.getRoles().stream()
                 .map(role -> new SimpleGrantedAuthority(role.getRoleName().name()))
-                .collect(Collectors.toList());
+                .collect(Collectors.toSet());
 
         Long branchId = null;
         String branchCode = null;
@@ -60,6 +62,44 @@ public class UserPrincipal implements UserDetails {
                 .authorities(authorities)
                 .active("ACTIVE".equalsIgnoreCase(user.getStatus()))
                 .build();
+    }
+
+    /**
+     * Lấy danh sách tên các vai trò của người dùng dạng chuỗi (vd: ["ROLE_KITCHEN_STAFF", "ROLE_EMPLOYEE"]).
+     */
+    public List<String> getRoles() {
+        if (authorities == null) {
+            return List.of();
+        }
+        return authorities.stream()
+                .map(GrantedAuthority::getAuthority)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Kiểm tra người dùng có nắm giữ một vai trò cụ thể hay không.
+     */
+    public boolean hasRole(String roleName) {
+        if (authorities == null || roleName == null) {
+            return false;
+        }
+        String target = roleName.startsWith("ROLE_") ? roleName : "ROLE_" + roleName;
+        return authorities.stream().anyMatch(a -> a.getAuthority().equalsIgnoreCase(target));
+    }
+
+    /**
+     * Kiểm tra người dùng có nắm giữ bất kỳ vai trò nào trong danh sách hay không.
+     */
+    public boolean hasAnyRole(String... roleNames) {
+        if (authorities == null || roleNames == null) {
+            return false;
+        }
+        for (String roleName : roleNames) {
+            if (hasRole(roleName)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
