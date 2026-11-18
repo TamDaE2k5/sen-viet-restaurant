@@ -40,6 +40,16 @@ public class DamageReport extends BaseEntity {
     @Column(name = "batch_number", length = 100)
     private String batchNumber;
 
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "batch_id")
+    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
+    private ImportBatch batch;
+
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "supplier_id")
+    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
+    private Supplier supplier;
+
     @Column(name = "quantity", precision = 12, scale = 3, nullable = false)
     private BigDecimal quantity;
 

@@ -19,6 +19,8 @@ public class DamageReportRequest {
     @NotNull(message = "ID nguyên liệu không được để trống")
     private Long itemId;
 
+    private Long batchId;
+
     private String supplierCode;
 
     private String batchNumber;

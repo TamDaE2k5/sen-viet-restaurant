@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { kitchenApi, Item, Recipe, BatchResponse } from '../../api/kitchen';
+import { warehouseApi, ImportBatch } from '../../api/warehouse';
 import { compressImage, CompressionResult } from '../../utils/imageCompressor';
 
 export const KitchenModule: React.FC = () => {
@@ -61,6 +62,8 @@ export const KitchenModule: React.FC = () => {
   const [damageQty, setDamageQty] = useState<number>(1);
   const [damageReason, setDamageReason] = useState<string>('HONG_DO_NHA_CUNG_CAP');
   const [damageSupplier, setDamageSupplier] = useState<string>('NCC_HAI_SAN_01');
+  const [availableBatches, setAvailableBatches] = useState<ImportBatch[]>([]);
+  const [selectedBatchCode, setSelectedBatchCode] = useState<string>('');
   const [damageNote, setDamageNote] = useState<string>('');
   const [damageImage, setDamageImage] = useState<CompressionResult | null>(null);
   const [isCompressing, setIsCompressing] = useState<boolean>(false);
@@ -95,6 +98,28 @@ export const KitchenModule: React.FC = () => {
   useEffect(() => {
     loadInitialData();
   }, []);
+
+  // Khi chọn mặt hàng báo hỏng, nạp danh sách các lô nhập (lots) còn tồn của mặt hàng đó
+  useEffect(() => {
+    if (damageItemId) {
+      warehouseApi.getAvailableBatches({ itemId: Number(damageItemId) })
+        .then((batches) => {
+          setAvailableBatches(batches);
+          if (batches.length > 0) {
+            setSelectedBatchCode(batches[0].batchCode);
+            if (batches[0].supplierCode || batches[0].supplierName) {
+              setDamageSupplier(batches[0].supplierCode || batches[0].supplierName || '');
+            }
+          } else {
+            setSelectedBatchCode('');
+          }
+        })
+        .catch(() => {
+          setAvailableBatches([]);
+          setSelectedBatchCode('');
+        });
+    }
+  }, [damageItemId]);
 
   const showNotice = (type: 'success' | 'error', text: string) => {
     setStatusMessage({ type, text });
@@ -267,6 +292,7 @@ export const KitchenModule: React.FC = () => {
         quantity: damageQty,
         reason: damageReason,
         supplierCode: damageReason === 'HONG_DO_NHA_CUNG_CAP' ? damageSupplier : undefined,
+        batchNumber: selectedBatchCode || undefined,
         note: damageNote || undefined,
         imageUrls: damageImage?.dataUrl || undefined,
       });
@@ -979,9 +1005,48 @@ export const KitchenModule: React.FC = () => {
                 </div>
               </div>
 
+              {/* CHỌN LÔ HÀNG (BATCH/LOT) ĐỂ TRUY VẾT NCC & CUA CHẾT */}
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1">
+                  LÔ HÀNG LIÊN KẾT (TRUY VẾT LÔ NHẬP & NCC)
+                </label>
+                {availableBatches.length > 0 ? (
+                  <select
+                    value={selectedBatchCode}
+                    onChange={(e) => {
+                      const code = e.target.value;
+                      setSelectedBatchCode(code);
+                      const found = availableBatches.find((b) => b.batchCode === code);
+                      if (found && (found.supplierCode || found.supplierName)) {
+                        setDamageSupplier(found.supplierCode || found.supplierName || '');
+                      }
+                    }}
+                    className="w-full h-11 px-3 rounded-xl border border-slate-300 font-mono font-bold text-slate-800 text-xs sm:text-sm focus:ring-2 focus:ring-rose-500"
+                  >
+                    <option value="">-- Chọn lô nhập để truy vết chính xác NCC --</option>
+                    {availableBatches.map((b) => (
+                      <option key={b.id} value={b.batchCode}>
+                        {b.batchCode} ({b.supplierName || b.supplierCode || 'NCC'} - Tồn: {b.currentStock} {b.unit})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    placeholder="Mã lô (VD: LOT-202611-001) hoặc để trống..."
+                    value={selectedBatchCode}
+                    onChange={(e) => setSelectedBatchCode(e.target.value)}
+                    className="w-full h-11 px-3 rounded-xl border border-slate-300 font-mono text-sm focus:ring-2 focus:ring-rose-500"
+                  />
+                )}
+                <span className="text-[10px] text-slate-500 mt-0.5 block">
+                  * Ví dụ: Báo hỏng cua chết gắn với Lô LOT-202611-001 để trừ tồn lô và tính tỷ lệ hỏng của NCC Hải Sản Quảng Ninh.
+                </span>
+              </div>
+
               {damageReason === 'HONG_DO_NHA_CUNG_CAP' && (
                 <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-1">MÃ NHÀ CUNG CẤP</label>
+                  <label className="block text-xs font-bold text-slate-600 mb-1">MÃ / TÊN NHÀ CUNG CẤP</label>
                   <input
                     type="text"
                     value={damageSupplier}

@@ -6,6 +6,7 @@ import { DesktopShell } from './components/layout/DesktopShell';
 import { Dashboard } from './components/dashboard/Dashboard';
 import { KitchenModule } from './components/kitchen/KitchenModule';
 import { ReconciliationModule } from './components/reconciliation/ReconciliationModule';
+import { WarehouseModule } from './components/warehouse/WarehouseModule';
 import { HRModule } from './components/hr/HRModule';
 import { PayrollModule } from './components/payroll/PayrollModule';
 import { Loader2 } from 'lucide-react';
@@ -40,6 +41,8 @@ export const App: React.FC = () => {
         <MobileShell activeTab={mobileTab} onTabChange={setMobileTab}>
           {mobileTab === 'kitchen' ? (
             <KitchenModule />
+          ) : mobileTab === 'warehouse' ? (
+            <WarehouseModule />
           ) : mobileTab === 'reconciliation' ? (
             <ReconciliationModule />
           ) : mobileTab === 'attendance' || mobileTab === 'exam' || mobileTab === 'hr-attendance' ? (
@@ -49,6 +52,7 @@ export const App: React.FC = () => {
           ) : (
             <Dashboard
               onNavigateToKitchen={() => setMobileTab('kitchen')}
+              onNavigateToWarehouse={() => setMobileTab('warehouse')}
               onNavigateToReconciliation={() => setMobileTab('reconciliation')}
               onNavigateToHR={() => setMobileTab('hr-attendance')}
               onNavigateToPayroll={() => setMobileTab('payroll')}
@@ -62,6 +66,8 @@ export const App: React.FC = () => {
         <DesktopShell activeMenu={desktopMenu} onMenuChange={setDesktopMenu}>
           {desktopMenu === 'kitchen' ? (
             <KitchenModule />
+          ) : desktopMenu === 'warehouse' ? (
+            <WarehouseModule />
           ) : desktopMenu === 'reconciliation' ? (
             <ReconciliationModule />
           ) : desktopMenu === 'hr-attendance' ? (
@@ -71,6 +77,7 @@ export const App: React.FC = () => {
           ) : (
             <Dashboard
               onNavigateToKitchen={() => setDesktopMenu('kitchen')}
+              onNavigateToWarehouse={() => setDesktopMenu('warehouse')}
               onNavigateToReconciliation={() => setDesktopMenu('reconciliation')}
               onNavigateToHR={() => setDesktopMenu('hr-attendance')}
               onNavigateToPayroll={() => setDesktopMenu('payroll')}

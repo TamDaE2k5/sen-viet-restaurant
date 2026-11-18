@@ -42,6 +42,9 @@ public class KitchenService {
     private final LineItemLogRepository lineItemLogRepository;
     private final BranchRepository branchRepository;
     private final UserRepository userRepository;
+    private final ImportBatchRepository importBatchRepository;
+    private final InventoryStockRepository inventoryStockRepository;
+    private final SupplierRepository supplierRepository;
 
     // Ngưỡng giá trị báo hỏng tự động duyệt: 500,000 VNĐ
     private static final BigDecimal AUTO_APPROVE_THRESHOLD = new BigDecimal("500000.00");
@@ -297,11 +300,48 @@ public class KitchenService {
             status = "CHO_DUYET";
         }
 
+        // Liên kết Lô nhập và Nhà cung cấp nếu có
+        ImportBatch batch = null;
+        if (request.getBatchId() != null) {
+            batch = importBatchRepository.findById(request.getBatchId())
+                    .orElseThrow(() -> new ResourceNotFoundException("ImportBatch", "id", request.getBatchId()));
+        } else if (request.getBatchNumber() != null && !request.getBatchNumber().trim().isEmpty()) {
+            batch = importBatchRepository.findByBatchCode(request.getBatchNumber().trim()).orElse(null);
+        }
+
+        Supplier supplier = null;
+        if (batch != null) {
+            supplier = batch.getSupplier();
+            // Trừ tồn của lô nhập khi báo hỏng
+            BigDecimal newStock = batch.getCurrentStock().subtract(request.getQuantity());
+            if (newStock.compareTo(BigDecimal.ZERO) < 0) {
+                newStock = BigDecimal.ZERO;
+            }
+            batch.setCurrentStock(newStock);
+            if (newStock.compareTo(BigDecimal.ZERO) == 0) {
+                batch.setStatus("HET_HANG");
+            }
+            importBatchRepository.save(batch);
+
+            final BigDecimal updatedStock = newStock;
+            // Đồng bộ cập nhật tồn kho inventory_stocks
+            inventoryStockRepository.findByBranchIdAndItemIdAndBatchId(branch.getId(), item.getId(), batch.getId())
+                    .ifPresent(stock -> {
+                        stock.setQuantity(updatedStock);
+                        stock.setLastUpdatedAt(Instant.now());
+                        inventoryStockRepository.save(stock);
+                    });
+        } else if (request.getSupplierCode() != null && !request.getSupplierCode().trim().isEmpty()) {
+            supplier = supplierRepository.findBySupplierCode(request.getSupplierCode().trim()).orElse(null);
+        }
+
         DamageReport report = DamageReport.builder()
                 .branch(branch)
                 .item(item)
-                .supplierCode(request.getSupplierCode())
-                .batchNumber(request.getBatchNumber())
+                .batch(batch)
+                .supplier(supplier)
+                .supplierCode(supplier != null ? supplier.getSupplierCode() : request.getSupplierCode())
+                .batchNumber(batch != null ? batch.getBatchCode() : request.getBatchNumber())
                 .quantity(request.getQuantity())
                 .estimatedValue(estimatedValue)
                 .reason(request.getReason())

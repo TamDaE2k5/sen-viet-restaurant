@@ -29,7 +29,7 @@
 
 | Giai đoạn | Tên phân hệ / Giai đoạn | Điểm phản biện xử lý | File chi tiết | Số task | Trạng thái |
 | :---: | :--- | :--- | :--- | :---: | :---: |
-| **P7** | [Kho Cơ Sở, Lô Nhập & Nhà Cung Cấp](file:///run/media/tamdae/Data/Source%20code/restaurant_project/task/phase-7-warehouse-lots-suppliers.md) | #1, #2, #12 (Phiếu nhập/xuất, lô, NCC, tồn kho, kiểm kê) | `phase-7-warehouse-lots-suppliers.md` | 6 | 📋 Sẵn sàng |
+| **P7** | [Kho Cơ Sở, Lô Nhập & Nhà Cung Cấp](file:///run/media/tamdae/Data/Source%20code/restaurant_project/task/phase-7-warehouse-lots-suppliers.md) | #1, #2, #12 (Phiếu nhập/xuất, lô, NCC, tồn kho, kiểm kê) | `phase-7-warehouse-lots-suppliers.md` | 6 | ✅ Hoàn thành |
 | **P8** | [Quy Tắc Chặt Chẽ Bếp & Ra Line](file:///run/media/tamdae/Data/Source%20code/restaurant_project/task/phase-8-kitchen-hard-rules.md) | #3, #4, #8, #9, #12 (Chặn mẻ hỏng, món dùng trong ngày, quick add ra line) | `phase-8-kitchen-hard-rules.md` | 6 | 📋 Sẵn sàng |
 | **P9** | [Phân Quyền Đa Vai Trò (Multi-Role RBAC)](file:///run/media/tamdae/Data/Source%20code/restaurant_project/task/phase-9-multi-role-rbac.md) | #6 (1 nhân sự nhiều vai trò, switcher ngữ cảnh) | `phase-9-multi-role-rbac.md` | 5 | 📋 Sẵn sàng |
 | **P10** | [Nghiệp Vụ Nhân Sự & Khóa Bảng Lương](file:///run/media/tamdae/Data/Source%20code/restaurant_project/task/phase-10-hr-payroll-locks.md) | #5, #7, #10, #11 (Khóa bảng lương, lương bỏ việc = 0, hủy bỏ việc nhầm) | `phase-10-hr-payroll-locks.md` | 6 | 📋 Sẵn sàng |

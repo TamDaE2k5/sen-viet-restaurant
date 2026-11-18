@@ -23,7 +23,7 @@ class KitchenServiceTest {
     @BeforeEach
     void setUp() {
         // Khởi tạo service không cần database cho pure unit test công thức
-        kitchenService = new KitchenService(null, null, null, null, null, null, null, null);
+        kitchenService = new KitchenService(null, null, null, null, null, null, null, null, null, null, null);
     }
 
     @Test
