@@ -87,6 +87,21 @@ public class Payroll {
     @Builder.Default
     private Boolean isUniformRetained = false;
 
+    @Column(name = "excluded_from_cost", nullable = false)
+    @Builder.Default
+    private Boolean excludedFromCost = false;
+
+    @Column(name = "hold_reason", length = 500)
+    private String holdReason;
+
+    @Column(name = "locked_at")
+    private Instant lockedAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "locked_by")
+    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler", "passwordHash", "roles", "branch"})
+    private User lockedBy;
+
     @Column(name = "bank_name", length = 100)
     private String bankName;
 

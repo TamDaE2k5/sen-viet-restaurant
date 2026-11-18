@@ -9,10 +9,12 @@ import {
   CheckCircle2,
   Clock,
   ArrowUpRight,
+  Boxes,
 } from 'lucide-react';
 
 interface DashboardProps {
   onNavigateToKitchen?: () => void;
+  onNavigateToWarehouse?: () => void;
   onNavigateToReconciliation?: () => void;
   onNavigateToHR?: () => void;
   onNavigateToPayroll?: () => void;
@@ -20,6 +22,7 @@ interface DashboardProps {
 
 export const Dashboard: React.FC<DashboardProps> = ({
   onNavigateToKitchen,
+  onNavigateToWarehouse,
   onNavigateToReconciliation,
   onNavigateToHR,
   onNavigateToPayroll,
@@ -202,6 +205,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </p>
             <span className="inline-block mt-3 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 bg-emerald-100 rounded">
               🎯 Phase 6
+            </span>
+          </div>
+          <div
+            onClick={onNavigateToWarehouse}
+            className="p-5 rounded-xl bg-white border border-slate-200 shadow-sm hover:shadow-md transition-shadow cursor-pointer hover:border-indigo-500"
+          >
+            <div className="h-10 w-10 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center mb-3">
+              <Boxes className="h-6 w-6" />
+            </div>
+            <h4 className="font-semibold text-slate-900 text-sm">Giai Đoạn 7: Kho Cơ Sở & Lô Nhập</h4>
+            <p className="text-xs text-slate-500 mt-1">
+              Quản lý Nhà cung cấp, theo dõi Lô hàng (Lots), Kiểm kê ca bắt buộc giải trình & Báo cáo % Hỏng NCC.
+            </p>
+            <span className="inline-block mt-3 px-2 py-0.5 text-[11px] font-semibold text-indigo-700 bg-indigo-100 rounded">
+              🚀 Giai Đoạn 7 (Mới)
             </span>
           </div>
         </div>

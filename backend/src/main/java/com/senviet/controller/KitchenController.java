@@ -1,9 +1,7 @@
 package com.senviet.controller;
 
 import com.senviet.domain.dto.request.*;
-import com.senviet.domain.dto.response.ApiResponse;
-import com.senviet.domain.dto.response.BatchResponse;
-import com.senviet.domain.dto.response.RecipeResponse;
+import com.senviet.domain.dto.response.*;
 import com.senviet.domain.entity.DamageReport;
 import com.senviet.domain.entity.Item;
 import com.senviet.domain.entity.LineItemLog;
@@ -138,5 +136,37 @@ public class KitchenController {
             @AuthenticationPrincipal UserPrincipal currentUser) {
         DamageReport report = kitchenService.approveDamageReport(id, currentUser);
         return ResponseEntity.ok(ApiResponse.ok("Duyệt đơn báo hỏng thành công", report));
+    }
+
+    @GetMapping("/daily-only/remaining")
+    @PreAuthorize("hasAnyRole('ROLE_KITCHEN_STAFF', 'ROLE_RESTAURANT_MANAGER', 'ROLE_BRANCH_ACCOUNTANT', 'ROLE_GENERAL_ACCOUNTANT')")
+    @Operation(summary = "Lấy danh sách các món chỉ dùng trong ngày và tồn thực tế cuối ca")
+    public ResponseEntity<ApiResponse<List<DailyOnlyItemRemainingResponse>>> getDailyRemainingItems(
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+        List<DailyOnlyItemRemainingResponse> items = kitchenService.getDailyRemainingItems(currentUser.getBranchId());
+        return ResponseEntity.ok(ApiResponse.ok("Danh sách món dùng trong ngày", items));
+    }
+
+    @PostMapping("/daily-only/confirm-waste")
+    @PreAuthorize("hasAnyRole('ROLE_KITCHEN_STAFF', 'ROLE_RESTAURANT_MANAGER', 'ROLE_BRANCH_ACCOUNTANT', 'ROLE_GENERAL_ACCOUNTANT')")
+    @Operation(summary = "Xác nhận hủy bỏ món tươi chỉ dùng trong ngày cuối ca",
+            description = "Ghi nhận vào cột Hỏng/bỏ có báo của Bảng cuối ngày, không phạt nhân viên bếp")
+    public ResponseEntity<ApiResponse<List<DailyWasteConfirmationResponse>>> confirmDailyWaste(
+            @Valid @RequestBody ConfirmDailyWasteRequest request,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+        List<DailyWasteConfirmationResponse> response = kitchenService.confirmDailyWaste(request, currentUser);
+        return ResponseEntity.ok(ApiResponse.ok("Xác nhận ghi bỏ món dùng trong ngày thành công", response));
+    }
+
+    @PostMapping("/line-items/quick-add")
+    @PreAuthorize("hasAnyRole('ROLE_KITCHEN_STAFF', 'ROLE_RESTAURANT_MANAGER', 'ROLE_GENERAL_ACCOUNTANT')")
+    @Operation(summary = "Thêm nhanh món mới ra Line buffet",
+            description = "Bổ sung trực tiếp món ăn mới vào quầy line ngay trong ca trực")
+    public ResponseEntity<ApiResponse<Item>> quickAddLineItem(
+            @Valid @RequestBody QuickAddLineItemRequest request,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+        Item item = kitchenService.quickAddLineItem(request, currentUser);
+        return ResponseEntity.status(org.springframework.http.HttpStatus.CREATED)
+                .body(ApiResponse.ok("Thêm nhanh món ra line thành công", item));
     }
 }

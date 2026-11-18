@@ -22,4 +22,6 @@ public class SupplierLossResponse {
     private BigDecimal totalEstimatedLossAmount;
     private BigDecimal totalPurchasedQty;
     private BigDecimal damageRatePercentage;
+    private Integer rank;
+    private String evaluation;
 }

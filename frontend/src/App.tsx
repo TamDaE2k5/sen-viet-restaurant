@@ -6,15 +6,31 @@ import { DesktopShell } from './components/layout/DesktopShell';
 import { Dashboard } from './components/dashboard/Dashboard';
 import { KitchenModule } from './components/kitchen/KitchenModule';
 import { ReconciliationModule } from './components/reconciliation/ReconciliationModule';
+import { WarehouseModule } from './components/warehouse/WarehouseModule';
 import { HRModule } from './components/hr/HRModule';
 import { PayrollModule } from './components/payroll/PayrollModule';
+import { NetworkStatusBar } from './components/common/NetworkStatusBar';
 import { Loader2 } from 'lucide-react';
 
 export const App: React.FC = () => {
-  const { user, isAuthenticated, isLoading, isKitchen, isAccountant } = useAuth();
+  const { user, isAuthenticated, isLoading, isKitchen, isAccountant, activeContext } = useAuth();
   // Nếu là tài khoản bếp thì tab mặc định là 'kitchen', kế toán là 'reconciliation', ngược lại là 'dashboard'
   const [mobileTab, setMobileTab] = useState(isKitchen ? 'kitchen' : 'dashboard');
   const [desktopMenu, setDesktopMenu] = useState(isKitchen ? 'kitchen' : (isAccountant ? 'reconciliation' : 'dashboard'));
+
+  // Giai đoạn 9: Tự động đồng bộ không gian làm việc khi người dùng chuyển đổi Context
+  React.useEffect(() => {
+    if (activeContext === 'KITCHEN') {
+      setMobileTab('kitchen');
+      setDesktopMenu('kitchen');
+    } else if (activeContext === 'EMPLOYEE_PORTAL') {
+      setMobileTab('attendance');
+      setDesktopMenu('hr-attendance');
+    } else if (activeContext === 'MANAGEMENT') {
+      setMobileTab('dashboard');
+      setDesktopMenu('dashboard');
+    }
+  }, [activeContext]);
 
   if (isLoading) {
     return (
@@ -35,11 +51,16 @@ export const App: React.FC = () => {
   // Màn hình Desktop cho Quản lý & Kế toán dùng DesktopShell
   return (
     <>
+      {/* Thanh trạng thái kết nối mạng (Phase 11: Offline Resilience) */}
+      <NetworkStatusBar />
+
       {/* Viewport Mobile / Tablet nhỏ */}
       <div className="block lg:hidden">
         <MobileShell activeTab={mobileTab} onTabChange={setMobileTab}>
           {mobileTab === 'kitchen' ? (
             <KitchenModule />
+          ) : mobileTab === 'warehouse' ? (
+            <WarehouseModule />
           ) : mobileTab === 'reconciliation' ? (
             <ReconciliationModule />
           ) : mobileTab === 'attendance' || mobileTab === 'exam' || mobileTab === 'hr-attendance' ? (
@@ -49,6 +70,7 @@ export const App: React.FC = () => {
           ) : (
             <Dashboard
               onNavigateToKitchen={() => setMobileTab('kitchen')}
+              onNavigateToWarehouse={() => setMobileTab('warehouse')}
               onNavigateToReconciliation={() => setMobileTab('reconciliation')}
               onNavigateToHR={() => setMobileTab('hr-attendance')}
               onNavigateToPayroll={() => setMobileTab('payroll')}
@@ -62,6 +84,8 @@ export const App: React.FC = () => {
         <DesktopShell activeMenu={desktopMenu} onMenuChange={setDesktopMenu}>
           {desktopMenu === 'kitchen' ? (
             <KitchenModule />
+          ) : desktopMenu === 'warehouse' ? (
+            <WarehouseModule />
           ) : desktopMenu === 'reconciliation' ? (
             <ReconciliationModule />
           ) : desktopMenu === 'hr-attendance' ? (
@@ -71,6 +95,7 @@ export const App: React.FC = () => {
           ) : (
             <Dashboard
               onNavigateToKitchen={() => setDesktopMenu('kitchen')}
+              onNavigateToWarehouse={() => setDesktopMenu('warehouse')}
               onNavigateToReconciliation={() => setDesktopMenu('reconciliation')}
               onNavigateToHR={() => setDesktopMenu('hr-attendance')}
               onNavigateToPayroll={() => setDesktopMenu('payroll')}

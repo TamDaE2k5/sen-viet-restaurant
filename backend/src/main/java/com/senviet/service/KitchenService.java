@@ -1,13 +1,12 @@
 package com.senviet.service;
 
 import com.senviet.domain.dto.request.*;
-import com.senviet.domain.dto.response.BatchLossResult;
-import com.senviet.domain.dto.response.BatchResponse;
-import com.senviet.domain.dto.response.RecipeResponse;
+import com.senviet.domain.dto.response.*;
 import com.senviet.domain.entity.*;
 import com.senviet.domain.repository.*;
 import com.senviet.exception.ApiException;
 import com.senviet.exception.ResourceNotFoundException;
+import com.senviet.exception.UnapprovedDamageReportException;
 import com.senviet.security.UserPrincipal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,6 +17,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -42,6 +43,10 @@ public class KitchenService {
     private final LineItemLogRepository lineItemLogRepository;
     private final BranchRepository branchRepository;
     private final UserRepository userRepository;
+    private final ImportBatchRepository importBatchRepository;
+    private final InventoryStockRepository inventoryStockRepository;
+    private final SupplierRepository supplierRepository;
+    private final DailyWasteConfirmationRepository dailyWasteConfirmationRepository;
 
     // Ngưỡng giá trị báo hỏng tự động duyệt: 500,000 VNĐ
     private static final BigDecimal AUTO_APPROVE_THRESHOLD = new BigDecimal("500000.00");
@@ -111,6 +116,14 @@ public class KitchenService {
         Item item = itemRepository.findById(request.getItemId())
                 .orElseThrow(() -> new ResourceNotFoundException("Item", "id", request.getItemId()));
 
+        // Quy tắc chặn cứng (Phase 8): Nếu món này đang có mẻ/lô báo hỏng chờ Quản lý duyệt -> Chặn ngay lập tức (HTTP 422)
+        boolean hasUnapprovedDamage = damageReportRepository.existsByBranchIdAndItemIdAndStatus(
+                branch.getId(), item.getId(), "CHO_DUYET");
+        if (hasUnapprovedDamage) {
+            throw new UnapprovedDamageReportException(
+                    "Món này đang có mẻ/lô báo hỏng chờ Quản lý duyệt. Vui lòng liên hệ Quản lý phê duyệt trước khi mở mẻ mới!");
+        }
+
         // Kiểm tra mẻ đang làm dở dang của món này tại chi nhánh
         boolean hasActiveBatch = batchRepository.existsByBranchIdAndItemIdAndStatus(
                 branch.getId(), item.getId(), "DANG_LAM");
@@ -164,6 +177,15 @@ public class KitchenService {
                 .orElseThrow(() -> new ResourceNotFoundException("ProcessingBatch", "id", request.getBatchId()));
 
         if (!"DANG_LAM".equals(batch.getStatus())) {
+            // Xử lý Idempotency cho tình huống retry ngoại tuyến (Offline Resilience):
+            // Nếu mẻ đã hoàn tất với cùng khối lượng cân thành phẩm, trả về bản ghi đã hoàn tất
+            if ("HOAN_THANH".equals(batch.getStatus()) && batch.getOutputWeight() != null
+                    && request.getOutputWeight() != null
+                    && batch.getOutputWeight().compareTo(request.getOutputWeight()) == 0) {
+                log.info("Xử lý idempotent retry hoàn thành mẻ {}: giữ nguyên kết quả {} kg",
+                        batch.getBatchCode(), request.getOutputWeight());
+                return mapToBatchResponse(batch, batch.getIsOverStandard() ? "Hao hụt thực tế vượt định mức chuẩn cho phép!" : null);
+            }
             throw new ApiException("Mẻ chế biến này đã hoàn thành hoặc đã bị hủy");
         }
 
@@ -243,6 +265,12 @@ public class KitchenService {
 
     /**
      * Thao tác 3: Ra Line (+1) với cơ chế Idempotency Token chống Double-Click.
+     *
+     * NGHIỆP VỤ BẤT KHẢ XÂM PHẠM (Phase 8 - Task 8.4):
+     * Thao tác Ra line (+1) CHỈ DÙNG ĐỂ THEO DÕI tần suất tiếp khay đồ ra quầy buffet và đối chiếu số liệu
+     * khách ăn từ CukCuk POS, TUYỆT ĐỐI KHÔNG TRỪ TỒN KHO NGUYÊN LIỆU.
+     * Lượng xuất kho thực tế đã được hạch toán đầy đủ thông qua Phiếu xuất kho hoặc Mẻ chế biến đầu vào.
+     * Mọi thay đổi trừ tồn kho tại phương thức này đều vi phạm nghiêm ngặt nguyên tắc kế toán kho của chuỗi.
      */
     @Transactional
     public LineItemLog recordLineItem(LineItemIncRequest request, UserPrincipal currentUser) {
@@ -266,6 +294,7 @@ public class KitchenService {
             }
         }
 
+        // CHỈ GHI NHẬN NHẬT KÝ, KHÔNG TRỪ TỒN KHO NGUYÊN LIỆU
         LineItemLog logEntry = LineItemLog.builder()
                 .branch(branch)
                 .item(item)
@@ -275,6 +304,154 @@ public class KitchenService {
                 .build();
 
         return lineItemLogRepository.save(logEntry);
+    }
+
+    /**
+     * Bí danh (Alias method) cho thao tác bấm khay ra line (Task 8.4).
+     * Đảm bảo kiểm toán code khẳng định phương thức không trừ tồn kho.
+     */
+    @Transactional
+    public LineItemLog incrementLineTray(LineItemIncRequest request, UserPrincipal currentUser) {
+        return recordLineItem(request, currentUser);
+    }
+
+    /**
+     * Thao tác Thêm nhanh món mới ra Line buffet (Phase 8 - Task 8.5).
+     * Cho phép Bếp/Quản lý bổ sung ngay món mới trong ca trực mà không cần vào trang cấu hình Admin.
+     */
+    @Transactional
+    public Item quickAddLineItem(QuickAddLineItemRequest request, UserPrincipal currentUser) {
+        String itemName = request.getItemName().trim();
+        String itemCode = request.getItemCode();
+        if (itemCode == null || itemCode.trim().isEmpty()) {
+            String rawCode = "MON_" + (System.currentTimeMillis() % 1000000);
+            itemCode = rawCode.toUpperCase();
+        } else {
+            itemCode = itemCode.trim().toUpperCase();
+        }
+
+        if (itemRepository.existsByItemCode(itemCode)) {
+            throw new ApiException(HttpStatus.CONFLICT, "Mã món ăn đã tồn tại: " + itemCode);
+        }
+
+        Item item = Item.builder()
+                .itemCode(itemCode)
+                .barcode(request.getBarcode() != null && !request.getBarcode().trim().isEmpty() ? request.getBarcode().trim() : null)
+                .itemName(itemName)
+                .category(request.getCategory() != null && !request.getCategory().trim().isEmpty() ? request.getCategory().trim().toUpperCase() : "HAI_SAN")
+                .unit(request.getUnit() != null && !request.getUnit().trim().isEmpty() ? request.getUnit().trim().toUpperCase() : "ĐĨA")
+                .costPrice(request.getCostPrice() != null ? request.getCostPrice() : BigDecimal.ZERO)
+                .isBuffetLine(request.getIsBuffetLine() != null ? request.getIsBuffetLine() : true)
+                .isDailyOnly(request.getIsDailyOnly() != null ? request.getIsDailyOnly() : false)
+                .build();
+
+        Item saved = itemRepository.save(item);
+        log.info("Thêm nhanh món mới ra line buffet: {} - {}", saved.getItemCode(), saved.getItemName());
+        return saved;
+    }
+
+    /**
+     * Lấy danh sách các món chỉ dùng trong ngày và tồn kho hiện tại cuối ca (Task 8.3).
+     */
+    @Transactional(readOnly = true)
+    public List<DailyOnlyItemRemainingResponse> getDailyRemainingItems(Long branchId) {
+        List<Item> dailyItems = itemRepository.findByIsDailyOnlyTrue();
+        return dailyItems.stream().map(item -> {
+            BigDecimal stock = inventoryStockRepository.getTotalStockByBranchAndItem(branchId, item.getId());
+            return DailyOnlyItemRemainingResponse.builder()
+                    .itemId(item.getId())
+                    .itemCode(item.getItemCode())
+                    .itemName(item.getItemName())
+                    .category(item.getCategory())
+                    .unit(item.getUnit())
+                    .costPrice(item.getCostPrice())
+                    .currentStock(stock != null ? stock : BigDecimal.ZERO)
+                    .isDailyOnly(item.getIsDailyOnly())
+                    .build();
+        }).collect(Collectors.toList());
+    }
+
+    /**
+     * Xác nhận hủy bỏ món tươi chỉ dùng trong ngày cuối ca (Task 8.3).
+     * Số liệu ghi nhận vào cột Hỏng/bỏ có báo của Bảng cuối ngày, không phạt nhân viên.
+     */
+    @Transactional
+    public List<DailyWasteConfirmationResponse> confirmDailyWaste(ConfirmDailyWasteRequest request, UserPrincipal currentUser) {
+        Long branchId = request.getBranchId() != null ? request.getBranchId() : currentUser.getBranchId();
+        Branch branch = getBranch(branchId);
+        User user = getUser(currentUser.getId());
+
+        LocalDate wasteDate = request.getWasteDate() != null ? request.getWasteDate() : LocalDate.now();
+        String shift = request.getShift() != null && !request.getShift().trim().isEmpty()
+                ? request.getShift().trim().toUpperCase() : "CA_NGAY";
+
+        List<DailyWasteConfirmationResponse> responses = new ArrayList<>();
+
+        for (DailyWasteItemRequest itemReq : request.getItems()) {
+            Item item = itemRepository.findById(itemReq.getItemId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Item", "id", itemReq.getItemId()));
+
+            DailyWasteConfirmation confirmation = DailyWasteConfirmation.builder()
+                    .branch(branch)
+                    .item(item)
+                    .wasteDate(wasteDate)
+                    .shift(shift)
+                    .quantity(itemReq.getQuantity())
+                    .unit(itemReq.getUnit() != null ? itemReq.getUnit() : item.getUnit())
+                    .confirmedByUser(user)
+                    .status("DA_XAC_NHAN")
+                    .note(itemReq.getNote() != null ? itemReq.getNote() : request.getNote())
+                    .build();
+
+            DailyWasteConfirmation saved = dailyWasteConfirmationRepository.save(confirmation);
+
+            // Trừ tồn kho tương ứng
+            BigDecimal remainingToDeduct = itemReq.getQuantity();
+            List<ImportBatch> batches = importBatchRepository
+                    .findByBranchIdAndItemIdAndCurrentStockGreaterThanOrderByImportDateAsc(branch.getId(), item.getId(), BigDecimal.ZERO);
+
+            for (ImportBatch b : batches) {
+                if (remainingToDeduct.compareTo(BigDecimal.ZERO) <= 0) break;
+                BigDecimal deduct = remainingToDeduct.min(b.getCurrentStock());
+                b.setCurrentStock(b.getCurrentStock().subtract(deduct));
+                if (b.getCurrentStock().compareTo(BigDecimal.ZERO) == 0) {
+                    b.setStatus("HET_HANG");
+                }
+                importBatchRepository.save(b);
+
+                inventoryStockRepository.findByBranchIdAndItemIdAndBatchId(branch.getId(), item.getId(), b.getId())
+                        .ifPresent(st -> {
+                            st.setQuantity(b.getCurrentStock());
+                            st.setLastUpdatedAt(Instant.now());
+                            inventoryStockRepository.save(st);
+                        });
+
+                remainingToDeduct = remainingToDeduct.subtract(deduct);
+            }
+
+            responses.add(DailyWasteConfirmationResponse.builder()
+                    .id(saved.getId())
+                    .branchId(branch.getId())
+                    .branchName(branch.getBranchName())
+                    .itemId(item.getId())
+                    .itemCode(item.getItemCode())
+                    .itemName(item.getItemName())
+                    .wasteDate(saved.getWasteDate())
+                    .shift(saved.getShift())
+                    .quantity(saved.getQuantity())
+                    .unit(saved.getUnit())
+                    .confirmedById(user.getId())
+                    .confirmedByName(user.getFullName())
+                    .status(saved.getStatus())
+                    .note(saved.getNote())
+                    .createdAt(saved.getCreatedAt())
+                    .build());
+        }
+
+        log.info("Xác nhận hủy bỏ cuối ca {} cho chi nhánh {}: {} món dùng trong ngày",
+                shift, branch.getBranchCode(), responses.size());
+
+        return responses;
     }
 
     /**
@@ -297,11 +474,48 @@ public class KitchenService {
             status = "CHO_DUYET";
         }
 
+        // Liên kết Lô nhập và Nhà cung cấp nếu có
+        ImportBatch batch = null;
+        if (request.getBatchId() != null) {
+            batch = importBatchRepository.findById(request.getBatchId())
+                    .orElseThrow(() -> new ResourceNotFoundException("ImportBatch", "id", request.getBatchId()));
+        } else if (request.getBatchNumber() != null && !request.getBatchNumber().trim().isEmpty()) {
+            batch = importBatchRepository.findByBatchCode(request.getBatchNumber().trim()).orElse(null);
+        }
+
+        Supplier supplier = null;
+        if (batch != null) {
+            supplier = batch.getSupplier();
+            // Trừ tồn của lô nhập khi báo hỏng
+            BigDecimal newStock = batch.getCurrentStock().subtract(request.getQuantity());
+            if (newStock.compareTo(BigDecimal.ZERO) < 0) {
+                newStock = BigDecimal.ZERO;
+            }
+            batch.setCurrentStock(newStock);
+            if (newStock.compareTo(BigDecimal.ZERO) == 0) {
+                batch.setStatus("HET_HANG");
+            }
+            importBatchRepository.save(batch);
+
+            final BigDecimal updatedStock = newStock;
+            // Đồng bộ cập nhật tồn kho inventory_stocks
+            inventoryStockRepository.findByBranchIdAndItemIdAndBatchId(branch.getId(), item.getId(), batch.getId())
+                    .ifPresent(stock -> {
+                        stock.setQuantity(updatedStock);
+                        stock.setLastUpdatedAt(Instant.now());
+                        inventoryStockRepository.save(stock);
+                    });
+        } else if (request.getSupplierCode() != null && !request.getSupplierCode().trim().isEmpty()) {
+            supplier = supplierRepository.findBySupplierCode(request.getSupplierCode().trim()).orElse(null);
+        }
+
         DamageReport report = DamageReport.builder()
                 .branch(branch)
                 .item(item)
-                .supplierCode(request.getSupplierCode())
-                .batchNumber(request.getBatchNumber())
+                .batch(batch)
+                .supplier(supplier)
+                .supplierCode(supplier != null ? supplier.getSupplierCode() : request.getSupplierCode())
+                .batchNumber(batch != null ? batch.getBatchCode() : request.getBatchNumber())
                 .quantity(request.getQuantity())
                 .estimatedValue(estimatedValue)
                 .reason(request.getReason())

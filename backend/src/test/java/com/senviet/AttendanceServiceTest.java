@@ -19,7 +19,7 @@ class AttendanceServiceTest {
     @BeforeEach
     void setUp() {
         // AttendanceService có thể khởi tạo mà không cần mock repo cho hàm tính khoảng cách
-        attendanceService = new AttendanceService(null, null, null, null);
+        attendanceService = new AttendanceService(null, null, null, null, null, null, null);
     }
 
     @Test

@@ -7,12 +7,15 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -67,16 +70,61 @@ public class JwtTokenProvider {
     }
 
     /**
-     * Trích xuất username (subject) từ JWT token.
+     * Trích xuất toàn bộ payload Claims từ JWT token đã được ký.
+     *
+     * @param token Chuỗi Bearer JWT Token
+     * @return Claims payload
      */
-    public String getUsernameFromToken(String token) {
-        Claims claims = Jwts.parser()
+    public Claims getClaimsFromToken(String token) {
+        return Jwts.parser()
                 .verifyWith(getSigningKey())
                 .build()
                 .parseSignedClaims(token)
                 .getPayload();
+    }
 
-        return claims.getSubject();
+    /**
+     * Trích xuất username (subject) từ JWT token.
+     */
+    public String getUsernameFromToken(String token) {
+        return getClaimsFromToken(token).getSubject();
+    }
+
+    /**
+     * Trích xuất danh sách quyền (Authorities) từ JWT token phục vụ cấu hình SecurityContext.
+     *
+     * @param token Chuỗi Bearer JWT Token
+     * @return Set<GrantedAuthority> chứa các SimpleGrantedAuthority
+     */
+    public Set<GrantedAuthority> getAuthoritiesFromToken(String token) {
+        Claims claims = getClaimsFromToken(token);
+        List<?> rolesObj = claims.get("roles", List.class);
+        if (rolesObj == null || rolesObj.isEmpty()) {
+            return Collections.emptySet();
+        }
+
+        return rolesObj.stream()
+                .map(Object::toString)
+                .map(SimpleGrantedAuthority::new)
+                .collect(Collectors.toSet());
+    }
+
+    /**
+     * Trích xuất mảng tên vai trò dạng chuỗi (vd: ["ROLE_KITCHEN_STAFF", "ROLE_EMPLOYEE"]) từ claim 'roles'.
+     *
+     * @param token Chuỗi Bearer JWT Token
+     * @return List<String> danh sách mã vai trò
+     */
+    public List<String> getRolesFromToken(String token) {
+        Claims claims = getClaimsFromToken(token);
+        List<?> rolesObj = claims.get("roles", List.class);
+        if (rolesObj == null) {
+            return Collections.emptyList();
+        }
+
+        return rolesObj.stream()
+                .map(Object::toString)
+                .collect(Collectors.toList());
     }
 
     /**

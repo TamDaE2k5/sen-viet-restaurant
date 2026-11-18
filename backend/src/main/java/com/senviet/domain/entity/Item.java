@@ -44,4 +44,8 @@ public class Item extends BaseEntity {
     @Column(name = "is_buffet_line", nullable = false)
     @Builder.Default
     private Boolean isBuffetLine = true;
+
+    @Column(name = "is_daily_only", nullable = false)
+    @Builder.Default
+    private Boolean isDailyOnly = false;
 }

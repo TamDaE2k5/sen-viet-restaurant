@@ -1,8 +1,12 @@
 package com.senviet.service;
 
+import com.senviet.domain.dto.request.UnlockPeriodRequest;
+import com.senviet.domain.dto.response.PayrollPeriodResponse;
 import com.senviet.domain.dto.response.PayrollResponse;
+import com.senviet.domain.dto.response.PayrollSummaryResponse;
 import com.senviet.domain.entity.*;
 import com.senviet.domain.repository.*;
+import com.senviet.exception.ApiException;
 import com.senviet.security.UserPrincipal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,9 +31,10 @@ import java.util.stream.Collectors;
  * 
  * Các quy tắc bất khả xâm phạm:
  * 1. Khấu trừ tự động tiền ứng lương thực chi trong tháng.
- * 2. Nhân viên tự ý bỏ việc: Lương = 0 đ, ghi chú rõ "Bỏ việc — không trả theo quy định".
+ * 2. Nhân viên tự ý bỏ việc: Lương = 0 đ, ghi chú rõ "Bỏ việc — không trả theo quy định", excluded_from_cost = true.
  * 3. Nhân viên nghỉ việc chưa hoàn tất 100% đồng phục: Trạng thái 'DANG_GIU_LUONG',
  *    tuyệt đối loại khỏi file lệnh chi chuyển khoản ngân hàng.
+ * 4. Chốt và Khóa bảng lương: Ngăn chặn sửa/hủy đơn ứng lương khi kỳ bảng lương đã khóa.
  */
 @Service
 @RequiredArgsConstructor
@@ -44,6 +49,9 @@ public class PayrollService {
     private final SalaryIncreaseProposalRepository proposalRepository;
     private final ResignationRequestRepository resignationRequestRepository;
     private final SalaryRuleRepository salaryRuleRepository;
+    private final PayrollPeriodRepository payrollPeriodRepository;
+    private final AuditLogRepository auditLogRepository;
+    private final NotificationLogRepository notificationLogRepository;
 
     public static final BigDecimal DEFAULT_STANDARD_DAYS = new BigDecimal("26.0");
 
@@ -110,19 +118,20 @@ public class PayrollService {
             BigDecimal netSalary;
             String status;
             String note = "";
+            boolean excludedFromCost = false;
+            String holdReason = null;
 
             if (isAbandoned) {
-                // TỰ Ý BỎ VIỆC: Lương = 0 đ
-                baseSalary = BigDecimal.ZERO;
-                salaryRaise = BigDecimal.ZERO;
-                allowance = BigDecimal.ZERO;
+                // TỰ Ý BỎ VIỆC: Lương = 0 đ, số công thực tế vẫn hiển thị để đối soát
                 grossSalary = BigDecimal.ZERO;
                 advanceDeduction = BigDecimal.ZERO;
                 penaltyDeduction = BigDecimal.ZERO;
                 netSalary = BigDecimal.ZERO;
                 status = "BO_VIEC";
                 note = "Bỏ việc — không trả theo quy định";
+                excludedFromCost = true;
             } else {
+                excludedFromCost = false;
                 // Tính Gross: (Base + Raise) * ActualDays / StandardDays + Allowance
                 BigDecimal effectiveSalary = baseSalary.add(salaryRaise);
                 BigDecimal prorated = effectiveSalary.multiply(actualDays).divide(standardDays, 2, RoundingMode.HALF_UP);
@@ -136,11 +145,24 @@ public class PayrollService {
 
                 if (isUniformRetained) {
                     status = "DANG_GIU_LUONG";
-                    note = "ĐANG GIỮ LƯƠNG: " + (resignOpt.get().getMissingUniformDetails() != null ? resignOpt.get().getMissingUniformDetails() : "Chưa trả đủ đồng phục");
+                    holdReason = (resignOpt.get().getMissingUniformDetails() != null ? resignOpt.get().getMissingUniformDetails() : "Đang giữ — thiếu đồng phục chưa hoàn trả");
+                    note = holdReason;
                 } else {
                     status = "CHO_DUYET";
                     note = advanceDeduction.compareTo(BigDecimal.ZERO) > 0 ? "Đã khấu trừ tạm ứng " + advanceDeduction + " đ" : "Bình thường";
                 }
+            }
+
+            // Kiểm tra trạng thái khóa kỳ bảng lương
+            Optional<PayrollPeriod> periodOpt = branch != null
+                    ? payrollPeriodRepository.findByPeriodMonthAndBranchId(payrollMonth, branch.getId())
+                    : payrollPeriodRepository.findFirstByPeriodMonth(payrollMonth);
+            Instant lockedAt = null;
+            User lockedBy = null;
+            if (periodOpt.isPresent() && "LOCKED".equalsIgnoreCase(periodOpt.get().getStatus())) {
+                status = "LOCKED";
+                lockedAt = periodOpt.get().getLockedAt();
+                lockedBy = periodOpt.get().getLockedBy();
             }
 
             // Tìm hoặc cập nhật bảng lương
@@ -160,6 +182,10 @@ public class PayrollService {
                 payroll.setStatus(status);
                 payroll.setIsAbandoned(isAbandoned);
                 payroll.setIsUniformRetained(isUniformRetained);
+                payroll.setExcludedFromCost(excludedFromCost);
+                payroll.setHoldReason(holdReason);
+                payroll.setLockedAt(lockedAt);
+                payroll.setLockedBy(lockedBy);
                 payroll.setBankName(user.getBankName());
                 payroll.setBankAccountNumber(user.getBankAccountNumber());
                 payroll.setBankAccountHolder(user.getBankAccountHolder());
@@ -182,6 +208,10 @@ public class PayrollService {
                         .status(status)
                         .isAbandoned(isAbandoned)
                         .isUniformRetained(isUniformRetained)
+                        .excludedFromCost(excludedFromCost)
+                        .holdReason(holdReason)
+                        .lockedAt(lockedAt)
+                        .lockedBy(lockedBy)
                         .bankName(user.getBankName())
                         .bankAccountNumber(user.getBankAccountNumber())
                         .bankAccountHolder(user.getBankAccountHolder())
@@ -326,7 +356,215 @@ public class PayrollService {
         }
     }
 
+    /**
+     * Chốt và Khóa bảng lương kỳ tháng (Payroll Lock).
+     * Chỉ Kế toán tổng (ROLE_GENERAL_ACCOUNTANT) có quyền thực hiện.
+     */
+    @Transactional
+    public PayrollPeriodResponse lockPayrollPeriod(String periodMonth, Long branchId, UserPrincipal executor) {
+        User user = userRepository.findById(executor.getId()).orElse(null);
+        Branch branch = branchId != null ? branchRepository.findById(branchId).orElse(null) : null;
+
+        PayrollPeriod period = branchId != null
+                ? payrollPeriodRepository.findByPeriodMonthAndBranchId(periodMonth, branchId).orElseGet(() -> PayrollPeriod.builder().periodMonth(periodMonth).branch(branch).build())
+                : payrollPeriodRepository.findFirstByPeriodMonth(periodMonth).orElseGet(() -> PayrollPeriod.builder().periodMonth(periodMonth).build());
+
+        Instant now = Instant.now();
+        period.setStatus("LOCKED");
+        period.setLockedAt(now);
+        period.setLockedBy(user);
+        period.setUpdatedAt(now);
+        PayrollPeriod saved = payrollPeriodRepository.save(period);
+
+        // Khóa toàn bộ các bản ghi lương của tháng
+        List<Payroll> payrolls = branchId != null
+                ? payrollRepository.findByPayrollMonthAndBranchId(periodMonth, branchId)
+                : payrollRepository.findByPayrollMonth(periodMonth);
+
+        for (Payroll p : payrolls) {
+            p.setStatus("LOCKED");
+            p.setLockedAt(now);
+            p.setLockedBy(user);
+            p.setUpdatedAt(now);
+        }
+        payrollRepository.saveAll(payrolls);
+
+        String details = String.format("Kế toán tổng %s đã chốt và KHÓA bảng lương tháng %s cho chi nhánh %s",
+                executor.getUsername(), periodMonth, branch != null ? branch.getBranchName() : "Toàn chuỗi");
+        log.info("[PAYROLL_LOCK] {}", details);
+
+        auditLogRepository.save(AuditLog.builder()
+                .userId(executor.getId())
+                .action("LOCK_PAYROLL_PERIOD")
+                .targetEntity("PayrollPeriod")
+                .targetId(saved.getId())
+                .details(details)
+                .build());
+
+        notificationLogRepository.save(NotificationLog.builder()
+                .branch(branch)
+                .channel("AUDIT_LOG")
+                .recipient("ROLE_GENERAL_ACCOUNTANT")
+                .title("CHỐT & KHÓA BẢNG LƯƠNG THÁNG " + periodMonth)
+                .content(details)
+                .status("SENT")
+                .build());
+
+        return mapToPeriodResponse(saved);
+    }
+
+    /**
+     * Mở khóa kỳ bảng lương tháng (Yêu cầu bắt buộc lý do mở khóa).
+     * Chỉ Kế toán tổng (ROLE_GENERAL_ACCOUNTANT) có quyền thực hiện.
+     */
+    @Transactional
+    public PayrollPeriodResponse unlockPayrollPeriod(String periodMonth, Long branchId, UnlockPeriodRequest request, UserPrincipal executor) {
+        if (request == null || request.getReason() == null || request.getReason().trim().isEmpty()) {
+            throw new ApiException("Lý do mở khóa kỳ bảng lương bắt buộc phải được cung cấp");
+        }
+
+        Branch branch = branchId != null ? branchRepository.findById(branchId).orElse(null) : null;
+        PayrollPeriod period = branchId != null
+                ? payrollPeriodRepository.findByPeriodMonthAndBranchId(periodMonth, branchId).orElseThrow(() -> new ApiException("Không tìm thấy kỳ bảng lương " + periodMonth))
+                : payrollPeriodRepository.findFirstByPeriodMonth(periodMonth).orElseThrow(() -> new ApiException("Không tìm thấy kỳ bảng lương " + periodMonth));
+
+        Instant now = Instant.now();
+        period.setStatus("OPEN");
+        period.setUnlockReason(request.getReason());
+        period.setUpdatedAt(now);
+        PayrollPeriod saved = payrollPeriodRepository.save(period);
+
+        // Mở lại trạng thái cho các bản ghi payroll bị khóa
+        List<Payroll> payrolls = branchId != null
+                ? payrollRepository.findByPayrollMonthAndBranchId(periodMonth, branchId)
+                : payrollRepository.findByPayrollMonth(periodMonth);
+
+        for (Payroll p : payrolls) {
+            if ("LOCKED".equalsIgnoreCase(p.getStatus())) {
+                p.setStatus(Boolean.TRUE.equals(p.getIsUniformRetained()) ? "DANG_GIU_LUONG" : (Boolean.TRUE.equals(p.getIsAbandoned()) ? "BO_VIEC" : "CHO_DUYET"));
+                p.setLockedAt(null);
+                p.setLockedBy(null);
+                p.setUpdatedAt(now);
+            }
+        }
+        payrollRepository.saveAll(payrolls);
+
+        String details = String.format("Kế toán tổng %s đã MỞ KHÓA bảng lương tháng %s. Lý do: %s",
+                executor.getUsername(), periodMonth, request.getReason());
+        log.info("[PAYROLL_UNLOCK] {}", details);
+
+        auditLogRepository.save(AuditLog.builder()
+                .userId(executor.getId())
+                .action("UNLOCK_PAYROLL_PERIOD")
+                .targetEntity("PayrollPeriod")
+                .targetId(saved.getId())
+                .details(details)
+                .build());
+
+        notificationLogRepository.save(NotificationLog.builder()
+                .branch(branch)
+                .channel("AUDIT_LOG")
+                .recipient("ROLE_GENERAL_ACCOUNTANT")
+                .title("MỞ KHÓA BẢNG LƯƠNG THÁNG " + periodMonth)
+                .content(details)
+                .status("SENT")
+                .build());
+
+        return mapToPeriodResponse(saved);
+    }
+
+    /**
+     * Tra cứu trạng thái kỳ bảng lương (OPEN vs LOCKED).
+     */
+    @Transactional(readOnly = true)
+    public PayrollPeriodResponse getPayrollPeriod(String periodMonth, Long branchId) {
+        Optional<PayrollPeriod> periodOpt = branchId != null
+                ? payrollPeriodRepository.findByPeriodMonthAndBranchId(periodMonth, branchId)
+                : payrollPeriodRepository.findFirstByPeriodMonth(periodMonth);
+
+        if (periodOpt.isPresent()) {
+            return mapToPeriodResponse(periodOpt.get());
+        }
+        return PayrollPeriodResponse.builder()
+                .periodMonth(periodMonth)
+                .branchId(branchId)
+                .status("OPEN")
+                .build();
+    }
+
+    /**
+     * Lấy báo cáo tổng hợp chi phí bảng lương chi nhánh.
+     * Bóc tách riêng dòng lương không trả do bỏ việc khỏi tổng chi phí lãi lỗ.
+     */
+    @Transactional(readOnly = true)
+    public PayrollSummaryResponse getPayrollSummary(String month, Long branchId) {
+        String targetMonth = month != null ? month : LocalDate.now().toString().substring(0, 7);
+        List<Payroll> payrolls = branchId != null
+                ? payrollRepository.findByBranchIdAndPayrollMonthOrderByUserId(branchId, targetMonth)
+                : payrollRepository.findByPayrollMonthOrderByBranchIdAscUserIdAsc(targetMonth);
+
+        BigDecimal totalBranchCost = BigDecimal.ZERO;
+        BigDecimal totalUnpaidAbandonedSalary = BigDecimal.ZERO;
+        int abandonedCount = 0;
+        int uniformRetainedCount = 0;
+
+        List<PayrollResponse> dtoList = new ArrayList<>();
+        for (Payroll p : payrolls) {
+            dtoList.add(mapToResponse(p));
+
+            if (Boolean.TRUE.equals(p.getIsAbandoned()) || Boolean.TRUE.equals(p.getExcludedFromCost())) {
+                abandonedCount++;
+                // Tính khoản lương không trả theo định mức công thực tế
+                BigDecimal standard = p.getStandardWorkDays() != null && p.getStandardWorkDays().compareTo(BigDecimal.ZERO) > 0
+                        ? p.getStandardWorkDays() : DEFAULT_STANDARD_DAYS;
+                BigDecimal actual = p.getActualWorkDays() != null ? p.getActualWorkDays() : BigDecimal.ZERO;
+                BigDecimal base = p.getBaseSalary() != null ? p.getBaseSalary() : BigDecimal.ZERO;
+                BigDecimal raise = p.getSalaryRaise() != null ? p.getSalaryRaise() : BigDecimal.ZERO;
+                BigDecimal prorated = base.add(raise).multiply(actual).divide(standard, 2, RoundingMode.HALF_UP);
+                BigDecimal gross = prorated.add(p.getAllowance() != null ? p.getAllowance() : BigDecimal.ZERO);
+                totalUnpaidAbandonedSalary = totalUnpaidAbandonedSalary.add(gross);
+            } else {
+                // Chỉ cộng vào chi phí thực tế khi KHÔNG bị excluded_from_cost
+                totalBranchCost = totalBranchCost.add(p.getNetSalary() != null ? p.getNetSalary() : BigDecimal.ZERO);
+            }
+
+            if (Boolean.TRUE.equals(p.getIsUniformRetained())) {
+                uniformRetainedCount++;
+            }
+        }
+
+        PayrollPeriodResponse periodRes = getPayrollPeriod(targetMonth, branchId);
+        Branch branch = branchId != null ? branchRepository.findById(branchId).orElse(null) : null;
+
+        return PayrollSummaryResponse.builder()
+                .periodMonth(targetMonth)
+                .branchId(branchId)
+                .branchName(branch != null ? branch.getBranchName() : "Tất cả chi nhánh")
+                .periodStatus(periodRes.getStatus())
+                .totalBranchCost(totalBranchCost)
+                .totalUnpaidAbandonedSalary(totalUnpaidAbandonedSalary)
+                .totalEmployees(payrolls.size())
+                .abandonedCount(abandonedCount)
+                .uniformRetainedCount(uniformRetainedCount)
+                .payrolls(dtoList)
+                .build();
+    }
+
+    private PayrollPeriodResponse mapToPeriodResponse(PayrollPeriod period) {
+        return PayrollPeriodResponse.builder()
+                .id(period.getId())
+                .periodMonth(period.getPeriodMonth())
+                .branchId(period.getBranch() != null ? period.getBranch().getId() : null)
+                .branchName(period.getBranch() != null ? period.getBranch().getBranchName() : "")
+                .status(period.getStatus())
+                .lockedAt(period.getLockedAt())
+                .lockedByUsername(period.getLockedBy() != null ? period.getLockedBy().getUsername() : null)
+                .unlockReason(period.getUnlockReason())
+                .build();
+    }
+
     private PayrollResponse mapToResponse(Payroll p) {
+        boolean isLocked = "LOCKED".equalsIgnoreCase(p.getStatus()) || p.getLockedAt() != null;
         return PayrollResponse.builder()
                 .id(p.getId())
                 .userId(p.getUser().getId())
@@ -347,6 +585,10 @@ public class PayrollService {
                 .status(p.getStatus())
                 .isAbandoned(p.getIsAbandoned())
                 .isUniformRetained(p.getIsUniformRetained())
+                .excludedFromCost(Boolean.TRUE.equals(p.getExcludedFromCost()))
+                .holdReason(p.getHoldReason())
+                .isLocked(isLocked)
+                .lockedAt(p.getLockedAt())
                 .bankName(p.getBankName())
                 .bankAccountNumber(p.getBankAccountNumber())
                 .bankAccountHolder(p.getBankAccountHolder())

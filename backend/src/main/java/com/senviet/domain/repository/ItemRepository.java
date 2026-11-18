@@ -23,4 +23,8 @@ public interface ItemRepository extends JpaRepository<Item, Long> {
     List<Item> searchItems(@Param("query") String query);
 
     List<Item> findByIsBuffetLineTrue();
+
+    List<Item> findByIsDailyOnlyTrue();
+
+    boolean existsByItemCode(String itemCode);
 }

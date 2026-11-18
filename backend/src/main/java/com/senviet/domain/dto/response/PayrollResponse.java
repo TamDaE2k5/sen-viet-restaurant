@@ -34,6 +34,10 @@ public class PayrollResponse {
     private String status;
     private Boolean isAbandoned;
     private Boolean isUniformRetained;
+    private Boolean excludedFromCost;
+    private String holdReason;
+    private Boolean isLocked;
+    private java.time.Instant lockedAt;
     private String bankName;
     private String bankAccountNumber;
     private String bankAccountHolder;

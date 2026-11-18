@@ -48,6 +48,7 @@ public class HrAttendanceController {
     // ==========================================
 
     @PostMapping("/attendance/check-in")
+    @PreAuthorize("hasAnyRole('ROLE_EMPLOYEE', 'ROLE_KITCHEN_STAFF', 'ROLE_RESTAURANT_MANAGER', 'ROLE_BRANCH_ACCOUNTANT')")
     @Operation(summary = "Chấm công đầu ca (Check-in)", description = "Ghi nhận ảnh selfie và tọa độ GPS, kiểm tra Geofencing <= 100m")
     public ResponseEntity<ApiResponse<AttendanceResponse>> checkIn(
             @Valid @RequestBody CheckInRequest request,
@@ -57,6 +58,7 @@ public class HrAttendanceController {
     }
 
     @PostMapping("/attendance/check-out")
+    @PreAuthorize("hasAnyRole('ROLE_EMPLOYEE', 'ROLE_KITCHEN_STAFF', 'ROLE_RESTAURANT_MANAGER', 'ROLE_BRANCH_ACCOUNTANT')")
     @Operation(summary = "Chấm công cuối ca (Check-out)", description = "Ghi nhận ảnh selfie và GPS lúc ra về, tự động tính số giờ làm thực tế")
     public ResponseEntity<ApiResponse<AttendanceResponse>> checkOut(
             @Valid @RequestBody CheckOutRequest request,
@@ -66,6 +68,7 @@ public class HrAttendanceController {
     }
 
     @GetMapping("/attendance/today")
+    @PreAuthorize("hasAnyRole('ROLE_EMPLOYEE', 'ROLE_KITCHEN_STAFF', 'ROLE_RESTAURANT_MANAGER', 'ROLE_BRANCH_ACCOUNTANT', 'ROLE_GENERAL_ACCOUNTANT')")
     @Operation(summary = "Danh sách chấm công hôm nay", description = "Lấy danh sách các nhân viên đã chấm công hôm nay theo chi nhánh")
     public ResponseEntity<ApiResponse<List<AttendanceResponse>>> getTodayAttendances(
             @RequestParam(required = false) Long branchId,
@@ -76,6 +79,7 @@ public class HrAttendanceController {
     }
 
     @GetMapping("/attendance/history")
+    @PreAuthorize("hasAnyRole('ROLE_EMPLOYEE', 'ROLE_KITCHEN_STAFF', 'ROLE_RESTAURANT_MANAGER', 'ROLE_BRANCH_ACCOUNTANT', 'ROLE_GENERAL_ACCOUNTANT')")
     @Operation(summary = "Lịch sử chấm công của nhân viên", description = "Xem lịch sử chấm công cá nhân của tài khoản đăng nhập")
     public ResponseEntity<ApiResponse<List<AttendanceResponse>>> getMyAttendanceHistory(
             @AuthenticationPrincipal UserPrincipal currentUser) {
@@ -102,11 +106,22 @@ public class HrAttendanceController {
         return ResponseEntity.ok(ApiResponse.ok("Đã xác nhận nhân viên tự ý bỏ việc", res));
     }
 
+    @PostMapping({"/abandoned/{id}/cancel", "/attendance/abandoned/{id}/cancel"})
+    @PreAuthorize("hasRole('ROLE_GENERAL_ACCOUNTANT')")
+    @Operation(summary = "Kế toán tổng hủy xác nhận bỏ việc nhầm", description = "Khôi phục trạng thái nhân viên về ACTIVE và tính toán lại lương tháng")
+    public ResponseEntity<ApiResponse<ResignationRequest>> cancelAbandonment(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+        ResignationRequest res = attendanceService.cancelAbandonment(id, currentUser);
+        return ResponseEntity.ok(ApiResponse.ok("Đã hủy xác nhận bỏ việc nhầm và khôi phục nhân viên thành công", res));
+    }
+
     // ==========================================
     // 2. KỲ THI ĐỊNH KỲ TRỰC TUYẾN
     // ==========================================
 
     @GetMapping("/exams/questions")
+    @PreAuthorize("hasAnyRole('ROLE_EMPLOYEE', 'ROLE_KITCHEN_STAFF', 'ROLE_RESTAURANT_MANAGER', 'ROLE_BRANCH_ACCOUNTANT')")
     @Operation(summary = "Lấy đề thi trắc nghiệm", description = "Đảo ngẫu nhiên câu hỏi theo vị trí chuyên môn (BEP / PHUC_VU)")
     public ResponseEntity<ApiResponse<List<ExamQuestionDto>>> getExamQuestions(
             @RequestParam(required = false, defaultValue = "BEP") String position) {
@@ -115,6 +130,7 @@ public class HrAttendanceController {
     }
 
     @PostMapping("/exams/submit")
+    @PreAuthorize("hasAnyRole('ROLE_EMPLOYEE', 'ROLE_KITCHEN_STAFF', 'ROLE_RESTAURANT_MANAGER', 'ROLE_BRANCH_ACCOUNTANT')")
     @Operation(summary = "Nộp bài thi trắc nghiệm lý thuyết", description = "Tự động chấm điểm theo đáp án chuẩn trên máy chủ")
     public ResponseEntity<ApiResponse<ExamSubmissionDto>> submitExam(
             @Valid @RequestBody ExamSubmitRequest request,
@@ -135,6 +151,7 @@ public class HrAttendanceController {
     }
 
     @GetMapping("/exams/my-submissions")
+    @PreAuthorize("hasAnyRole('ROLE_EMPLOYEE', 'ROLE_KITCHEN_STAFF', 'ROLE_RESTAURANT_MANAGER', 'ROLE_BRANCH_ACCOUNTANT')")
     @Operation(summary = "Lịch sử bài thi của cá nhân", description = "Xem lại điểm lý thuyết và thực hành của chính mình")
     public ResponseEntity<ApiResponse<List<ExamSubmissionDto>>> getMySubmissions(
             @AuthenticationPrincipal UserPrincipal currentUser) {
@@ -158,6 +175,7 @@ public class HrAttendanceController {
     // ==========================================
 
     @GetMapping("/uniforms/items")
+    @PreAuthorize("hasAnyRole('ROLE_EMPLOYEE', 'ROLE_KITCHEN_STAFF', 'ROLE_RESTAURANT_MANAGER', 'ROLE_BRANCH_ACCOUNTANT', 'ROLE_GENERAL_ACCOUNTANT')")
     @Operation(summary = "Danh mục loại đồng phục", description = "Liệt kê danh sách các loại đồng phục của chuỗi Sen Việt")
     public ResponseEntity<ApiResponse<List<UniformItem>>> getUniformItems() {
         List<UniformItem> items = uniformAndResignationService.getUniformItems();
@@ -165,6 +183,7 @@ public class HrAttendanceController {
     }
 
     @GetMapping("/uniforms/my-allocations")
+    @PreAuthorize("hasAnyRole('ROLE_EMPLOYEE', 'ROLE_KITCHEN_STAFF', 'ROLE_RESTAURANT_MANAGER', 'ROLE_BRANCH_ACCOUNTANT')")
     @Operation(summary = "Danh sách đồng phục cá nhân đang giữ", description = "Xem các món đồng phục đã được cấp phát")
     public ResponseEntity<ApiResponse<List<UniformAllocationDto>>> getMyUniformAllocations(
             @AuthenticationPrincipal UserPrincipal currentUser) {
@@ -192,6 +211,7 @@ public class HrAttendanceController {
     }
 
     @GetMapping("/resignations/my")
+    @PreAuthorize("hasAnyRole('ROLE_EMPLOYEE', 'ROLE_KITCHEN_STAFF', 'ROLE_RESTAURANT_MANAGER', 'ROLE_BRANCH_ACCOUNTANT')")
     @Operation(summary = "Đơn nghỉ việc của cá nhân", description = "Xem tình trạng xử lý đơn nghỉ việc của mình")
     public ResponseEntity<ApiResponse<List<ResignationRequest>>> getMyResignations(
             @AuthenticationPrincipal UserPrincipal currentUser) {
@@ -200,6 +220,7 @@ public class HrAttendanceController {
     }
 
     @PostMapping("/resignations/submit")
+    @PreAuthorize("hasAnyRole('ROLE_EMPLOYEE', 'ROLE_KITCHEN_STAFF', 'ROLE_RESTAURANT_MANAGER', 'ROLE_BRANCH_ACCOUNTANT')")
     @Operation(summary = "Nhân viên nộp đơn xin nghỉ việc", description = "Bắt đầu quy trình bàn giao đồng phục trước khi thanh toán lương")
     public ResponseEntity<ApiResponse<ResignationRequest>> submitResignation(
             @RequestParam(required = false) String reason,

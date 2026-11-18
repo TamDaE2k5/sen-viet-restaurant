@@ -13,4 +13,6 @@ public interface PayrollRepository extends JpaRepository<Payroll, Long> {
     List<Payroll> findByPayrollMonthOrderByBranchIdAscUserIdAsc(String payrollMonth);
     Optional<Payroll> findByUserIdAndPayrollMonth(Long userId, String payrollMonth);
     List<Payroll> findByUserIdOrderByPayrollMonthDesc(Long userId);
+    List<Payroll> findByPayrollMonthAndBranchId(String payrollMonth, Long branchId);
+    List<Payroll> findByPayrollMonth(String payrollMonth);
 }

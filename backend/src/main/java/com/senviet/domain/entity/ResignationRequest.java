@@ -60,6 +60,14 @@ public class ResignationRequest {
     @Column(name = "approved_at")
     private Instant approvedAt;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "cancelled_by_user_id")
+    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler", "passwordHash", "roles", "branch"})
+    private User cancelledByUser;
+
+    @Column(name = "cancelled_at")
+    private Instant cancelledAt;
+
     @Column(name = "manager_note", columnDefinition = "TEXT")
     private String managerNote;
 

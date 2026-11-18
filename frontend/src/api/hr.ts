@@ -107,13 +107,18 @@ export interface ResignationRequest {
   requestDate: string;
   reason: string;
   isAbandoned: boolean;
-  status: string; // 'CHO_DUYET', 'DA_DUYET', 'DANG_GIU_LUONG', 'HOAN_TAT', 'BO_VIEC'
+  status: string; // 'CHO_DUYET', 'DA_DUYET', 'DANG_GIU_LUONG', 'HOAN_TAT', 'BO_VIEC', 'CANCELLED'
   missingUniformDetails?: string;
   approvedByUser?: {
     id: number;
     fullName: string;
   };
   approvedAt?: string;
+  cancelledByUser?: {
+    id: number;
+    fullName: string;
+  };
+  cancelledAt?: string;
   managerNote?: string;
   createdAt: string;
 }
@@ -167,6 +172,27 @@ export const hrApi = {
   confirmAbandonment: async (userId: number): Promise<ResignationRequest> => {
     const res = await apiClient.post(`/hr/attendance/confirm-abandonment/${userId}`);
     return res.data.data;
+  },
+
+  cancelAbandonment: async (id: number): Promise<ResignationRequest> => {
+    try {
+      const res = await apiClient.post(`/v1/hr/abandoned/${id}/cancel`);
+      return res.data.data;
+    } catch (err: any) {
+      if (err.response?.status === 404) {
+        try {
+          const res = await apiClient.post(`/hr/abandoned/${id}/cancel`);
+          return res.data.data;
+        } catch (e: any) {
+          if (e.response?.status === 404) {
+            const res2 = await apiClient.post(`/hr/attendance/abandoned/${id}/cancel`);
+            return res2.data.data;
+          }
+          throw e;
+        }
+      }
+      throw err;
+    }
   },
 
   // Exam
