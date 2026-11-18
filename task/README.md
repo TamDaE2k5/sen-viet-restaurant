@@ -3,7 +3,8 @@
 
 > **Căn cứ kế hoạch**:
 > - [implement_demo_plan.md](file:///run/media/tamdae/Data/Source%20code/restaurant_project/implement_demo_plan.md) (Bản Demo 6 Phase - Đã hoàn thành)
-> - [phan_bien_va_gop_y_plan.md](file:///run/media/tamdae/Data/Source%20code/restaurant_project/phan_bien_va_gop_y_plan.md) (14 Điểm phản biện & hoàn thiện bản Production)
+> - [phan_bien_va_gop_y_plan.md](file:///run/media/tamdae/Data/Source%20code/restaurant_project/phan_bien_va_gop_y_plan.md) (14 Điểm phản biện & hoàn thiện bản Production - Đã hoàn thành)
+> - [phase-12-role-view-guard-and-demo-data.md](file:///run/media/tamdae/Data/Source%20code/restaurant_project/task/phase-12-role-view-guard-and-demo-data.md) (Phân view theo vai trò, Cảnh báo nổi bật & Dữ liệu demo khách hàng)
 >
 > **Kiến trúc cốt lõi**: Java 17 LTS / Spring Boot 3.x + React 18 / TypeScript / Tailwind CSS / Shadcn UI + PostgreSQL 16 + Docker Compose  
 > **Chi nhánh mục tiêu**: 02 chi nhánh (Thái Nguyên & Quế Võ)
@@ -25,7 +26,7 @@
 
 ---
 
-### B. Giai Đoạn Hoàn Thiện Bản Production (Theo 14 Điểm Phản Biện & Góp Ý)
+### B. Giai Đoạn Hoàn Thiện Bản Production (Theo 14 Điểm Phản Biện & Góp Ý - Đã hoàn thành 100%)
 
 | Giai đoạn | Tên phân hệ / Giai đoạn | Điểm phản biện xử lý | File chi tiết | Số task | Trạng thái |
 | :---: | :--- | :--- | :--- | :---: | :---: |
@@ -37,36 +38,16 @@
 
 ---
 
-## 2. Ma Trận Đối Chiếu 14 Điểm Phản Biện Đến Từng Phase
+### C. Giai Đoạn Nâng Cấp UX Phân Quyền & Dữ Liệu Demo Khách Hàng (Phase 12)
 
-| # | Mức độ | Điểm phản biện từ `phan_bien_va_gop_y_plan.md` | Phase xử lý | Hành động kỹ thuật chính |
-| :---: | :---: | :--- | :---: | :--- |
-| **1** | 🔴 Nghiêm trọng | Thiếu hệ thống Phiếu nhập/xuất/huỷ, Lô & Hạn dùng (GĐ 1) | **Phase 7** | Tạo bảng `warehouse_documents`, `import_batches`, quản lý tồn theo lô |
-| **2** | 🔴 Nghiêm trọng | ERD thiếu `SUPPLIER`, `IMPORT_BATCH`, `INVENTORY_STOCK`, `RECIPE` | **Phase 7** | Migration `V7__warehouse_lots_and_suppliers.sql` bổ sung đầy đủ thực thể |
-| **3** | 🔴 Nghiêm trọng | Thiếu rule chặn cứng: Mẻ hỏng chưa duyệt $\rightarrow$ không cho làm mẻ mới | **Phase 8** | Chặn HTTP 422 nếu mẻ trước của cùng món chưa được Quản lý duyệt báo hỏng |
-| **4** | 🔴 Nghiêm trọng | Thiếu tính năng "Món chỉ dùng trong ngày" xử lý cuối ca | **Phase 8** | Giao diện chốt ca quét món tươi tồn, nhân viên xác nhận ghi bỏ tách khỏi hàng hỏng |
-| **5** | 🟠 Cần chỉnh | Bảng `PAYROLL` thiếu `branch_id`, `excluded_from_cost`, chi tiết lý do giữ lương | **Phase 10** | Migration `V10`, tách dòng lương bỏ việc khỏi chi phí lãi lỗ, lưu lý do giữ chi tiết |
-| **6** | 🟠 Cần chỉnh | Người dùng giữ nhiều vai trò đồng thời | **Phase 9** | Migration `V9__multi_role_user_schema.sql`, bảng `user_roles`, JWT multi-role |
-| **7** | 🟠 Cần chỉnh | Thiếu cơ chế chốt/khóa bảng lương (`Payroll Lock`) | **Phase 10** | API Khóa bảng lương; khi đã khóa thì chặn sửa/hủy đơn ứng lương |
-| **8** | 🟠 Cần chỉnh | Khẳng định rõ nguyên tắc: Nút Ra line không trừ tồn kho | **Phase 8** | Kiểm toán code `LineItemLogService` đảm bảo chỉ lưu nhật ký, không trừ kho |
-| **9** | 🟡 Bổ sung | Thêm món mới trực tiếp trên màn hình Ra line | **Phase 8** | Nút `[+ Thêm món]` mở modal Quick Add trực tiếp trên sổ Ra line |
-| **10** | 🟡 Bổ sung | Quyền Kế toán tổng hủy xác nhận bỏ việc nhầm | **Phase 10** | API `/api/v1/hr/abandoned/{id}/cancel` dành riêng cho General Accountant |
-| **11** | 🟡 Bổ sung | Nhân viên bỏ việc: Lương = 0 cho cả tháng có ngày xác nhận | **Phase 10** | Cập nhật logic tính lương: Công vẫn hiện, lương = 0, ghi chú quy định |
-| **12** | 🟡 Bổ sung | Hao hụt chế biến ghi riêng, không cộng vào tỷ lệ con hàng | **Phase 7 & 8** | Tách riêng cột Hụt chế biến và Báo cáo % hỏng theo nhà cung cấp |
-| **13** | 🟡 Bổ sung | Giữ dữ liệu trên màn hình khi mất mạng (Offline Resilience) | **Phase 11** | Custom hook lưu tạm form vào storage, banner offline, không reset form khi lỗi |
-| **14** | 🟡 Bổ sung | Hướng dẫn mở lại quyền khi nhân viên lỡ từ chối Camera/GPS | **Phase 11** | Modal hướng dẫn 3 bước trực quan cho iOS Safari và Android Chrome |
+| Giai đoạn | Tên phân hệ / Giai đoạn | Mục tiêu chính | File chi tiết | Số task | Trạng thái |
+| :---: | :--- | :--- | :--- | :---: | :---: |
+| **P12** | [Phân View Vai Trò, Cảnh Báo Nổi Bật & Dữ Liệu Demo](file:///run/media/tamdae/Data/Source%20code/restaurant_project/task/phase-12-role-view-guard-and-demo-data.md) | 1. Ẩn triệt để tính năng không có quyền ngay từ menu<br>2. Thông báo/cảnh báo nổi bật trực quan<br>3. Tạo bộ data mẫu 5-10 records demo khách | `phase-12-role-view-guard-and-demo-data.md` | 4 | 📋 Sẵn sàng thực hiện |
 
 ---
 
-## 3. Quy Trình Cập Nhật & Thực Thi (Execution Protocol)
+## 2. Quy Trình Cập Nhật & Thực Thi (Execution Protocol)
 
-1. **Phân nhánh Git**:
-   - Nhánh chính: `dev`
-   - Nhánh tính năng:
-     - `feature/p7-warehouse-lots-suppliers`
-     - `feature/p8-kitchen-hard-rules`
-     - `feature/p9-multi-role-rbac`
-     - `feature/p10-hr-payroll-locks`
-     - `feature/p11-offline-resilience-ux`
+1. **Phân nhánh Git**: `feature/p12-role-views-and-demo-data`
 2. **Quy chuẩn mã nguồn**: Tuân thủ tuyệt đối [AGENTS.md](file:///run/media/tamdae/Data/Source%20code/restaurant_project/AGENTS.md).
 3. **Bảo mật dữ liệu**: Không commit file nội bộ, tài liệu doanh nghiệp hoặc credentials lên Git.
