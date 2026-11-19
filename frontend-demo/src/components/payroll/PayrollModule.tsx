@@ -21,7 +21,8 @@ import {
   Unlock,
   ShieldAlert,
   Trash2,
-  Info
+  Info,
+  QrCode,
 } from 'lucide-react';
 import {
   payrollApi,
@@ -30,6 +31,7 @@ import {
   Payroll,
   PayrollPeriod
 } from '../../api/payroll';
+import { db } from '../../db/schema';
 import { User, RoleName } from '../../types/auth';
 import { useNotification } from '../../context/NotificationContext';
 
@@ -86,6 +88,44 @@ export const PayrollModule: React.FC<PayrollModuleProps> = ({ currentUser }) => 
   const isGeneralAccountant = currentUser?.roles.some((r: RoleName) =>
     ['ROLE_GENERAL_ACCOUNTANT', 'ROLE_ADMIN', 'ROLE_CHU_CHUOI'].includes(r)
   );
+
+  const maxAdvanceLimit = 5000000; // Hạn mức ứng tối đa (50% lương cơ bản)
+
+  // Tác vụ nhanh: Xác nhận thu hồi đồng phục & Mở khóa chi trả lương (Task 13.6)
+  const handleQuickUnlockUniform = async (p: Payroll) => {
+    if (!window.confirm(`Xác nhận đã thu hồi 100% đồng phục từ nhân viên [${p.fullName}] và MỞ KHÓA CHI TRẢ LƯƠNG?`)) {
+      return;
+    }
+    try {
+      setLoading(true);
+      const rec = await db.payrollRecords.get(p.id);
+      if (rec) {
+        await db.payrollRecords.update(p.id, {
+          isUniformRetained: false,
+          status: 'DA_DUYET',
+          holdReason: undefined,
+        });
+      }
+      const resignations = await db.resignationRequests.where('userId').equals(p.userId).toArray();
+      for (const r of resignations) {
+        await db.resignationRequests.update(r.id, {
+          da_thu_hoi_dong_phuc: true,
+          status: 'HOAN_TAT',
+          missingUniformDetails: 'Đã thu hồi đủ 100% đồng phục',
+        });
+      }
+      setMessage({
+        text: `✅ Đã thu hồi đủ đồng phục và mở khóa chi lương cho nhân viên [${p.fullName}]!`,
+        type: 'success',
+      });
+      await loadPayrollData();
+    } catch (err: any) {
+      console.error(err);
+      setMessage({ text: 'Lỗi khi mở khóa lương: ' + (err.message || 'Lỗi hệ thống'), type: 'error' });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const isPeriodLocked = periodLock?.status === 'LOCKED' || payrolls.some(p => p.isLocked);
 
@@ -696,11 +736,11 @@ export const PayrollModule: React.FC<PayrollModuleProps> = ({ currentUser }) => 
                       <td className="py-3 px-3">
                         <div className="flex flex-col gap-1 items-start">
                           <span
-                            className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
+                            className={`px-2.5 py-1 rounded-full text-[11px] font-black ${
                               p.status === 'BO_VIEC' || p.isAbandoned || p.excludedFromCost
                                 ? 'bg-slate-200 text-slate-800'
                                 : p.status === 'DANG_GIU_LUONG' || p.isUniformRetained
-                                ? 'bg-rose-100 text-rose-800 animate-pulse'
+                                ? 'bg-rose-100 text-rose-800 border border-rose-300 animate-pulse'
                                 : p.isLocked
                                 ? 'bg-amber-100 text-amber-900 border border-amber-300'
                                 : 'bg-emerald-100 text-emerald-800'
@@ -709,11 +749,23 @@ export const PayrollModule: React.FC<PayrollModuleProps> = ({ currentUser }) => 
                             {p.status === 'BO_VIEC' || p.isAbandoned || p.excludedFromCost
                               ? 'BỎ VIỆC (LƯƠNG = 0)'
                               : p.status === 'DANG_GIU_LUONG' || p.isUniformRetained
-                              ? 'ĐANG GIỮ LƯƠNG'
+                              ? 'TẠM KHÓA CHI LƯƠNG'
                               : p.isLocked
                               ? 'ĐÃ KHÓA'
                               : 'Đã duyệt'}
                           </span>
+
+                          {/* Tác vụ nhanh cho Quản lý xác nhận thu hồi đồng phục để mở khóa (Task 13.6) */}
+                          {(p.status === 'DANG_GIU_LUONG' || p.isUniformRetained) && isManagerOrAccountant && (
+                            <button
+                              type="button"
+                              onClick={() => handleQuickUnlockUniform(p)}
+                              className="btn-touch mt-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[11px] flex items-center gap-1 shadow-sm active:scale-95 transition-all"
+                            >
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              <span>Thu hồi & Mở khóa</span>
+                            </button>
+                          )}
                           {(p.status === 'BO_VIEC' || p.isAbandoned || p.excludedFromCost) && (
                             <span className="text-[10px] text-rose-600 font-semibold italic">
                               Bỏ việc — không trả theo quy định
@@ -751,20 +803,69 @@ export const PayrollModule: React.FC<PayrollModuleProps> = ({ currentUser }) => 
               Quy chế: Mỗi nhân viên được ứng tối đa 50% lương cơ bản trong tháng. Số tiền được Kế toán duyệt chi sẽ tự động trừ vào bảng lương đợt gần nhất.
             </p>
 
-            <div className="space-y-3 pt-2">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Số Tiền Xin Ứng (VNĐ):
-                </label>
+            <div className="space-y-4 pt-2">
+              {/* Thanh Slider & Thanh Tiến Độ Hạn Mức Tối Đa (Task 13.6) */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-slate-700">
+                    Số Tiền Xin Ứng:
+                  </label>
+                  <span className="font-mono text-xl font-black text-amber-700">
+                    {advanceAmount.toLocaleString('vi-VN')} đ
+                  </span>
+                </div>
+
+                {/* Range Slider */}
                 <input
-                  type="number"
-                  step={500000}
+                  type="range"
                   min={500000}
-                  max={10000000}
+                  max={maxAdvanceLimit}
+                  step={100000}
                   value={advanceAmount}
-                  onChange={e => setAdvanceAmount(Number(e.target.value))}
-                  className="w-full p-3 bg-slate-50 border border-slate-300 rounded-xl text-lg font-bold text-slate-900"
+                  onChange={(e) => setAdvanceAmount(Number(e.target.value))}
+                  className="w-full h-2.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
                 />
+
+                {/* Thanh tiến độ hạn mức tối đa */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[11px] text-slate-500">
+                    <span>Hạn mức ứng đã chọn:</span>
+                    <span className="font-bold text-slate-700">
+                      {Math.round((advanceAmount / maxAdvanceLimit) * 100)}% (Tối đa: {maxAdvanceLimit.toLocaleString('vi-VN')} đ)
+                    </span>
+                  </div>
+                  <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-300 ${
+                        advanceAmount / maxAdvanceLimit > 0.8
+                          ? 'bg-rose-500'
+                          : advanceAmount / maxAdvanceLimit > 0.5
+                          ? 'bg-amber-500'
+                          : 'bg-emerald-500'
+                      }`}
+                      style={{ width: `${(advanceAmount / maxAdvanceLimit) * 100}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Phím chọn nhanh */}
+                <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Mức nhanh:</span>
+                  {[500000, 1000000, 2000000, 3000000, 5000000].map((amt) => (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => setAdvanceAmount(amt)}
+                      className={`btn-touch px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                        advanceAmount === amt
+                          ? 'bg-amber-600 text-white shadow-sm'
+                          : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {amt === 5000000 ? 'Tối đa (5tr)' : `${amt / 1000000}tr`}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div>
@@ -772,20 +873,20 @@ export const PayrollModule: React.FC<PayrollModuleProps> = ({ currentUser }) => 
                   Lý Do Xin Ứng Lương:
                 </label>
                 <textarea
-                  rows={3}
+                  rows={2}
                   placeholder="Ví dụ: Đóng tiền trọ đầu tháng, gia đình có việc phát sinh..."
                   value={advanceReason}
-                  onChange={e => setAdvanceReason(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm"
+                  onChange={(e) => setAdvanceReason(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm focus:ring-2 focus:ring-amber-500"
                 />
               </div>
 
               <button
                 onClick={handleSubmitAdvance}
                 disabled={loading}
-                className="w-full min-h-[48px] py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold text-sm shadow-md"
+                className="btn-touch w-full min-h-[48px] py-3 bg-amber-600 hover:bg-amber-700 active:scale-98 text-white rounded-xl font-extrabold text-sm shadow-lg shadow-amber-600/25 transition-all"
               >
-                Gửi Đơn Xin Ứng Lương
+                Gửi Đơn Xin Ứng Lương ({advanceAmount.toLocaleString('vi-VN')} đ)
               </button>
             </div>
 
@@ -1019,96 +1120,163 @@ export const PayrollModule: React.FC<PayrollModuleProps> = ({ currentUser }) => 
         </div>
       )}
 
-      {/* TAB 4: PERSONAL PAYSLIP */}
+      {/* TAB 4: PERSONAL PAYSLIP (DIGITAL RECEIPT STYLE - TASK 13.6) */}
       {activeTab === 'payslip' && (
-        <div className="max-w-2xl mx-auto space-y-4">
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-            <div className="flex justify-between items-center pb-3 border-b border-slate-100">
-              <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                <CreditCard className="w-5 h-5 text-purple-600" />
-                Phiếu Lương Cá Nhân ({selectedMonth})
-              </h2>
-              <span className="text-xs font-semibold text-slate-500">
-                Chi nhánh: {currentUser?.branchName || 'Sen Việt Buffet'}
-              </span>
+        <div className="max-w-xl mx-auto space-y-4">
+          {myPayrolls.length === 0 ? (
+            <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-slate-400">
+              <CreditCard className="w-10 h-10 mx-auto text-slate-300 mb-2" />
+              <p className="text-sm font-semibold">Chưa có dữ liệu phiếu lương cho tài khoản của bạn trong tháng này.</p>
             </div>
+          ) : (
+            myPayrolls.map((p) => {
+              const isBlocked = p.status === 'DANG_GIU_LUONG' || p.isUniformRetained;
+              const isAbandoned = p.status === 'BO_VIEC' || p.isAbandoned || p.excludedFromCost;
 
-            {myPayrolls.length === 0 ? (
-              <p className="text-sm text-slate-400 py-6 text-center">
-                Chưa có dữ liệu phiếu lương cho tài khoản của bạn trong tháng này.
-              </p>
-            ) : (
-              myPayrolls.map(p => (
-                <div key={p.id} className="space-y-4">
-                  {/* Status Banner */}
-                  <div
-                    className={`p-3.5 rounded-xl border flex items-center justify-between ${
-                      p.status === 'BO_VIEC' || p.isAbandoned || p.excludedFromCost
-                        ? 'bg-slate-100 border-slate-300 text-slate-700'
-                        : p.status === 'DANG_GIU_LUONG' || p.isUniformRetained
-                        ? 'bg-rose-50 border-rose-300 text-rose-800'
-                        : 'bg-emerald-50 border-emerald-300 text-emerald-800'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <ShieldCheck className="w-5 h-5" />
-                      <div>
-                        <div className="text-xs font-bold uppercase">Trạng Thái Thanh Toán</div>
-                        <div className="text-sm font-semibold">
-                          {p.status === 'BO_VIEC' || p.isAbandoned || p.excludedFromCost
-                            ? 'Bỏ việc — Lương = 0 đ (Không trả theo quy định)'
-                            : p.status === 'DANG_GIU_LUONG' || p.isUniformRetained
-                            ? `ĐANG GIỮ LƯƠNG: ${p.holdReason || 'Chưa bàn giao đủ đồng phục'}`
-                            : 'Đã sẵn sàng chi trả qua ngân hàng'}
+              return (
+                <div
+                  key={p.id}
+                  className="bg-white rounded-3xl border-2 border-slate-200 shadow-xl overflow-hidden relative"
+                >
+                  {/* Perforated Top Header Pattern */}
+                  <div className="bg-slate-900 text-white p-6 pb-5 relative overflow-hidden">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-9 h-9 rounded-xl bg-red-600 flex items-center justify-center font-black text-white text-base shadow">
+                          SV
+                        </div>
+                        <div>
+                          <div className="font-black text-sm uppercase tracking-wider text-red-400">
+                            SEN VIỆT BUFFET
+                          </div>
+                          <div className="text-xs text-slate-300 font-medium">
+                            {currentUser?.branchName || 'Chi nhánh Thái Nguyên'}
+                          </div>
                         </div>
                       </div>
+                      <span className="font-mono text-xs px-2.5 py-1 rounded-full bg-white/10 text-slate-200 border border-white/20">
+                        {selectedMonth}
+                      </span>
                     </div>
-                  </div>
 
-                  {/* Detail Rows */}
-                  <div className="divide-y divide-slate-100 text-sm">
-                    <div className="py-2.5 flex justify-between">
-                      <span className="text-slate-500">Lương cơ bản:</span>
-                      <strong className="text-slate-900">{p.baseSalary.toLocaleString('vi-VN')} đ</strong>
+                    <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between text-xs">
+                      <div>
+                        <div className="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Nhân viên thụ hưởng</div>
+                        <div className="font-extrabold text-base text-white">{p.fullName}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Mã NV / Username</div>
+                        <div className="font-mono font-bold text-slate-200">@{p.username}</div>
+                      </div>
                     </div>
-                    <div className="py-2.5 flex justify-between">
-                      <span className="text-slate-500">Tăng lương thi đạt chuẩn:</span>
-                      <strong className="text-emerald-600">+{p.salaryRaise.toLocaleString('vi-VN')} đ</strong>
-                    </div>
-                    <div className="py-2.5 flex justify-between">
-                      <span className="text-slate-500">Ngày công thực tế:</span>
-                      <strong className="text-slate-900">{p.actualWorkDays} / {p.standardWorkDays} ngày</strong>
-                    </div>
-                    <div className="py-2.5 flex justify-between">
-                      <span className="text-slate-500">Phụ cấp ăn ca:</span>
-                      <strong className="text-slate-900">{p.allowance.toLocaleString('vi-VN')} đ</strong>
-                    </div>
-                    <div className="py-2.5 flex justify-between bg-amber-50/50 px-2 rounded">
-                      <span className="text-amber-900">Khấu trừ tạm ứng:</span>
-                      <strong className="text-amber-700">-{p.advanceDeduction.toLocaleString('vi-VN')} đ</strong>
-                    </div>
-                    <div className="py-3 flex justify-between text-base font-bold bg-slate-50 px-2 rounded mt-2">
-                      <span className="text-slate-900">THỰC LĨNH CHUYỂN KHOẢN:</span>
-                      <span className="text-emerald-700 text-lg">
-                        {p.status === 'BO_VIEC' || p.isAbandoned || p.excludedFromCost
-                          ? '0 đ (Bỏ việc)'
-                          : `${p.netSalary.toLocaleString('vi-VN')} đ`}
+
+                    {/* Dấu Stamp Trạng Thái Receipt */}
+                    <div className="mt-3 flex items-center justify-between">
+                      <span className="text-[10px] text-slate-400 uppercase tracking-widest font-mono">
+                        BIÊN LAI LƯƠNG ĐIỆN TỬ #REC-{p.id}-2026
+                      </span>
+                      <span
+                        className={`px-3 py-0.5 rounded-full text-[11px] font-black uppercase tracking-wider border shadow-sm ${
+                          isAbandoned
+                            ? 'bg-slate-800 text-slate-400 border-slate-700'
+                            : isBlocked
+                            ? 'bg-rose-950 text-rose-300 border-rose-500 animate-pulse'
+                            : 'bg-emerald-950 text-emerald-300 border-emerald-500'
+                        }`}
+                      >
+                        {isAbandoned
+                          ? 'BỎ VIỆC (LƯƠNG = 0)'
+                          : isBlocked
+                          ? '🔒 TẠM KHÓA CHI LƯƠNG'
+                          : '✓ ĐÃ PHÊ DUYỆT CHI TRẢ'}
                       </span>
                     </div>
                   </div>
 
-                  {/* Bank Account Details */}
-                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-1">
-                    <div className="text-slate-500 font-semibold uppercase">Tài Khoản Nhận Lương:</div>
-                    <div className="font-bold text-slate-800">
-                      {p.bankName || 'Vietcombank'} — {p.bankAccountNumber || 'Chưa cập nhật STK'}
+                  {/* Warning Callout nếu bị khóa đồng phục */}
+                  {isBlocked && (
+                    <div className="p-3.5 bg-rose-50 border-b border-rose-200 text-rose-900 text-xs flex items-center gap-2">
+                      <ShieldAlert className="h-4 w-4 text-rose-600 flex-shrink-0 animate-pulse" />
+                      <span>
+                        <strong>Tạm giữ lương:</strong> {p.holdReason || 'Nhân viên nghỉ việc chưa bàn giao đủ 100% đồng phục. Liên hệ Quản lý chi nhánh để hoàn tất thủ tục.'}
+                      </span>
                     </div>
-                    <div className="text-slate-600">Chủ TK: {p.bankAccountHolder || p.fullName}</div>
+                  )}
+
+                  {/* Receipt Items Breakdown (Receipt lines) */}
+                  <div className="p-6 space-y-3 font-mono text-xs sm:text-sm">
+                    <div className="flex justify-between items-center text-slate-600">
+                      <span className="font-sans font-medium">1. Lương cơ bản (Lương cứng):</span>
+                      <strong className="text-slate-900">{p.baseSalary.toLocaleString('vi-VN')} đ</strong>
+                    </div>
+
+                    <div className="flex justify-between items-center text-slate-600">
+                      <span className="font-sans font-medium">2. Ngày công chuẩn & thực tế:</span>
+                      <strong className="text-slate-900">{p.actualWorkDays} / {p.standardWorkDays} ngày</strong>
+                    </div>
+
+                    <div className="flex justify-between items-center text-slate-600">
+                      <span className="font-sans font-medium">3. Thưởng thi đạt chuẩn / nâng bậc:</span>
+                      <strong className="text-emerald-600">+{p.salaryRaise.toLocaleString('vi-VN')} đ</strong>
+                    </div>
+
+                    <div className="flex justify-between items-center text-slate-600">
+                      <span className="font-sans font-medium">4. Phụ cấp ăn ca & trách nhiệm:</span>
+                      <strong className="text-slate-900">+{p.allowance.toLocaleString('vi-VN')} đ</strong>
+                    </div>
+
+                    <div className="flex justify-between items-center text-amber-800 bg-amber-50/70 p-2 rounded-xl border border-amber-200">
+                      <span className="font-sans font-bold">5. Khấu trừ tạm ứng lương:</span>
+                      <strong className="text-amber-700 font-black">-{p.advanceDeduction.toLocaleString('vi-VN')} đ</strong>
+                    </div>
+
+                    {(p.penaltyDeduction ?? 0) > 0 && (
+                      <div className="flex justify-between items-center text-rose-800 bg-rose-50/70 p-2 rounded-xl border border-rose-200">
+                        <span className="font-sans font-bold">6. Khấu trừ phạt / vi phạm:</span>
+                        <strong className="text-rose-700 font-black">-{(p.penaltyDeduction ?? 0).toLocaleString('vi-VN')} đ</strong>
+                      </div>
+                    )}
+
+                    {/* Dashed line delimiter */}
+                    <div className="border-b-2 border-dashed border-slate-300 my-3" />
+
+                    {/* Total Net Salary */}
+                    <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-300 flex items-center justify-between">
+                      <div>
+                        <div className="text-[11px] font-sans font-bold uppercase tracking-wider text-emerald-800">
+                          THỰC LĨNH CHUYỂN KHOẢN
+                        </div>
+                        <div className="text-[11px] text-slate-500 font-sans">
+                          {isAbandoned ? 'Tách khỏi chi phí theo quy định' : 'Qua tài khoản ngân hàng thụ hưởng'}
+                        </div>
+                      </div>
+                      <div className="font-mono text-2xl font-black text-emerald-700">
+                        {isAbandoned ? '0 đ' : `${p.netSalary.toLocaleString('vi-VN')} đ`}
+                      </div>
+                    </div>
+
+                    {/* Banking details */}
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs font-sans space-y-1">
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Tài khoản nhận lương:</div>
+                      <div className="font-bold text-slate-800 flex items-center justify-between">
+                        <span>{p.bankName || 'Vietcombank'} — {p.bankAccountNumber || 'Chưa cập nhật'}</span>
+                        <span className="font-normal text-slate-500">Chủ TK: {p.bankAccountHolder || p.fullName}</span>
+                      </div>
+                    </div>
+
+                    {/* Barcode & Security footer */}
+                    <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400 font-sans">
+                      <div className="flex items-center gap-1.5">
+                        <QrCode className="h-4 w-4 text-slate-500" />
+                        <span>Xác thực số: SHA256-SVB-{p.id}</span>
+                      </div>
+                      <span>Sen Việt ERP • Payslip Generator</span>
+                    </div>
                   </div>
                 </div>
-              ))
-            )}
-          </div>
+              );
+            })
+          )}
         </div>
       )}
 

@@ -19,6 +19,8 @@ import {
   Trash2,
   ShieldAlert,
   Image as ImageIcon,
+  Search,
+  Check,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
@@ -33,6 +35,128 @@ import {
 } from '../../api/kitchen';
 import { warehouseApi, ImportBatch } from '../../api/warehouse';
 import { compressImage, CompressionResult } from '../../utils/imageCompressor';
+
+export type KitchenStation = 'ALL' | 'BEP_NONG' | 'BEP_LANH' | 'BAR' | 'RA_LINE';
+
+interface VirtualNumpadProps {
+  value: number;
+  onChange: (val: number) => void;
+  unit?: string;
+  quickAddValues?: number[];
+  max?: number;
+}
+
+/**
+ * Numpad ảo kích thước lớn cho màn hình cảm ứng Kiosk / Tablet bếp.
+ * Phím số to rõ, hỗ trợ găng tay làm việc và các nút cộng dồn định lượng nhanh.
+ */
+const VirtualNumpad: React.FC<VirtualNumpadProps> = ({
+  value,
+  onChange,
+  unit = 'kg',
+  quickAddValues = [1, 5, 10],
+  max,
+}) => {
+  const [strVal, setStrVal] = useState<string>(value > 0 ? value.toString() : '');
+
+  useEffect(() => {
+    setStrVal(value > 0 ? value.toString() : '');
+  }, [value]);
+
+  const handleDigit = (digit: string) => {
+    let next: string;
+    if (!strVal || strVal === '0') {
+      next = digit === '.' ? '0.' : digit;
+    } else if (digit === '.' && strVal.includes('.')) {
+      return;
+    } else {
+      next = strVal + digit;
+    }
+    const num = parseFloat(next);
+    if (!isNaN(num)) {
+      if (max !== undefined && num > max) return;
+      setStrVal(next);
+      onChange(num);
+    }
+  };
+
+  const handleClear = () => {
+    setStrVal('');
+    onChange(0);
+  };
+
+  const handleBackspace = () => {
+    const next = strVal.length > 1 ? strVal.slice(0, -1) : '';
+    setStrVal(next);
+    onChange(parseFloat(next) || 0);
+  };
+
+  const handleQuickAdd = (add: number) => {
+    const cur = parseFloat(strVal) || 0;
+    const nextNum = Math.round((cur + add) * 10) / 10;
+    if (max !== undefined && nextNum > max) {
+      onChange(max);
+      setStrVal(max.toString());
+    } else {
+      onChange(nextNum);
+      setStrVal(nextNum.toString());
+    }
+  };
+
+  return (
+    <div className="bg-slate-50 p-3 sm:p-4 rounded-2xl border border-slate-200 space-y-2.5">
+      {/* Phím tắt định lượng nhanh */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mr-1">Cộng nhanh:</span>
+        {quickAddValues.map((add) => (
+          <button
+            key={add}
+            type="button"
+            onClick={() => handleQuickAdd(add)}
+            className="btn-touch px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 font-extrabold text-xs text-slate-800 shadow-sm active:scale-95 transition-transform"
+          >
+            +{add} {unit}
+          </button>
+        ))}
+      </div>
+
+      {/* Numpad 3x4 Grid lớn */}
+      <div className="grid grid-cols-3 gap-2">
+        {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
+          <button
+            key={digit}
+            type="button"
+            onClick={() => handleDigit(digit)}
+            className="btn-touch h-12 sm:h-14 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 font-black text-xl text-slate-900 shadow-sm active:scale-95 transition-transform"
+          >
+            {digit}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={handleClear}
+          className="btn-touch h-12 sm:h-14 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 font-black text-xs text-rose-700 shadow-sm active:scale-95"
+        >
+          XÓA (C)
+        </button>
+        <button
+          type="button"
+          onClick={() => handleDigit('0')}
+          className="btn-touch h-12 sm:h-14 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 font-black text-xl text-slate-900 shadow-sm active:scale-95"
+        >
+          0
+        </button>
+        <button
+          type="button"
+          onClick={handleBackspace}
+          className="btn-touch h-12 sm:h-14 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-300 font-black text-xs text-slate-700 shadow-sm active:scale-95"
+        >
+          ⌫ Xóa
+        </button>
+      </div>
+    </div>
+  );
+};
 
 export const KitchenModule: React.FC = () => {
   const { user } = useAuth();
@@ -95,6 +219,43 @@ export const KitchenModule: React.FC = () => {
   // --- Nút 3: Ra line (+1) state & idempotency ---
   const [lineCounters, setLineCounters] = useState<{ [itemId: number]: number }>({});
   const [loadingLineButtons, setLoadingLineButtons] = useState<{ [itemId: number]: boolean }>({});
+  const [animatingLineItemId, setAnimatingLineItemId] = useState<number | null>(null);
+  const [selectedStation, setSelectedStation] = useState<KitchenStation>('ALL');
+  const [lineSearchTerm, setLineSearchTerm] = useState<string>('');
+
+  // Bộ lọc Station theo từng trạm chế biến bếp
+  const filterItemsByStation = (itemList: Item[], station: KitchenStation) => {
+    if (station === 'ALL') return itemList;
+    if (station === 'BAR') {
+      return itemList.filter(
+        (it) => it.category?.toLowerCase().includes('bar') || it.category?.toLowerCase().includes('đồ uống')
+      );
+    }
+    if (station === 'BEP_LANH') {
+      return itemList.filter(
+        (it) =>
+          it.category?.toLowerCase().includes('salad') ||
+          it.category?.toLowerCase().includes('khai vị') ||
+          it.category?.toLowerCase().includes('nộm') ||
+          it.category?.toLowerCase().includes('kim chi') ||
+          it.category?.toLowerCase().includes('tráng miệng') ||
+          it.isDailyOnly
+      );
+    }
+    if (station === 'BEP_NONG') {
+      return itemList.filter(
+        (it) =>
+          it.category?.toLowerCase().includes('thịt') ||
+          it.category?.toLowerCase().includes('hải sản') ||
+          it.category?.toLowerCase().includes('nấu') ||
+          it.category?.toLowerCase().includes('nướng')
+      );
+    }
+    if (station === 'RA_LINE') {
+      return itemList.filter((it) => it.isBuffetLine);
+    }
+    return itemList;
+  };
 
   // --- Nút 4: Báo hỏng state ---
   const [damageItemId, setDamageItemId] = useState<number | ''>('');
@@ -336,8 +497,12 @@ export const KitchenModule: React.FC = () => {
     // Nếu nút đang loading thì lập tức bỏ qua (chặn bấm đúp phía client)
     if (loadingLineButtons[item.id]) return;
 
-    // Khóa nút tức thì
+    // Khóa nút tức thì & kích hoạt hiệu ứng xúc giác visual animation
     setLoadingLineButtons((prev) => ({ ...prev, [item.id]: true }));
+    setAnimatingLineItemId(item.id);
+    setTimeout(() => {
+      setAnimatingLineItemId(null);
+    }, 800);
 
     // Sinh requestId duy nhất để server loại trừ request trùng khi mạng chập chờn
     const idempotencyRequestId = `line-${item.id}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
@@ -605,22 +770,91 @@ export const KitchenModule: React.FC = () => {
         </div>
       </div>
 
-      {/* 4 NÚT BẤM CỰC LỚN (MOBILE-FIRST BUTTONS) */}
-      <div className="grid grid-cols-2 gap-3.5">
+      {/* CẢNH BÁO MẺ DỞ DANG NỔI BẬT (BANNER ĐỎ / AMBER) */}
+      {activeBatches.length > 0 && (
+        <div className="bg-gradient-to-r from-amber-600 via-rose-600 to-red-600 rounded-2xl p-4 sm:p-5 text-white shadow-xl shadow-rose-600/20 border-2 border-amber-300 animate-in fade-in flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start sm:items-center gap-3">
+            <div className="p-3 rounded-xl bg-white/20 backdrop-blur-md flex-shrink-0 animate-pulse">
+              <Flame className="h-7 w-7 text-amber-200" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-black text-base sm:text-lg tracking-tight">CẢNH BÁO: CÓ {activeBatches.length} MẺ CHƯA CÂN THÀNH PHẨM!</span>
+                <span className="px-2 py-0.5 rounded-full bg-amber-400 text-amber-950 text-[10px] font-black uppercase tracking-wider animate-bounce">
+                  Cần cân ngay
+                </span>
+              </div>
+              <p className="text-xs sm:text-sm text-amber-100/90 mt-0.5">
+                Hoàn tất cân thành phẩm mẻ đang làm để tránh vượt định mức hao hụt và mở mẻ mới chuẩn xác.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setBatchTab('finish');
+              setSelectedFinishBatch(activeBatches[0]);
+              const savedDraft = localStorage.getItem(`senviet_offline_finish_batch_${activeBatches[0].id}`);
+              if (savedDraft) {
+                setFinishOutputWeight(parseFloat(savedDraft));
+              } else {
+                setFinishOutputWeight(activeBatches[0].inputWeight ? Math.round(activeBatches[0].inputWeight * 0.8 * 10) / 10 : 0);
+              }
+              setActiveModal('batch');
+            }}
+            className="btn-touch px-4 py-3 rounded-xl bg-white text-rose-700 hover:bg-amber-50 font-black text-xs sm:text-sm shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-all flex-shrink-0"
+          >
+            <Scale className="h-4 w-4 text-rose-600" />
+            <span>TIẾP TỤC MẺ TRƯỚC</span>
+          </button>
+        </div>
+      )}
+
+      {/* BỘ LỌC TRẠM CHẾ BIẾN (STATION FILTER) */}
+      <div className="bg-white p-2.5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-2 overflow-x-auto no-scrollbar">
+        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider px-2 whitespace-nowrap flex items-center gap-1">
+          <Layers className="h-3.5 w-3.5" />
+          <span>Trạm:</span>
+        </span>
+        {[
+          { key: 'ALL', label: 'Tất cả trạm', icon: '🍽️' },
+          { key: 'BEP_NONG', label: 'Bếp Nóng', icon: '🔥' },
+          { key: 'BEP_LANH', label: 'Bếp Lạnh', icon: '🥗' },
+          { key: 'BAR', label: 'Quầy Bar', icon: '🍹' },
+          { key: 'RA_LINE', label: 'Ra Line Buffet', icon: '🍱' },
+        ].map((st) => (
+          <button
+            key={st.key}
+            type="button"
+            onClick={() => setSelectedStation(st.key as KitchenStation)}
+            className={`btn-touch px-3 py-1.5 rounded-xl font-bold text-xs whitespace-nowrap flex items-center gap-1.5 transition-all ${
+              selectedStation === st.key
+                ? 'bg-slate-900 text-white shadow-sm'
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+            }`}
+          >
+            <span>{st.icon}</span>
+            <span>{st.label}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* 4 NÚT BẤM CỰC LỚN (MOBILE-FIRST BUTTONS: MIN 56PX - 64PX TOUCH TARGETS) */}
+      <div className="grid grid-cols-2 gap-3.5 sm:gap-4">
         {/* NÚT 1: LẤY HÀNG (Màu Xanh Dương) */}
         <button
           onClick={() => setActiveModal('takeOut')}
-          className="btn-touch h-28 sm:h-32 rounded-2xl bg-gradient-to-br from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white p-4 flex flex-col justify-between shadow-lg shadow-blue-600/25 active:scale-[0.98] transition-all text-left"
+          className="btn-touch min-h-[140px] sm:min-h-[155px] rounded-2xl bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-800 hover:from-blue-700 hover:to-indigo-900 text-white p-4 sm:p-5 flex flex-col justify-between shadow-xl shadow-blue-600/25 active:scale-[0.97] transition-all text-left"
         >
           <div className="flex items-center justify-between w-full">
-            <div className="p-2 rounded-xl bg-white/20 backdrop-blur-sm">
-              <Package className="h-6 w-6 text-white" />
+            <div className="p-2.5 rounded-xl bg-white/20 backdrop-blur-sm">
+              <Package className="h-7 w-7 text-white" />
             </div>
-            <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-black/20 uppercase tracking-wider">Nút 1</span>
+            <span className="text-[11px] font-black px-2.5 py-1 rounded bg-black/25 uppercase tracking-wider">Nút 1</span>
           </div>
           <div>
-            <div className="font-extrabold text-base sm:text-lg leading-tight">LẤY HÀNG</div>
-            <div className="text-xs text-blue-100 mt-0.5">Xuất kho sơ bộ ra bếp</div>
+            <div className="font-black text-lg sm:text-xl leading-tight tracking-tight">LẤY HÀNG</div>
+            <div className="text-xs sm:text-sm text-blue-100 mt-1">Xuất kho sơ bộ ra bếp</div>
           </div>
         </button>
 
@@ -630,24 +864,24 @@ export const KitchenModule: React.FC = () => {
             setBatchTab(activeBatches.length > 0 ? 'finish' : 'start');
             setActiveModal('batch');
           }}
-          className="btn-touch h-28 sm:h-32 rounded-2xl bg-gradient-to-br from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white p-4 flex flex-col justify-between shadow-lg shadow-emerald-600/25 active:scale-[0.98] transition-all text-left relative overflow-hidden"
+          className="btn-touch min-h-[140px] sm:min-h-[155px] rounded-2xl bg-gradient-to-br from-emerald-600 via-emerald-700 to-teal-800 hover:from-emerald-700 hover:to-teal-900 text-white p-4 sm:p-5 flex flex-col justify-between shadow-xl shadow-emerald-600/25 active:scale-[0.97] transition-all text-left relative overflow-hidden"
         >
           {activeBatches.length > 0 && (
-            <span className="absolute top-3 right-3 flex h-3 w-3">
+            <span className="absolute top-3 right-3 flex h-3.5 w-3.5">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-300"></span>
+              <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-amber-300"></span>
             </span>
           )}
           <div className="flex items-center justify-between w-full">
-            <div className="p-2 rounded-xl bg-white/20 backdrop-blur-sm">
-              <Flame className="h-6 w-6 text-white" />
+            <div className="p-2.5 rounded-xl bg-white/20 backdrop-blur-sm">
+              <Flame className="h-7 w-7 text-white" />
             </div>
-            <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-black/20 uppercase tracking-wider">Nút 2</span>
+            <span className="text-[11px] font-black px-2.5 py-1 rounded bg-black/25 uppercase tracking-wider">Nút 2</span>
           </div>
           <div>
-            <div className="font-extrabold text-base sm:text-lg leading-tight">CHẾ BIẾN MẺ</div>
-            <div className="text-xs text-emerald-100 mt-0.5">
-              {activeBatches.length > 0 ? `${activeBatches.length} mẻ cần cân` : 'Mở mẻ & cân hụt'}
+            <div className="font-black text-lg sm:text-xl leading-tight tracking-tight">CHẾ BIẾN MẺ</div>
+            <div className="text-xs sm:text-sm text-emerald-100 mt-1">
+              {activeBatches.length > 0 ? `${activeBatches.length} mẻ cần cân hụt` : 'Mở mẻ & cân thành phẩm'}
             </div>
           </div>
         </button>
@@ -655,34 +889,34 @@ export const KitchenModule: React.FC = () => {
         {/* NÚT 3: RA LINE (+1) (Màu Vàng / Hổ Phách) */}
         <button
           onClick={() => setActiveModal('lineItem')}
-          className="btn-touch h-28 sm:h-32 rounded-2xl bg-gradient-to-br from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white p-4 flex flex-col justify-between shadow-lg shadow-amber-500/25 active:scale-[0.98] transition-all text-left"
+          className="btn-touch min-h-[140px] sm:min-h-[155px] rounded-2xl bg-gradient-to-br from-amber-500 via-amber-600 to-orange-700 hover:from-amber-600 hover:to-orange-800 text-white p-4 sm:p-5 flex flex-col justify-between shadow-xl shadow-amber-500/25 active:scale-[0.97] transition-all text-left"
         >
           <div className="flex items-center justify-between w-full">
-            <div className="p-2 rounded-xl bg-white/20 backdrop-blur-sm">
-              <PlusCircle className="h-6 w-6 text-white" />
+            <div className="p-2.5 rounded-xl bg-white/20 backdrop-blur-sm">
+              <PlusCircle className="h-7 w-7 text-white" />
             </div>
-            <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-black/20 uppercase tracking-wider">Nút 3</span>
+            <span className="text-[11px] font-black px-2.5 py-1 rounded bg-black/25 uppercase tracking-wider">Nút 3</span>
           </div>
           <div>
-            <div className="font-extrabold text-base sm:text-lg leading-tight">RA LINE (+1)</div>
-            <div className="text-xs text-amber-100 mt-0.5">Ghi nhận đĩa ra buffet</div>
+            <div className="font-black text-lg sm:text-xl leading-tight tracking-tight">RA LINE (+1)</div>
+            <div className="text-xs sm:text-sm text-amber-100 mt-1">Ghi nhận đĩa ra buffet</div>
           </div>
         </button>
 
         {/* NÚT 4: BÁO HỎNG (Màu Đỏ Rose) */}
         <button
           onClick={() => setActiveModal('damage')}
-          className="btn-touch h-28 sm:h-32 rounded-2xl bg-gradient-to-br from-rose-600 to-rose-700 hover:from-rose-700 hover:to-rose-800 text-white p-4 flex flex-col justify-between shadow-lg shadow-rose-600/25 active:scale-[0.98] transition-all text-left"
+          className="btn-touch min-h-[140px] sm:min-h-[155px] rounded-2xl bg-gradient-to-br from-rose-600 via-rose-700 to-red-800 hover:from-rose-700 hover:to-red-900 text-white p-4 sm:p-5 flex flex-col justify-between shadow-xl shadow-rose-600/25 active:scale-[0.97] transition-all text-left"
         >
           <div className="flex items-center justify-between w-full">
-            <div className="p-2 rounded-xl bg-white/20 backdrop-blur-sm">
-              <AlertTriangle className="h-6 w-6 text-white" />
+            <div className="p-2.5 rounded-xl bg-white/20 backdrop-blur-sm">
+              <AlertTriangle className="h-7 w-7 text-white" />
             </div>
-            <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-black/20 uppercase tracking-wider">Nút 4</span>
+            <span className="text-[11px] font-black px-2.5 py-1 rounded bg-black/25 uppercase tracking-wider">Nút 4</span>
           </div>
           <div>
-            <div className="font-extrabold text-base sm:text-lg leading-tight">BÁO HỎNG</div>
-            <div className="text-xs text-rose-100 mt-0.5">Kèm ảnh chụp nén &lt;200KB</div>
+            <div className="font-black text-lg sm:text-xl leading-tight tracking-tight">BÁO HỎNG</div>
+            <div className="text-xs sm:text-sm text-rose-100 mt-1">Kèm ảnh chụp nén &lt;200KB</div>
           </div>
         </button>
       </div>
@@ -917,31 +1151,17 @@ export const KitchenModule: React.FC = () => {
 
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs font-bold text-slate-600">KHỐI LƯỢNG NGUYÊN LIỆU ĐẦU VÀO (KG)</label>
-                    <span className="text-xs font-semibold text-emerald-600">Cân đầu vào</span>
+                    <label className="block text-xs font-bold text-slate-700">KHỐI LƯỢNG NGUYÊN LIỆU ĐẦU VÀO (KG)</label>
+                    <span className="text-xs font-semibold text-emerald-600">
+                      Đang nhập: <strong className="text-base text-slate-900 font-mono">{batchInputWeight}</strong> kg
+                    </span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      step="0.1"
-                      min="0.1"
-                      value={batchInputWeight}
-                      onChange={(e) => setBatchInputWeight(parseFloat(e.target.value) || 0)}
-                      className="flex-1 h-12 px-4 rounded-xl border border-slate-300 font-extrabold text-xl text-slate-900 focus:ring-2 focus:ring-emerald-500"
-                    />
-                    <div className="flex gap-1.5">
-                      {[10, 15, 20].map((inc) => (
-                        <button
-                          type="button"
-                          key={inc}
-                          onClick={() => setBatchInputWeight(inc)}
-                          className="btn-touch px-3 rounded-xl bg-slate-100 hover:bg-slate-200 font-bold text-xs text-slate-700"
-                        >
-                          {inc} kg
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                  <VirtualNumpad
+                    value={batchInputWeight}
+                    onChange={(val) => setBatchInputWeight(val)}
+                    unit="kg"
+                    quickAddValues={[1, 5, 10]}
+                  />
                 </div>
 
                 <div>
@@ -1031,16 +1251,16 @@ export const KitchenModule: React.FC = () => {
                       <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
                         <div className="flex items-center justify-between">
                           <label className="block text-xs font-bold text-slate-700">KHỐI LƯỢNG THÀNH PHẨM CÂN ĐƯỢC (KG)</label>
-                          <span className="text-xs text-slate-500">Cân đầu ra</span>
+                          <span className="text-xs text-slate-500">
+                            Đang cân: <strong className="text-base text-slate-900 font-mono">{finishOutputWeight}</strong> / {selectedFinishBatch.inputWeight} kg
+                          </span>
                         </div>
-                        <input
-                          type="number"
-                          step="0.1"
-                          min="0.1"
-                          max={selectedFinishBatch.inputWeight}
+                        <VirtualNumpad
                           value={finishOutputWeight}
-                          onChange={(e) => setFinishOutputWeight(parseFloat(e.target.value) || 0)}
-                          className="w-full h-12 px-4 rounded-xl border border-slate-300 font-extrabold text-xl text-slate-900 focus:ring-2 focus:ring-emerald-500"
+                          onChange={(val) => setFinishOutputWeight(val)}
+                          unit="kg"
+                          quickAddValues={[1, 5, 10]}
+                          max={selectedFinishBatch.inputWeight}
                         />
 
                         {/* Realtime Loss Rate Preview */}
@@ -1227,47 +1447,111 @@ export const KitchenModule: React.FC = () => {
               </span>
             </div>
 
+            {/* Thanh tìm kiếm & lọc Station */}
+            <div className="space-y-2 mt-3">
+              <div className="relative">
+                <Search className="h-4 w-4 absolute left-3 top-3 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Tìm món ra line..."
+                  value={lineSearchTerm}
+                  onChange={(e) => setLineSearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-300 text-xs sm:text-sm focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              {/* Station Filter Pills */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+                {[
+                  { key: 'ALL', label: 'Tất cả' },
+                  { key: 'BEP_NONG', label: 'Bếp Nóng' },
+                  { key: 'BEP_LANH', label: 'Bếp Lạnh' },
+                  { key: 'BAR', label: 'Bar' },
+                  { key: 'RA_LINE', label: 'Line Buffet' },
+                ].map((st) => (
+                  <button
+                    key={st.key}
+                    type="button"
+                    onClick={() => setSelectedStation(st.key as KitchenStation)}
+                    className={`btn-touch px-2.5 py-1 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${
+                      selectedStation === st.key
+                        ? 'bg-amber-600 text-white shadow-sm'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {st.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <p className="text-xs text-slate-500 mt-2">
               Mỗi lần nhấn nút <strong className="text-amber-700">+1 ĐĨA / KHAY</strong>, hệ thống tự động ghi nhận đĩa đưa ra line và loại bỏ hoàn toàn hiện tượng bấm đúp (chống double-click).
             </p>
 
             <div className="space-y-3 mt-4">
-              {items.map((item) => {
-                const isLoadingBtn = !!loadingLineButtons[item.id];
-                const countToday = lineCounters[item.id] || 0;
+              {filterItemsByStation(items, selectedStation)
+                .filter(
+                  (it) =>
+                    it.itemName.toLowerCase().includes(lineSearchTerm.toLowerCase()) ||
+                    it.itemCode.toLowerCase().includes(lineSearchTerm.toLowerCase())
+                )
+                .map((item) => {
+                  const isLoadingBtn = !!loadingLineButtons[item.id];
+                  const countToday = lineCounters[item.id] || 0;
+                  const isAnimating = animatingLineItemId === item.id;
 
-                return (
-                  <div
-                    key={item.id}
-                    className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-sm flex items-center justify-between gap-3"
-                  >
-                    <div>
-                      <div className="font-bold text-sm sm:text-base text-slate-900">{item.itemName}</div>
-                      <div className="text-xs text-slate-500 mt-0.5">
-                        Đã ra hôm nay: <span className="font-extrabold text-amber-700">{countToday}</span> {item.unit}
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => handleLineItemInc(item)}
-                      disabled={isLoadingBtn}
-                      className="btn-touch px-4 h-12 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-extrabold text-sm flex items-center gap-1.5 shadow-md shadow-amber-500/20 active:scale-95 transition-all"
+                  return (
+                    <div
+                      key={item.id}
+                      className="relative p-3.5 rounded-2xl bg-white border border-slate-200 shadow-sm flex items-center justify-between gap-3 overflow-hidden"
                     >
-                      {isLoadingBtn ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          <span>ĐANG GHI...</span>
-                        </>
-                      ) : (
-                        <>
-                          <PlusCircle className="h-5 w-5" />
-                          <span>+1 {item.unit}</span>
-                        </>
+                      {/* Floating +1 pop badge */}
+                      {isAnimating && (
+                        <div className="absolute top-2 right-4 px-2 py-0.5 rounded-full bg-emerald-500 text-white font-black text-xs shadow-md animate-bounce flex items-center gap-1 z-20">
+                          <Check className="h-3 w-3" />
+                          <span>+1 {item.unit}!</span>
+                        </div>
                       )}
-                    </button>
-                  </div>
-                );
-              })}
+
+                      <div>
+                        <div className="font-bold text-sm sm:text-base text-slate-900">{item.itemName}</div>
+                        <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-1.5">
+                          <span>Đã ra hôm nay:</span>
+                          <span
+                            className={`font-mono font-black transition-all ${
+                              isAnimating ? 'text-emerald-600 scale-125' : 'text-amber-700'
+                            }`}
+                          >
+                            {countToday}
+                          </span>
+                          <span>{item.unit}</span>
+                          <span className="text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded ml-1 font-semibold">
+                            {item.category}
+                          </span>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => handleLineItemInc(item)}
+                        disabled={isLoadingBtn}
+                        className="btn-touch px-4 h-12 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 disabled:from-amber-300 disabled:to-amber-400 text-white font-extrabold text-sm flex items-center gap-1.5 shadow-md shadow-amber-500/20 active:scale-95 transition-all flex-shrink-0"
+                      >
+                        {isLoadingBtn ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <span>ĐANG GHI...</span>
+                          </>
+                        ) : (
+                          <>
+                            <PlusCircle className="h-5 w-5" />
+                            <span>+1 {item.unit}</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  );
+                })}
             </div>
           </div>
         </div>

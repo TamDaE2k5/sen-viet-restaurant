@@ -86,8 +86,82 @@ export const WarehouseModule: React.FC = () => {
   // Filters
   const [docTypeFilter, setDocTypeFilter] = useState<string>('ALL');
   const [batchSearchTerm, setBatchSearchTerm] = useState<string>('');
+  const [batchSupplierFilter, setBatchSupplierFilter] = useState<string>('ALL');
+  const [batchStockFilter, setBatchStockFilter] = useState<'ALL' | 'SAFE' | 'LOW' | 'EMPTY'>('ALL');
+  const [batchPage, setBatchPage] = useState<number>(1);
+  const [batchPageSize, setBatchPageSize] = useState<number>(8);
   const [reportMonth, setReportMonth] = useState<number>(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState<number>(new Date().getFullYear());
+
+  // Helper tính toán trực quan Hạn sử dụng Lô hàng (Task 13.4)
+  const getExpiryInfo = (expiryDateStr?: string) => {
+    if (!expiryDateStr) {
+      return {
+        status: 'none' as const,
+        label: 'Không ghi hạn',
+        colorClass: 'bg-slate-100 text-slate-500 border-slate-200',
+      };
+    }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const exp = new Date(expiryDateStr);
+    exp.setHours(0, 0, 0, 0);
+
+    const diffDays = Math.ceil((exp.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+    if (diffDays < 0) {
+      return {
+        status: 'expired' as const,
+        label: `QUÁ HẠN (${Math.abs(diffDays)} ngày)`,
+        colorClass: 'bg-rose-100 text-rose-800 border-rose-300 font-black animate-pulse',
+      };
+    }
+    if (diffDays <= 3) {
+      return {
+        status: 'warning' as const,
+        label: diffDays === 0 ? 'HẾT HẠN HÔM NAY' : `Cận hạn (còn ${diffDays} ngày)`,
+        colorClass: 'bg-amber-100 text-amber-900 border-amber-300 font-extrabold',
+      };
+    }
+    return {
+      status: 'safe' as const,
+      label: `Còn ${diffDays} ngày (${expiryDateStr})`,
+      colorClass: 'bg-emerald-50 text-emerald-800 border-emerald-200 font-semibold',
+    };
+  };
+
+  // Helper tính toán trực quan Thanh trạng thái Tồn kho (Task 13.4)
+  const getStockInfo = (current: number, initial: number) => {
+    const cur = Number(current) || 0;
+    const init = Number(initial) || 1;
+    const percentage = Math.max(0, Math.min(100, Math.round((cur / init) * 100)));
+
+    if (cur <= 0) {
+      return {
+        status: 'empty' as const,
+        label: 'Hết hàng (0%)',
+        barColor: 'bg-rose-500',
+        badgeClass: 'bg-rose-100 text-rose-800 border-rose-300',
+        percentage: 0,
+      };
+    }
+    if (percentage <= 25) {
+      return {
+        status: 'low' as const,
+        label: `Sắp hết (${percentage}%)`,
+        barColor: 'bg-amber-500',
+        badgeClass: 'bg-amber-100 text-amber-900 border-amber-300',
+        percentage,
+      };
+    }
+    return {
+      status: 'safe' as const,
+      label: `An toàn (${percentage}%)`,
+      barColor: 'bg-emerald-500',
+      badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+      percentage,
+    };
+  };
 
   // =========================================================================
   // MODAL STATES
@@ -469,14 +543,38 @@ export const WarehouseModule: React.FC = () => {
   });
 
   const filteredBatches = batches.filter((b) => {
-    if (!batchSearchTerm.trim()) return true;
-    const term = batchSearchTerm.toLowerCase();
-    return (
-      b.batchCode.toLowerCase().includes(term) ||
-      (b.itemName && b.itemName.toLowerCase().includes(term)) ||
-      (b.supplierName && b.supplierName.toLowerCase().includes(term))
-    );
+    if (batchSearchTerm.trim()) {
+      const term = batchSearchTerm.toLowerCase();
+      const match =
+        b.batchCode.toLowerCase().includes(term) ||
+        (b.itemName && b.itemName.toLowerCase().includes(term)) ||
+        (b.supplierName && b.supplierName.toLowerCase().includes(term));
+      if (!match) return false;
+    }
+
+    if (batchSupplierFilter !== 'ALL') {
+      const sCode = b.supplierCode || b.supplierName || '';
+      if (sCode !== batchSupplierFilter && b.supplierName !== batchSupplierFilter) {
+        return false;
+      }
+    }
+
+    if (batchStockFilter !== 'ALL') {
+      const stockInfo = getStockInfo(b.currentStock, b.initialQuantity);
+      if (batchStockFilter === 'SAFE' && stockInfo.status !== 'safe') return false;
+      if (batchStockFilter === 'LOW' && stockInfo.status !== 'low') return false;
+      if (batchStockFilter === 'EMPTY' && stockInfo.status !== 'empty') return false;
+    }
+
+    return true;
   });
+
+  // Phân trang cho Desktop DataGrid
+  const totalBatchPages = Math.max(1, Math.ceil(filteredBatches.length / batchPageSize));
+  const paginatedBatches = filteredBatches.slice(
+    (batchPage - 1) * batchPageSize,
+    batchPage * batchPageSize
+  );
 
   // Calculate Loss Report stats
   const totalImportedKg = lossReports.reduce(
@@ -774,60 +872,174 @@ export const WarehouseModule: React.FC = () => {
       {/* =================================================================== */}
       {activeTab === 'batches' && (
         <div className="space-y-4">
-          {/* Search bar */}
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div className="relative w-full sm:w-80">
-              <Search className="h-4 w-4 absolute left-3 top-3 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Tìm mã lô (VD: LOT-202611-001) hoặc tên hàng..."
-                value={batchSearchTerm}
-                onChange={(e) => setBatchSearchTerm(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm focus:ring-2 focus:ring-indigo-500"
-              />
+          {/* Thanh công cụ Tìm kiếm & Lọc NCC & Lọc Tồn kho */}
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-1">
+              <div className="relative flex-1 sm:max-w-xs">
+                <Search className="h-4 w-4 absolute left-3 top-3 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Tìm mã lô hoặc tên hàng..."
+                  value={batchSearchTerm}
+                  onChange={(e) => {
+                    setBatchSearchTerm(e.target.value);
+                    setBatchPage(1);
+                  }}
+                  className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              {/* Lọc NCC */}
+              <div className="flex items-center gap-1.5 text-xs">
+                <Building2 className="h-4 w-4 text-slate-400 flex-shrink-0" />
+                <select
+                  value={batchSupplierFilter}
+                  onChange={(e) => {
+                    setBatchSupplierFilter(e.target.value);
+                    setBatchPage(1);
+                  }}
+                  className="px-2.5 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 bg-white focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="ALL">Tất cả NCC ({suppliers.length})</option>
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.supplierCode || s.supplierName}>
+                      {s.supplierName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Lọc Tình Trạng Tồn Kho */}
+              <div className="flex items-center gap-1.5 text-xs">
+                <Filter className="h-4 w-4 text-slate-400 flex-shrink-0" />
+                <select
+                  value={batchStockFilter}
+                  onChange={(e) => {
+                    setBatchStockFilter(e.target.value as any);
+                    setBatchPage(1);
+                  }}
+                  className="px-2.5 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 bg-white focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="ALL">Tất cả mức tồn</option>
+                  <option value="SAFE">🟢 Tồn an toàn (&gt;25%)</option>
+                  <option value="LOW">🟡 Sắp hết (&le;25%)</option>
+                  <option value="EMPTY">🔴 Đã hết (0%)</option>
+                </select>
+              </div>
             </div>
-            <div className="text-xs text-slate-500 font-medium">
-              Đang quản lý <strong className="text-indigo-600">{batches.length}</strong> lô nhập tại chi nhánh
+
+            <div className="text-xs text-slate-500 font-semibold flex items-center gap-2">
+              <span>Đang hiển thị: <strong className="text-indigo-600">{filteredBatches.length}</strong> / {batches.length} lô</span>
             </div>
           </div>
 
-          {/* Batches Table */}
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-4 bg-slate-50 border-b border-slate-200 font-bold text-xs text-slate-700 flex items-center justify-between">
-              <span className="flex items-center gap-1.5 uppercase tracking-wider">
-                <Tag className="h-4 w-4 text-indigo-600" />
-                <span>Danh Sách Lô Hàng Nhập Kho (Lot Tracking)</span>
-              </span>
-              <span className="text-[11px] text-slate-500 font-normal">
-                Tự động sinh khi tạo phiếu nhập kho
-              </span>
-            </div>
+          {/* =============================================================== */}
+          {/* 1. CHẾ ĐỘ MOBILE & TABLET: DẠNG CARD LIST TRÁNH TRÀN BẢNG       */}
+          {/* =============================================================== */}
+          <div className="block lg:hidden space-y-3">
+            {filteredBatches.length === 0 ? (
+              <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-slate-400">
+                <Boxes className="h-8 w-8 mx-auto text-slate-300 mb-2" />
+                <p className="text-sm font-semibold">Chưa có lô hàng nào phù hợp với bộ lọc</p>
+              </div>
+            ) : (
+              filteredBatches.map((batch) => {
+                const stock = getStockInfo(batch.currentStock, batch.initialQuantity);
+                const expiry = getExpiryInfo(batch.expiryDate);
 
+                return (
+                  <div
+                    key={batch.id}
+                    className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3"
+                  >
+                    {/* Header Card: Mã Lô & Trạng Thái Tồn Kho */}
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono font-black text-sm text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg">
+                        {batch.batchCode}
+                      </span>
+                      <span
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-black border ${stock.badgeClass}`}
+                      >
+                        {stock.label}
+                      </span>
+                    </div>
+
+                    {/* Tên hàng & NCC */}
+                    <div>
+                      <h4 className="font-bold text-slate-900 text-base">{batch.itemName || 'Nguyên liệu'}</h4>
+                      <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
+                        <Building2 className="h-3 w-3 text-slate-400" />
+                        <span>{batch.supplierName || batch.supplierCode || 'Chưa gán NCC'}</span>
+                      </p>
+                    </div>
+
+                    {/* Thanh trạng thái tồn kho trực quan (Visual Stock Progress Bar) */}
+                    <div className="space-y-1.5 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-slate-600">Mức tồn hiện tại:</span>
+                        <span className="font-mono font-black text-slate-900">
+                          {batch.currentStock} / {batch.initialQuantity} {batch.unit}
+                        </span>
+                      </div>
+                      <div className="w-full h-2.5 bg-slate-200 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ${stock.barColor}`}
+                          style={{ width: `${stock.percentage}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Cảnh báo ngày hết hạn trực quan (Visual Expiry Date) */}
+                    <div className="flex items-center justify-between pt-1">
+                      <div className="text-[11px] text-slate-500">
+                        Giá: <strong className="font-mono text-slate-800">{Number(batch.unitPrice || 0).toLocaleString('vi-VN')} đ</strong>
+                      </div>
+                      <span
+                        className={`px-2 py-0.5 rounded-lg text-xs font-bold border flex items-center gap-1 ${expiry.colorClass}`}
+                      >
+                        {expiry.status === 'expired' && <AlertTriangle className="h-3.5 w-3.5 text-rose-600" />}
+                        {expiry.status === 'warning' && <Clock className="h-3.5 w-3.5 text-amber-600" />}
+                        {expiry.status === 'safe' && <Calendar className="h-3.5 w-3.5 text-emerald-600" />}
+                        <span>{expiry.label}</span>
+                      </span>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* =============================================================== */}
+          {/* 2. CHẾ ĐỘ DESKTOP: DATAGRID PHÂN TRANG CAO CẤP                   */}
+          {/* =============================================================== */}
+          <div className="hidden lg:block bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-xs sm:text-sm">
                 <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold text-[11px] uppercase tracking-wider">
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold text-[11px] uppercase tracking-wider sticky top-0">
                     <th className="p-3.5">Mã Lô</th>
                     <th className="p-3.5">Tên Nguyên Liệu</th>
                     <th className="p-3.5">Nhà Cung Cấp</th>
                     <th className="p-3.5">Nhập Ban Đầu</th>
-                    <th className="p-3.5">Tồn Hiện Tại</th>
+                    <th className="p-3.5">Tồn Hiện Tại & Thanh Trạng Thái</th>
                     <th className="p-3.5">Đơn Giá Nhập</th>
                     <th className="p-3.5">Ngày Nhập</th>
-                    <th className="p-3.5">Hạn Sử Dụng</th>
+                    <th className="p-3.5">Hạn Sử Dụng (Cảnh Báo)</th>
                     <th className="p-3.5 text-center">Trạng Thái</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-slate-700">
-                  {filteredBatches.length === 0 ? (
+                  {paginatedBatches.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="p-8 text-center text-slate-400">
+                      <td colSpan={9} className="p-10 text-center text-slate-400">
                         Chưa có lô hàng nào phù hợp với bộ lọc
                       </td>
                     </tr>
                   ) : (
-                    filteredBatches.map((batch) => {
-                      const isOutOfStock = Number(batch.currentStock) <= 0;
+                    paginatedBatches.map((batch) => {
+                      const stock = getStockInfo(batch.currentStock, batch.initialQuantity);
+                      const expiry = getExpiryInfo(batch.expiryDate);
+
                       return (
                         <tr key={batch.id} className="hover:bg-slate-50/80 transition-colors">
                           <td className="p-3.5 font-mono font-black text-indigo-700">{batch.batchCode}</td>
@@ -838,14 +1050,21 @@ export const WarehouseModule: React.FC = () => {
                           <td className="p-3.5 font-mono text-slate-700">
                             {batch.initialQuantity} {batch.unit}
                           </td>
-                          <td className="p-3.5">
-                            <span
-                              className={`font-mono font-black text-sm ${
-                                isOutOfStock ? 'text-slate-400 line-through' : 'text-emerald-700'
-                              }`}
-                            >
-                              {batch.currentStock} {batch.unit}
-                            </span>
+                          <td className="p-3.5 min-w-[180px]">
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between text-xs">
+                                <span className={`font-mono font-black ${stock.status === 'empty' ? 'text-slate-400 line-through' : 'text-slate-900'}`}>
+                                  {batch.currentStock} {batch.unit}
+                                </span>
+                                <span className="text-[10px] text-slate-500 font-bold">{stock.percentage}%</span>
+                              </div>
+                              <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full transition-all duration-300 ${stock.barColor}`}
+                                  style={{ width: `${stock.percentage}%` }}
+                                />
+                              </div>
+                            </div>
                           </td>
                           <td className="p-3.5 font-mono text-slate-800">
                             {Number(batch.unitPrice || 0).toLocaleString('vi-VN')} đ
@@ -853,19 +1072,20 @@ export const WarehouseModule: React.FC = () => {
                           <td className="p-3.5 font-mono text-xs text-slate-500">
                             {batch.importDate || '--'}
                           </td>
-                          <td className="p-3.5 font-mono text-xs text-slate-500">
-                            {batch.expiryDate || 'Không có'}
+                          <td className="p-3.5">
+                            <span
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border ${expiry.colorClass}`}
+                            >
+                              {expiry.status === 'expired' && <AlertTriangle className="h-3 w-3 text-rose-600" />}
+                              {expiry.status === 'warning' && <Clock className="h-3 w-3 text-amber-600" />}
+                              {expiry.status === 'safe' && <Calendar className="h-3 w-3 text-emerald-600" />}
+                              <span>{expiry.label}</span>
+                            </span>
                           </td>
                           <td className="p-3.5 text-center">
-                            {isOutOfStock ? (
-                              <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-slate-100 text-slate-500">
-                                Đã hết
-                              </span>
-                            ) : (
-                              <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-100 text-emerald-800">
-                                Đang dùng
-                              </span>
-                            )}
+                            <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-black border ${stock.badgeClass}`}>
+                              {stock.label}
+                            </span>
                           </td>
                         </tr>
                       );
@@ -874,6 +1094,47 @@ export const WarehouseModule: React.FC = () => {
                 </tbody>
               </table>
             </div>
+
+            {/* Phân trang DataGrid */}
+            {totalBatchPages > 1 && (
+              <div className="p-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs">
+                <div className="text-slate-500">
+                  Hiển thị trang <strong className="text-slate-800">{batchPage}</strong> / {totalBatchPages} (Tổng {filteredBatches.length} lô)
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    disabled={batchPage <= 1}
+                    onClick={() => setBatchPage((p) => Math.max(1, p - 1))}
+                    className="btn-touch px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 font-bold hover:bg-slate-100 disabled:opacity-40"
+                  >
+                    Trang trước
+                  </button>
+                  {Array.from({ length: totalBatchPages }).map((_, i) => (
+                    <button
+                      key={i + 1}
+                      type="button"
+                      onClick={() => setBatchPage(i + 1)}
+                      className={`btn-touch w-8 h-8 rounded-lg font-bold text-xs ${
+                        batchPage === i + 1
+                          ? 'bg-indigo-600 text-white'
+                          : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      {i + 1}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    disabled={batchPage >= totalBatchPages}
+                    onClick={() => setBatchPage((p) => Math.min(totalBatchPages, p + 1))}
+                    className="btn-touch px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 font-bold hover:bg-slate-100 disabled:opacity-40"
+                  >
+                    Trang sau
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
