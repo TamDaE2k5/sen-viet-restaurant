@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from './context/AuthContext';
 import { LoginPage } from './components/auth/LoginPage';
-import { MobileShell } from './components/layout/MobileShell';
-import { DesktopShell } from './components/layout/DesktopShell';
+import { AdaptiveShell } from './components/layout/AdaptiveShell';
 import { Dashboard } from './components/dashboard/Dashboard';
 import { KitchenModule } from './components/kitchen/KitchenModule';
 import { ReconciliationModule } from './components/reconciliation/ReconciliationModule';
@@ -18,38 +17,28 @@ import { Loader2, ShieldAlert } from 'lucide-react';
 export const App: React.FC = () => {
   const { user, isAuthenticated, isLoading, activeContext } = useAuth();
 
-  // Khởi tạo tab/menu mặc định theo phân quyền của người dùng (Task 12.1)
-  const [mobileTab, setMobileTab] = useState<string>('kitchen');
-  const [desktopMenu, setDesktopMenu] = useState<string>('kitchen');
+  // Khởi tạo phân hệ / view mặc định theo phân quyền người dùng (RBAC View Guard)
+  const [activeView, setActiveView] = useState<string>('kitchen');
 
-  // Khởi tạo và đồng bộ màn hình ban đầu sau khi nạp xong thông tin người dùng
+  // Tự động kiểm tra và chuyển về view mặc định hợp lệ khi thay đổi tài khoản
   useEffect(() => {
     if (user) {
-      const defaultDesktop = getDefaultAuthorizedView(user, false);
-      const defaultMobile = getDefaultAuthorizedView(user, true);
-
-      // Nếu menu hiện tại chưa được cấp quyền thì tự động chuyển về view mặc định
-      if (!isViewAuthorized(desktopMenu, user)) {
-        setDesktopMenu(defaultDesktop);
-      }
-      if (!isViewAuthorized(mobileTab, user)) {
-        setMobileTab(defaultMobile);
+      const defaultView = getDefaultAuthorizedView(user, false);
+      if (!isViewAuthorized(activeView, user)) {
+        setActiveView(defaultView);
       }
     }
   }, [user]);
 
-  // Giai đoạn 9: Tự động đồng bộ không gian làm việc khi người dùng chuyển đổi Context
+  // Đồng bộ không gian làm việc khi người dùng chuyển đổi Context (Kitchen / Portal / Management)
   useEffect(() => {
     if (user) {
       if (activeContext === 'KITCHEN' && isViewAuthorized('kitchen', user)) {
-        setMobileTab('kitchen');
-        setDesktopMenu('kitchen');
+        setActiveView('kitchen');
       } else if (activeContext === 'EMPLOYEE_PORTAL' && isViewAuthorized('hr-attendance', user)) {
-        setMobileTab('attendance');
-        setDesktopMenu('hr-attendance');
+        setActiveView('hr-attendance');
       } else if (activeContext === 'MANAGEMENT' && isViewAuthorized('dashboard', user)) {
-        setMobileTab('dashboard');
-        setDesktopMenu('dashboard');
+        setActiveView('dashboard');
       }
     }
   }, [activeContext, user]);
@@ -59,7 +48,9 @@ export const App: React.FC = () => {
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="flex flex-col items-center gap-3 text-slate-500">
           <Loader2 className="h-8 w-8 animate-spin text-brand-600" />
-          <span className="text-sm font-medium">Đang tải hệ thống Sen Việt Buffet...</span>
+          <span className="text-sm font-semibold tracking-wide">
+            Đang khởi động hệ thống Sen Việt Buffet...
+          </span>
         </div>
       </div>
     );
@@ -76,7 +67,7 @@ export const App: React.FC = () => {
 
   // Component chặn truy cập trái phép khi người dùng cố tình can thiệp state
   const AccessDeniedFallback = ({ targetView }: { targetView: string }) => (
-    <div className="p-8 bg-white rounded-2xl border border-rose-200 shadow-sm text-center max-w-lg mx-auto my-12">
+    <div className="p-8 bg-white rounded-2xl border border-rose-200 shadow-card text-center max-w-lg mx-auto my-12 animate-fade-in">
       <div className="h-14 w-14 bg-rose-100 text-rose-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
         <ShieldAlert className="h-8 w-8" />
       </div>
@@ -88,10 +79,9 @@ export const App: React.FC = () => {
       </p>
       <button
         onClick={() => {
-          setDesktopMenu(getDefaultAuthorizedView(user, false));
-          setMobileTab(getDefaultAuthorizedView(user, true));
+          setActiveView(getDefaultAuthorizedView(user, false));
         }}
-        className="px-4 py-2 bg-brand-600 text-white rounded-xl text-sm font-bold hover:bg-brand-700 transition-colors"
+        className="px-5 py-2.5 bg-brand-600 text-white rounded-xl text-sm font-bold hover:bg-brand-700 transition-colors shadow-sm active:scale-95"
       >
         Quay lại màn hình được cấp quyền
       </button>
@@ -100,7 +90,7 @@ export const App: React.FC = () => {
 
   return (
     <>
-      {/* Thanh công cụ Demo tương tác độc lập (DemoToolbar) */}
+      {/* Thanh công cụ Demo tương tác độc lập (DemoToolbar - Hỗ trợ Thu Gọn) */}
       <DemoToolbar />
 
       {/* Banner thông báo nổi bật (Task 12.2: Prominent Visual Alerts) */}
@@ -109,59 +99,30 @@ export const App: React.FC = () => {
       {/* Thanh trạng thái kết nối mạng (Phase 11: Offline Resilience) */}
       <NetworkStatusBar />
 
-      {/* Viewport Mobile / Tablet nhỏ */}
-      <div className="block lg:hidden">
-        <MobileShell activeTab={mobileTab} onTabChange={setMobileTab}>
-          {!isViewAuthorized(mobileTab, user) ? (
-            <AccessDeniedFallback targetView={mobileTab} />
-          ) : mobileTab === 'kitchen' ? (
-            <KitchenModule />
-          ) : mobileTab === 'warehouse' ? (
-            <WarehouseModule />
-          ) : mobileTab === 'reconciliation' ? (
-            <ReconciliationModule />
-          ) : mobileTab === 'attendance' || mobileTab === 'exam' || mobileTab === 'hr-attendance' ? (
-            <HRModule currentUser={user} />
-          ) : mobileTab === 'payroll' || mobileTab === 'profile' ? (
-            <PayrollModule currentUser={user} />
-          ) : (
-            <Dashboard
-              onNavigateToKitchen={() => setMobileTab('kitchen')}
-              onNavigateToWarehouse={() => setMobileTab('warehouse')}
-              onNavigateToReconciliation={() => setMobileTab('reconciliation')}
-              onNavigateToHR={() => setMobileTab('hr-attendance')}
-              onNavigateToPayroll={() => setMobileTab('payroll')}
-            />
-          )}
-        </MobileShell>
-      </div>
-
-      {/* Viewport Desktop */}
-      <div className="hidden lg:block">
-        <DesktopShell activeMenu={desktopMenu} onMenuChange={setDesktopMenu}>
-          {!isViewAuthorized(desktopMenu, user) ? (
-            <AccessDeniedFallback targetView={desktopMenu} />
-          ) : desktopMenu === 'kitchen' ? (
-            <KitchenModule />
-          ) : desktopMenu === 'warehouse' ? (
-            <WarehouseModule />
-          ) : desktopMenu === 'reconciliation' ? (
-            <ReconciliationModule />
-          ) : desktopMenu === 'hr-attendance' ? (
-            <HRModule currentUser={user} />
-          ) : desktopMenu === 'payroll' ? (
-            <PayrollModule currentUser={user} />
-          ) : (
-            <Dashboard
-              onNavigateToKitchen={() => setDesktopMenu('kitchen')}
-              onNavigateToWarehouse={() => setDesktopMenu('warehouse')}
-              onNavigateToReconciliation={() => setDesktopMenu('reconciliation')}
-              onNavigateToHR={() => setDesktopMenu('hr-attendance')}
-              onNavigateToPayroll={() => setDesktopMenu('payroll')}
-            />
-          )}
-        </DesktopShell>
-      </div>
+      {/* Khung Bố Cục Thích Ứng Đa Nền Tảng (Mobile, Tablet, Desktop PC) */}
+      <AdaptiveShell activeView={activeView} onViewChange={setActiveView}>
+        {!isViewAuthorized(activeView, user) ? (
+          <AccessDeniedFallback targetView={activeView} />
+        ) : activeView === 'kitchen' ? (
+          <KitchenModule />
+        ) : activeView === 'warehouse' ? (
+          <WarehouseModule />
+        ) : activeView === 'reconciliation' ? (
+          <ReconciliationModule />
+        ) : activeView === 'attendance' || activeView === 'exam' || activeView === 'hr-attendance' ? (
+          <HRModule currentUser={user} />
+        ) : activeView === 'payroll' || activeView === 'profile' ? (
+          <PayrollModule currentUser={user} />
+        ) : (
+          <Dashboard
+            onNavigateToKitchen={() => setActiveView('kitchen')}
+            onNavigateToWarehouse={() => setActiveView('warehouse')}
+            onNavigateToReconciliation={() => setActiveView('reconciliation')}
+            onNavigateToHR={() => setActiveView('hr-attendance')}
+            onNavigateToPayroll={() => setActiveView('payroll')}
+          />
+        )}
+      </AdaptiveShell>
     </>
   );
 };
