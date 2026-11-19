@@ -63,3 +63,4 @@ Mô tả tóm tắt những gì cần đạt được trong phiên làm việc n
 | Ngày | File nhật ký | Nội dung chính | Trạng thái |
 | :---: | :--- | :--- | :---: |
 | 2026-11-17 | [2026-11-17_init_setup.md](file:///run/media/tamdae/Data/Source%20code/restaurant_project/worklog/2026-11-17_init_setup.md) | Khởi tạo dự án, phân tích đặc tả, thiết lập gitignore bảo mật & cấu trúc Task/Worklog | ✅ Hoàn thành |
+| 2026-11-18 | [2026-11-18_frontend_standalone_demo.md](file:///run/media/tamdae/Data/Source%20code/restaurant_project/worklog/2026-11-18_frontend_standalone_demo.md) | Bản Demo Frontend Độc Lập với Database Nhúng IndexedDB (Dexie.js), DemoToolbar 5 vai trò & 1-click Reset | ✅ Hoàn thành |

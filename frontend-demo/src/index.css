@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Semantic Design Tokens (ui-ux-pro-max standard) */
+  --color-primary: #dc2626;        /* Đỏ Thẫm Sen Việt */
+  --color-primary-dark: #991b1b;   /* Red 800 */
+  --color-accent: #d97706;         /* Vàng kim F&B */
+  --color-text-main: #0f172a;      /* Dark Slate text AAA */
+  --color-text-muted: #64748b;     /* Slate 500 */
+  --color-bg-app: #f8fafc;         /* Slate 50 */
+  --color-card-bg: #ffffff;        /* Pure White */
+  --color-destructive: #dc2626;    /* Red 600 */
+  --color-warning: #d97706;        /* Amber 600 */
+  --color-success: #059669;        /* Emerald 600 */
+  --color-info: #2563eb;           /* Blue 600 */
+  
+  --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: 'Fira Code', ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  * {
+    border-color: #e2e8f0;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    font-family: var(--font-sans);
+    color: var(--color-text-main);
+    background-color: var(--color-bg-app);
+    -webkit-tap-highlight-color: transparent;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Số liệu & tiền tệ dùng font monospace có độ rộng cột cố định */
+  .tabular-nums {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Nút bấm cảm ứng chuẩn tối thiểu 48px cho nhân viên bếp */
+.btn-touch {
+  min-height: 48px;
+  min-width: 48px;
+  touch-action: manipulation;
+  user-select: none;
+  cursor: pointer;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn-touch:active {
+  transform: scale(0.97);
+}
+
+/* Nút bấm lớn 56px - 64px cho 4 nút bếp đầu bếp đeo găng tay */
+.btn-touch-lg {
+  min-height: 56px;
+  touch-action: manipulation;
+  user-select: none;
+  cursor: pointer;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn-touch-lg:active {
+  transform: scale(0.97);
+}
+
+/* Thanh cuộn tinh tế (Subtle custom scrollbar) */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Safe area insets cho iOS Mobile (Bottom Navigation & Notch) */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 16px);
+}
+
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
