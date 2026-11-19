@@ -46,6 +46,14 @@
 
 ---
 
+### D. Giai Đoạn Tối Ưu Toàn Diện UX/UI Đa Nền Tảng Theo UI/UX Pro Max Skill (Phase 13)
+
+| Giai đoạn | Tên phân hệ / Giai đoạn | Mục tiêu chính | File chi tiết | Số task | Trạng thái |
+| :---: | :--- | :--- | :--- | :---: | :---: |
+| **P13** | [Tối Ưu UX/UI Đa Nền Tảng (PC, Tablet, Phone) & UI/UX Pro Max](file:///run/media/tamdae/Data/Source%20code/restaurant_project/task/phase-13-ui-ux-pro-max-revamp.md) | 1. Chuẩn hóa Design System theo `ui-ux-pro-max-skill`<br>2. Kiến trúc giao diện thích ứng 3 nền tảng (PC, Tablet, Phone)<br>3. Tái thiết kế 5 phân hệ (Bếp, Kho, Đối soát, HR, Lương)<br>4. Đạt chuẩn tiếp cận WCAG 2.1 AA | `phase-13-ui-ux-pro-max-revamp.md` | 7 | 📋 Đã lập kế hoạch |
+
+---
+
 ## 2. Quy Trình Cập Nhật & Thực Thi (Execution Protocol)
 
 1. **Phân nhánh Git**: `feature/p12-role-views-and-demo-data`
