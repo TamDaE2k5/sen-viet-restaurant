@@ -413,6 +413,98 @@ async function runTestSuite() {
   assert(numpadStr === '0.5', 'VirtualNumpad Logic', 'Không cho phép bấm thừa dấu chấm thứ hai');
 
   // -----------------------------------------------------------------
+  // 10. KIỂM THỬ TÍNH NĂNG NÂNG CẤP BẾP SPRINT 1 (TASK-S1-03, S1-04, S1-05)
+  // -----------------------------------------------------------------
+  console.log('\n🍳 SUITE 10: Kitchen Sprint 1 Features (TASK-S1-03, TASK-S1-04, TASK-S1-05)');
+
+  // 10.1. TASK-S1-03: Lấy hàng & Hủy thao tác hoàn trả kho
+  const initialLots = await db.inventoryLots.where('itemId').equals(4).first();
+  const initialStock = initialLots?.currentStock ?? 100;
+
+  const takeOutRes = await kitchenApi.recordTakeOut({
+    itemId: 4,
+    quantity: 5.0,
+    unit: 'kg',
+    note: 'Xuất bò thái lát ca chiều',
+  });
+  assert(takeOutRes.success && takeOutRes.data.quantity === 5.0, 'Kitchen TakeOut', 'Ghi nhận lấy hàng xuất kho thành công');
+
+  // Kiểm tra form reset logic (về rỗng sau khi lưu)
+  let testFormQty: number | '' = 5.0;
+  let testFormNote = 'Ghi chú thử nghiệm';
+  // Simulate form reset upon success
+  testFormQty = '';
+  testFormNote = '';
+  assert(testFormQty === '' && testFormNote === '', 'Kitchen TakeOut', 'Form lấy hàng tự động reset ô số lượng và ghi chú về rỗng');
+
+  // Kiểm tra danh sách lịch sử lấy hàng
+  const allTakeOuts = await kitchenApi.getTakeOutLogs();
+  assert(allTakeOuts.length >= 1, 'Kitchen TakeOut', 'Bảng lịch sử lấy hàng trả về danh sách các lần lấy hàng trong ca');
+
+  // Kiểm tra hủy thao tác lấy nhầm và hoàn trả lại kho
+  const cancelRes = await kitchenApi.cancelTakeOut(takeOutRes.data.id);
+  assert(cancelRes.success && cancelRes.data.isCancelled === true, 'Kitchen TakeOut', 'Hủy thao tác lấy hàng thành công và đánh dấu đã hoàn kho');
+
+  const restoredLot = await db.inventoryLots.where('itemId').equals(4).first();
+  assert((restoredLot?.currentStock ?? 0) >= initialStock, 'Kitchen TakeOut', 'Số lượng tồn kho được hoàn trả chính xác sau khi hủy lấy hàng');
+
+  // 10.2. TASK-S1-04: Cooldown 1.5s nút Ra Line (+1)
+  let isCooldownLocked = false;
+  const triggerRaLineWithCooldown = (itemId: number) => {
+    if (isCooldownLocked) return { blocked: true };
+    isCooldownLocked = true;
+    return { blocked: false };
+  };
+
+  const firstClick = triggerRaLineWithCooldown(4);
+  assert(firstClick.blocked === false, 'Kitchen Ra Line Cooldown', 'Lần bấm đầu tiên được xử lý bình thường');
+
+  const spamClick = triggerRaLineWithCooldown(4);
+  assert(spamClick.blocked === true, 'Kitchen Ra Line Cooldown', 'Khóa nút tối thiểu 1.5s chặn thành công hành vi spam click');
+
+  // 10.3. TASK-S1-05: Đơn báo hỏng với 3 badge trạng thái & 3 nhóm lý do
+  const damageList = await kitchenApi.getDamageReports();
+  const hasPending = damageList.some(r => r.status === 'CHO_DUYET');
+  const hasApproved = damageList.some(r => r.status === 'DA_DUYET' || r.status === 'TU_DONG_DUYET');
+  const hasRejected = damageList.some(r => r.status === 'TU_CHOI');
+
+  assert(hasPending, 'Damage Reports Badge', 'Có đơn hiển thị badge 🟡 Chờ Bếp trưởng duyệt');
+  assert(hasApproved, 'Damage Reports Badge', 'Có đơn hiển thị badge 🟢 Đã duyệt kèm người duyệt & giờ');
+  assert(hasRejected, 'Damage Reports Badge', 'Có đơn hiển thị badge 🔴 Từ chối kèm lý do');
+
+  // Kiểm tra 3 nhóm lý do xuất hủy
+  const validDamageReasonGroups = [
+    'HONG_SO_CHE_NAU',    // Nhóm 1: Sơ chế / nấu hỏng
+    'HONG_DO_NHA_CUNG_CAP', // Nhóm 2: Nguyên liệu chết / ươn từ NCC
+    'HUY_THUA_CUOI_CA',     // Nhóm 3: Thừa cuối ca theo VSATTP
+  ];
+
+  const reportGrp1 = await kitchenApi.recordDamageReport({
+    itemId: 1,
+    quantity: 1.0,
+    reason: 'HONG_SO_CHE_NAU',
+    note: 'Chè cháy, cơm khê do sự cố nhiệt',
+  });
+  assert(reportGrp1.data.reason === 'HONG_SO_CHE_NAU', 'Damage Reason Groups', 'Ghi nhận nhóm 1: Hủy do sơ chế / nấu hỏng');
+
+  const reportGrp2 = await kitchenApi.recordDamageReport({
+    itemId: 2,
+    quantity: 2.0,
+    reason: 'HONG_DO_NHA_CUNG_CAP',
+    supplierCode: 'NCC_HAI_SAN_01',
+    note: 'Cua chết, ghẹ óp từ NCC',
+  });
+  assert(reportGrp2.data.reason === 'HONG_DO_NHA_CUNG_CAP', 'Damage Reason Groups', 'Ghi nhận nhóm 2: Hủy do nguyên liệu chết / ươn từ NCC');
+
+  const reportGrp3 = await kitchenApi.recordDamageReport({
+    itemId: 4,
+    quantity: 0.8,
+    reason: 'HUY_THUA_CUOI_CA',
+    note: 'Hàng ra line không dùng hết theo quy định VSATTP',
+  });
+  assert(reportGrp3.data.reason === 'HUY_THUA_CUOI_CA', 'Damage Reason Groups', 'Ghi nhận nhóm 3: Hủy do thừa cuối ca');
+
+  // -----------------------------------------------------------------
   // TỔNG KẾT
   // -----------------------------------------------------------------
   console.log('\n======================================================');

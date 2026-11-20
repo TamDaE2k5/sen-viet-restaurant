@@ -21,6 +21,11 @@ import {
   Image as ImageIcon,
   Search,
   Check,
+  Clock,
+  Undo2,
+  History,
+  XCircle,
+  FileText,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
@@ -32,6 +37,8 @@ import {
   DailyRemainingItem,
   ConfirmDailyWasteRequest,
   QuickAddLineItemRequest,
+  TakeOutLog,
+  DamageReport,
 } from '../../api/kitchen';
 import { warehouseApi, ImportBatch } from '../../api/warehouse';
 import { compressImage, CompressionResult } from '../../utils/imageCompressor';
@@ -220,6 +227,9 @@ export const KitchenModule: React.FC = () => {
   const [takeOutQty, setTakeOutQty] = useState<number | ''>('');
   const [takeOutNote, setTakeOutNote] = useState<string>('');
   const [isTakingOut, setIsTakingOut] = useState<boolean>(false);
+  // TASK-S1-03: Lịch sử lấy hàng trong ca & Hủy lấy hàng
+  const [takeOutLogs, setTakeOutLogs] = useState<TakeOutLog[]>([]);
+  const [cancellingTakeOutId, setCancellingTakeOutId] = useState<number | null>(null);
 
   // --- Nút 2: Chế biến mẻ state ---
   const [batchTab, setBatchTab] = useState<'start' | 'finish'>('start');
@@ -262,7 +272,9 @@ export const KitchenModule: React.FC = () => {
   // --- Nút 3: Ra line (+1) state & idempotency ---
   const [lineCounters, setLineCounters] = useState<{ [itemId: number]: number }>({});
   const [loadingLineButtons, setLoadingLineButtons] = useState<{ [itemId: number]: boolean }>({});
+  const [cooldownButtons, setCooldownButtons] = useState<{ [itemId: number]: boolean }>({});
   const [animatingLineItemId, setAnimatingLineItemId] = useState<number | null>(null);
+  const [shakingLineItemId, setShakingLineItemId] = useState<number | null>(null);
   const [selectedStation, setSelectedStation] = useState<KitchenStation>('ALL');
   const [lineSearchTerm, setLineSearchTerm] = useState<string>('');
 
@@ -311,6 +323,9 @@ export const KitchenModule: React.FC = () => {
   const [damageImage, setDamageImage] = useState<CompressionResult | null>(null);
   const [isCompressing, setIsCompressing] = useState<boolean>(false);
   const [isSubmittingDamage, setIsSubmittingDamage] = useState<boolean>(false);
+  // TASK-S1-05: Đơn báo hỏng đã gửi ca này
+  const [damageReports, setDamageReports] = useState<DamageReport[]>([]);
+  const [viewingDamageImage, setViewingDamageImage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
@@ -318,14 +333,18 @@ export const KitchenModule: React.FC = () => {
   const loadInitialData = async () => {
     try {
       setIsLoading(true);
-      const [itemList, recipeList, batchList] = await Promise.all([
+      const [itemList, recipeList, batchList, takeOutList, damageList] = await Promise.all([
         kitchenApi.getBuffetItems(),
         kitchenApi.getRecipes(),
-        kitchenApi.getActiveBatches()
+        kitchenApi.getActiveBatches(),
+        kitchenApi.getTakeOutLogs(),
+        kitchenApi.getDamageReports(),
       ]);
       setItems(itemList);
       setRecipes(recipeList);
       setActiveBatches(batchList);
+      setTakeOutLogs(takeOutList);
+      setDamageReports(damageList);
       if (itemList.length > 0 && !selectedItemId) {
         setSelectedItemId(itemList[0].id);
         setBatchItemId(itemList[0].id);
@@ -402,12 +421,36 @@ export const KitchenModule: React.FC = () => {
         note: takeOutNote || 'Lấy hàng ra bếp sơ chế',
       });
       showNotice('success', `Đã xuất kho ${qty} ${item.unit} ${item.itemName}`);
+      // TASK-S1-03: Reset toàn bộ form lấy hàng về rỗng
+      setTakeOutQty('');
       setTakeOutNote('');
       setActiveModal(null);
+
+      // Cập nhật lại danh sách lấy hàng trong ca ngay lập tức
+      const updatedLogs = await kitchenApi.getTakeOutLogs();
+      setTakeOutLogs(updatedLogs);
     } catch (err: any) {
       showNotice('error', err.response?.data?.message || 'Lỗi khi lấy hàng');
     } finally {
       setIsTakingOut(false);
+    }
+  };
+
+  // -------------------------------------------------------------
+  // TASK-S1-03: HỦY THAO TÁC LẤY HÀNG NẾU LẤY NHẦM (HOÀN TRẢ LẠI KHO)
+  // -------------------------------------------------------------
+  const handleCancelTakeOut = async (log: TakeOutLog) => {
+    if (log.isCancelled) return;
+    try {
+      setCancellingTakeOutId(log.id);
+      const res = await kitchenApi.cancelTakeOut(log.id);
+      showNotice('success', res.message);
+      const updatedLogs = await kitchenApi.getTakeOutLogs();
+      setTakeOutLogs(updatedLogs);
+    } catch (err: any) {
+      showNotice('error', err.message || 'Lỗi khi hủy thao tác lấy hàng');
+    } finally {
+      setCancellingTakeOutId(null);
     }
   };
 
@@ -541,18 +584,42 @@ export const KitchenModule: React.FC = () => {
   };
 
   // -------------------------------------------------------------
-  // Xử lý Nút 3: RA LINE (+1) kèm chống Double-Click
+  // TASK-S1-04: Xử lý Nút 3: RA LINE (+1) kèm Cooldown 1.5s & Phản hồi Haptic/Visual
   // -------------------------------------------------------------
   const handleLineItemInc = async (item: Item) => {
-    // Nếu nút đang loading thì lập tức bỏ qua (chặn bấm đúp phía client)
-    if (loadingLineButtons[item.id]) return;
+    // Khóa nút tối thiểu 1.5 giây sau mỗi lần bấm để tránh spam click
+    if (loadingLineButtons[item.id] || cooldownButtons[item.id]) return;
 
-    // Khóa nút tức thì & kích hoạt hiệu ứng xúc giác visual animation
+    // Khóa nút tức thì & kích hoạt cooldown lock tối thiểu 1.5 giây (1500ms)
     setLoadingLineButtons((prev) => ({ ...prev, [item.id]: true }));
+    setCooldownButtons((prev) => ({ ...prev, [item.id]: true }));
+
+    // Kích hoạt hiệu ứng phản hồi: nảy số +1 (floating badge) và rung nhẹ phản hồi (haptic/visual)
     setAnimatingLineItemId(item.id);
+    setShakingLineItemId(item.id);
+
+    // Haptic feedback cho thiết bị màn hình cảm ứng / tablet bếp
+    if (typeof window !== 'undefined' && 'vibrate' in navigator) {
+      try {
+        navigator.vibrate([40, 30, 40]);
+      } catch (e) {
+        // Bỏ qua nếu trình duyệt không hỗ trợ hoặc bị chặn
+      }
+    }
+
+    // Thời gian kết thúc hiệu ứng rung visual (400ms) và hiệu ứng floating badge (900ms)
+    setTimeout(() => {
+      setShakingLineItemId(null);
+    }, 400);
+
     setTimeout(() => {
       setAnimatingLineItemId(null);
-    }, 800);
+    }, 900);
+
+    // Đảm bảo mở khóa cooldown tối thiểu 1.5 giây (1500ms)
+    setTimeout(() => {
+      setCooldownButtons((prev) => ({ ...prev, [item.id]: false }));
+    }, 1500);
 
     // Sinh requestId duy nhất để server loại trừ request trùng khi mạng chập chờn
     const idempotencyRequestId = `line-${item.id}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
@@ -574,7 +641,7 @@ export const KitchenModule: React.FC = () => {
     } catch (err: any) {
       showNotice('error', err.response?.data?.message || 'Lỗi khi ghi nhận ra line');
     } finally {
-      // Mở lại nút sau khi nhận kết quả từ backend
+      // Mở lại loading của nút sau khi request ghi nhận xong
       setLoadingLineButtons((prev) => ({ ...prev, [item.id]: false }));
     }
   };
@@ -637,6 +704,10 @@ export const KitchenModule: React.FC = () => {
       setDamageNote('');
       setDamageImage(null);
       setActiveModal(null);
+
+      // TASK-S1-05: Cập nhật lại danh sách báo hỏng đã gửi ca này ngay lập tức
+      const updatedReports = await kitchenApi.getDamageReports();
+      setDamageReports(updatedReports);
     } catch (err: any) {
       const isNetworkErr =
         !navigator.onLine ||
@@ -975,6 +1046,268 @@ export const KitchenModule: React.FC = () => {
             <div className="text-xs sm:text-sm text-rose-100 mt-1">Kèm ảnh chụp nén &lt;200KB</div>
           </div>
         </button>
+      </div>
+
+      {/* ============================================================== */}
+      {/* TASK-S1-03: BẢNG LỊCH SỬ LẤY HÀNG TRONG CA HÔM NAY             */}
+      {/* ============================================================== */}
+      <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm space-y-3">
+        <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+          <div className="flex items-center gap-2">
+            <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
+              <Package className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="font-bold text-sm sm:text-base text-slate-900">Lịch Sử Lấy Hàng Trong Ca Hôm Nay</h3>
+              <p className="text-[11px] text-slate-500">
+                Xuất kho ra bếp sơ chế. Hỗ trợ hủy thao tác hoàn trả lại kho nếu lấy nhầm.
+              </p>
+            </div>
+          </div>
+          <span className="text-xs font-black px-2.5 py-1 rounded-full bg-blue-100 text-blue-800">
+            {takeOutLogs.length} lần xuất
+          </span>
+        </div>
+
+        {takeOutLogs.length === 0 ? (
+          <div className="text-center py-6 text-slate-400 bg-slate-50/60 rounded-xl border border-dashed border-slate-200">
+            <Package className="h-7 w-7 mx-auto mb-1 text-slate-300" />
+            <p className="text-xs font-semibold">Chưa có lượt lấy hàng nào trong ca hôm nay</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Nhấn "NÚT 1: LẤY HÀNG" ở trên để ghi nhận xuất kho sơ bộ</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto -mx-1 sm:mx-0">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 text-slate-600 font-bold uppercase tracking-wider text-[11px] border-b border-slate-200">
+                <tr>
+                  <th className="py-2.5 px-3">Thời gian</th>
+                  <th className="py-2.5 px-3">Tên nguyên liệu</th>
+                  <th className="py-2.5 px-3 text-right">Số lượng</th>
+                  <th className="py-2.5 px-3">Ghi chú</th>
+                  <th className="py-2.5 px-3 text-center">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {takeOutLogs.map((log) => {
+                  const isCancelled = log.isCancelled || log.status === 'CANCELLED';
+                  const timeStr = log.createdAt ? log.createdAt.slice(11, 16) : '--:--';
+                  return (
+                    <tr
+                      key={log.id}
+                      className={`transition-colors ${isCancelled ? 'bg-slate-50/80 opacity-60' : 'hover:bg-blue-50/40'}`}
+                    >
+                      <td className="py-2.5 px-3 font-mono font-bold text-slate-600 whitespace-nowrap">
+                        <div className="flex items-center gap-1">
+                          <Clock className="h-3 w-3 text-slate-400" />
+                          <span>{timeStr}</span>
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-3 font-bold text-slate-800">
+                        <div className="flex items-center gap-1.5">
+                          <span>{log.item?.itemName || 'Nguyên liệu'}</span>
+                          {log.item?.category && (
+                            <span className="text-[10px] font-normal text-slate-400 bg-slate-100 px-1 rounded">
+                              {log.item.category}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                        <span className={`font-mono font-black text-sm ${isCancelled ? 'line-through text-slate-400' : 'text-blue-700'}`}>
+                          {log.quantity}
+                        </span>{' '}
+                        <span className="font-semibold text-slate-500">{log.unit || log.item?.unit}</span>
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-600 max-w-[140px] truncate" title={log.note}>
+                        {log.note || '--'}
+                      </td>
+                      <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                        {isCancelled ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-slate-200 text-slate-600">
+                            <Check className="h-3 w-3" /> Đã hoàn kho
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleCancelTakeOut(log)}
+                            disabled={cancellingTakeOutId === log.id}
+                            className="btn-touch px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold text-[11px] active:scale-95 transition-all inline-flex items-center gap-1 shadow-sm"
+                            title="Hủy lần xuất này nếu lấy nhầm và hoàn trả số lượng lại kho"
+                          >
+                            {cancellingTakeOutId === log.id ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Undo2 className="h-3 w-3 text-rose-600" />
+                            )}
+                            <span>Hủy (Hoàn kho)</span>
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* ============================================================== */}
+      {/* TASK-S1-05: BẢNG THEO DÕI ĐƠN BÁO HỎNG ĐÃ GỬI CA NÀY          */}
+      {/* ============================================================== */}
+      <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm space-y-3">
+        <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+          <div className="flex items-center gap-2">
+            <div className="p-2 rounded-xl bg-rose-50 text-rose-600">
+              <AlertTriangle className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="font-bold text-sm sm:text-base text-slate-900">Đơn Báo Hỏng Đã Gửi Ca Này</h3>
+              <p className="text-[11px] text-slate-500">
+                Minh bạch tình trạng phê duyệt từ Bếp trưởng & Quản lý với 3 badge màu chuẩn hóa.
+              </p>
+            </div>
+          </div>
+          <span className="text-xs font-black px-2.5 py-1 rounded-full bg-rose-100 text-rose-800">
+            {damageReports.length} đơn
+          </span>
+        </div>
+
+        {damageReports.length === 0 ? (
+          <div className="text-center py-6 text-slate-400 bg-slate-50/60 rounded-xl border border-dashed border-slate-200">
+            <AlertTriangle className="h-7 w-7 mx-auto mb-1 text-slate-300" />
+            <p className="text-xs font-semibold">Chưa có đơn báo hỏng nào trong ca</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Nhấn "NÚT 4: BÁO HỎNG" để lập đơn kèm ảnh chụp nén</p>
+          </div>
+        ) : (
+          <div className="space-y-2.5">
+            {damageReports.map((report) => {
+              const timeStr = report.createdAt ? report.createdAt.slice(11, 16) : '--:--';
+              const isPending = report.status === 'CHO_DUYET';
+              const isApproved = report.status === 'DA_DUYET' || report.status === 'TU_DONG_DUYET';
+              const isRejected = report.status === 'TU_CHOI';
+
+              return (
+                <div
+                  key={report.id}
+                  className={`p-3.5 rounded-xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                    isPending
+                      ? 'bg-amber-50/60 border-amber-200'
+                      : isApproved
+                      ? 'bg-emerald-50/40 border-emerald-200'
+                      : 'bg-rose-50/50 border-rose-200'
+                  }`}
+                >
+                  <div className="space-y-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-black text-sm text-slate-900">{report.item?.itemName}</span>
+                      <span className="font-mono text-xs font-bold text-slate-600 bg-white px-2 py-0.5 rounded border border-slate-200">
+                        {report.quantity} {report.item?.unit}
+                      </span>
+                      <span className="text-xs font-extrabold text-rose-700">
+                        {report.estimatedValue ? Number(report.estimatedValue).toLocaleString('vi-VN') : '0'} đ
+                      </span>
+                      <span className="text-[11px] font-mono text-slate-500 flex items-center gap-1">
+                        <Clock className="h-3 w-3" /> {timeStr}
+                      </span>
+                    </div>
+
+                    <div className="text-xs text-slate-600 flex items-center gap-2 flex-wrap">
+                      <span className="font-medium">
+                        Lý do:{' '}
+                        <strong className="text-slate-800">
+                          {report.reason === 'HONG_SO_CHE_NAU'
+                            ? 'Hủy do sơ chế / nấu hỏng'
+                            : report.reason === 'HONG_DO_NHA_CUNG_CAP'
+                            ? 'Hủy do nguyên liệu chết / ươn từ NCC'
+                            : report.reason === 'HUY_THUA_CUOI_CA'
+                            ? 'Hủy do thừa cuối ca'
+                            : report.reason}
+                        </strong>
+                      </span>
+                      {report.batchNumber && (
+                        <span className="text-[10px] font-mono font-bold bg-white px-1.5 py-0.5 rounded border border-slate-200 text-slate-700">
+                          Lô: {report.batchNumber}
+                        </span>
+                      )}
+                      {report.supplierCode && (
+                        <span className="text-[10px] font-semibold text-slate-500">
+                          NCC: {report.supplierCode}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Thông tin giải trình / lý do từ chối nếu có */}
+                    {isRejected && report.rejectedReason && (
+                      <div className="text-[11px] font-medium text-rose-700 bg-white/80 p-1.5 rounded-lg border border-rose-200 flex items-start gap-1">
+                        <XCircle className="h-3.5 w-3.5 text-rose-600 shrink-0 mt-0.5" />
+                        <span>Lý do từ chối: {report.rejectedReason}</span>
+                      </div>
+                    )}
+
+                    {isApproved && (
+                      <div className="text-[11px] font-medium text-emerald-800 flex items-center gap-1">
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                        <span>
+                          Duyệt bởi: <strong>{report.approvedBy || (report.status === 'TU_DONG_DUYET' ? 'Hệ thống tự động' : 'Bếp trưởng')}</strong>
+                          {report.approvedAt && ` (${report.approvedAt.slice(11, 16)})`}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Badge Trạng Thái Màu Sắc Theo Tiêu Chuẩn Nghiệm Thu */}
+                  <div className="flex sm:flex-col items-center sm:items-end justify-between gap-2 shrink-0">
+                    {isPending && (
+                      <span className="px-3 py-1.5 rounded-full text-xs font-black bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1.5 shadow-sm">
+                        <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse"></span>
+                        <span>🟡 Chờ Bếp trưởng duyệt</span>
+                      </span>
+                    )}
+
+                    {isApproved && (
+                      <span className="px-3 py-1.5 rounded-full text-xs font-black bg-emerald-100 text-emerald-900 border border-emerald-300 flex items-center gap-1.5 shadow-sm">
+                        <span>🟢 Đã duyệt</span>
+                      </span>
+                    )}
+
+                    {isRejected && (
+                      <span className="px-3 py-1.5 rounded-full text-xs font-black bg-rose-100 text-rose-900 border border-rose-300 flex items-center gap-1.5 shadow-sm">
+                        <span>🔴 Từ chối</span>
+                      </span>
+                    )}
+
+                    {report.imageUrls && (
+                      <button
+                        type="button"
+                        onClick={() => setViewingDamageImage(report.imageUrls || null)}
+                        className="text-[11px] font-bold text-slate-600 hover:text-slate-900 underline flex items-center gap-1"
+                      >
+                        <ImageIcon className="h-3.5 w-3.5" />
+                        <span>Xem ảnh</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Modal Phóng To Xem Ảnh Báo Hỏng */}
+        {viewingDamageImage && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[80] flex items-center justify-center p-4 animate-in fade-in">
+            <div className="bg-white rounded-2xl p-4 max-w-lg w-full space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b">
+                <span className="font-bold text-sm text-slate-800">Ảnh minh chứng báo hỏng</span>
+                <button onClick={() => setViewingDamageImage(null)} className="p-1 rounded text-slate-400 hover:text-slate-600">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <img src={viewingDamageImage} alt="Ảnh báo hỏng" className="w-full max-h-[70vh] object-contain rounded-xl" />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ============================================================== */}
@@ -1567,18 +1900,23 @@ export const KitchenModule: React.FC = () => {
                 )
                 .map((item) => {
                   const isLoadingBtn = !!loadingLineButtons[item.id];
+                  const isCooldown = !!cooldownButtons[item.id];
+                  const isLocked = isLoadingBtn || isCooldown;
                   const countToday = lineCounters[item.id] || 0;
                   const isAnimating = animatingLineItemId === item.id;
+                  const isShaking = shakingLineItemId === item.id;
 
                   return (
                     <div
                       key={item.id}
-                      className="relative p-3.5 rounded-2xl bg-white border border-slate-200 shadow-sm flex items-center justify-between gap-3 overflow-hidden"
+                      className={`relative p-3.5 rounded-2xl bg-white border border-slate-200 shadow-sm flex items-center justify-between gap-3 overflow-hidden transition-all ${
+                        isShaking ? 'ring-2 ring-amber-400 animate-haptic-shake' : ''
+                      }`}
                     >
-                      {/* Floating +1 pop badge */}
+                      {/* Floating +1 pop badge animation */}
                       {isAnimating && (
-                        <div className="absolute top-2 right-4 px-2 py-0.5 rounded-full bg-emerald-500 text-white font-black text-xs shadow-md animate-bounce flex items-center gap-1 z-20">
-                          <Check className="h-3 w-3" />
+                        <div className="absolute top-2 right-4 px-3 py-1 rounded-full bg-emerald-600 text-white font-black text-xs shadow-xl animate-float-up flex items-center gap-1 z-20 pointer-events-none">
+                          <Check className="h-3.5 w-3.5" />
                           <span>+1 {item.unit}!</span>
                         </div>
                       )}
@@ -1603,13 +1941,22 @@ export const KitchenModule: React.FC = () => {
 
                       <button
                         onClick={() => handleLineItemInc(item)}
-                        disabled={isLoadingBtn}
-                        className="btn-touch px-4 h-12 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 disabled:from-amber-300 disabled:to-amber-400 text-white font-extrabold text-sm flex items-center gap-1.5 shadow-md shadow-amber-500/20 active:scale-95 transition-all flex-shrink-0"
+                        disabled={isLocked}
+                        className={`btn-touch px-4 h-12 rounded-xl text-white font-extrabold text-sm flex items-center gap-1.5 shadow-md active:scale-95 transition-all flex-shrink-0 ${
+                          isLocked
+                            ? 'bg-amber-300 cursor-not-allowed opacity-80'
+                            : 'bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 shadow-amber-500/20'
+                        }`}
                       >
                         {isLoadingBtn ? (
                           <>
                             <Loader2 className="h-4 w-4 animate-spin" />
                             <span>ĐANG GHI...</span>
+                          </>
+                        ) : isCooldown ? (
+                          <>
+                            <Clock className="h-4 w-4 animate-pulse" />
+                            <span>CHỜ 1.5s</span>
                           </>
                         ) : (
                           <>
@@ -1684,16 +2031,24 @@ export const KitchenModule: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-1">LÝ DO BÁO HỎNG</label>
+                  <label className="block text-xs font-bold text-slate-600 mb-1">PHÂN LOẠI LÝ DO HỦY</label>
                   <select
                     value={damageReason}
                     onChange={(e) => setDamageReason(e.target.value)}
                     className="w-full h-12 px-2.5 rounded-xl border border-slate-300 text-xs font-semibold text-slate-800 focus:ring-2 focus:ring-rose-500"
                   >
-                    <option value="HONG_DO_NHA_CUNG_CAP">Do Nhà Cung Cấp</option>
-                    <option value="HONG_CHE_BIEN">Trong Chế Biến</option>
-                    <option value="HONG_BAO_QUAN">Do Bảo Quản / Tủ Đông</option>
-                    <option value="HET_HAN_SU_DUNG">Hết Hạn Sử Dụng</option>
+                    <optgroup label="1. Hủy do sơ chế / nấu hỏng">
+                      <option value="HONG_SO_CHE_NAU">Hủy do sơ chế / nấu hỏng (chè cháy, cơm khê, nước dùng hỏng)</option>
+                      <option value="HONG_CHE_BIEN">Lỗi thao tác chế biến của đầu bếp</option>
+                    </optgroup>
+                    <optgroup label="2. Hủy do nguyên liệu chết / ươn từ NCC">
+                      <option value="HONG_DO_NHA_CUNG_CAP">Hủy do nguyên liệu chết / ươn từ NCC (cua chết, ghẹ óp, ngao thối)</option>
+                      <option value="HONG_BAO_QUAN">Hư hỏng thiết bị lạnh / tủ cấp đông</option>
+                    </optgroup>
+                    <optgroup label="3. Hủy do thừa cuối ca">
+                      <option value="HUY_THUA_CUOI_CA">Hủy do thừa cuối ca (hàng ra line không dùng hết theo quy định VSATTP)</option>
+                      <option value="HET_HAN_SU_DUNG">Hết hạn sử dụng trong ngày</option>
+                    </optgroup>
                   </select>
                 </div>
               </div>
