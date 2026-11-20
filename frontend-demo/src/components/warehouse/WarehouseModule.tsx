@@ -172,7 +172,7 @@ export const WarehouseModule: React.FC = () => {
   const [selectedSupplierId, setSelectedSupplierId] = useState<number | undefined>(undefined);
   const [docNote, setDocNote] = useState<string>('');
   const [docItems, setDocItems] = useState<
-    { itemId: number; quantity: number; unitPrice: number; expiryDate: string; batchId?: number }[]
+    { itemId: number; quantity: number | string; unitPrice: number; expiryDate: string; batchId?: number }[]
   >([]);
   const [docImages, setDocImages] = useState<CompressionResult[]>([]);
   const [isSubmittingDoc, setIsSubmittingDoc] = useState<boolean>(false);
@@ -263,7 +263,7 @@ export const WarehouseModule: React.FC = () => {
       setDocItems([
         {
           itemId: buffetItems[0].id,
-          quantity: 10,
+          quantity: '',
           unitPrice: buffetItems[0].costPrice || 250000,
           expiryDate: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
         },
@@ -280,7 +280,7 @@ export const WarehouseModule: React.FC = () => {
       ...docItems,
       {
         itemId: buffetItems[0].id,
-        quantity: 10,
+        quantity: '',
         unitPrice: buffetItems[0].costPrice || 200000,
         expiryDate: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
       },
@@ -300,6 +300,9 @@ export const WarehouseModule: React.FC = () => {
         itemId: Number(value),
         unitPrice: selectedItem?.costPrice || updated[index].unitPrice,
       };
+    } else if (field === 'quantity') {
+      const val = typeof value === 'string' ? value.replace(',', '.') : value;
+      updated[index] = { ...updated[index], quantity: val };
     } else {
       updated[index] = { ...updated[index], [field]: value };
     }
@@ -332,13 +335,24 @@ export const WarehouseModule: React.FC = () => {
   };
 
   const calculateDocTotal = () => {
-    return docItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+    return docItems.reduce((sum, item) => sum + (Number(item.quantity) || 0) * (Number(item.unitPrice) || 0), 0);
   };
 
   const handleSubmitDoc = async (e: React.FormEvent) => {
     e.preventDefault();
     if (docItems.length === 0) {
       showNotice('error', 'Vui lòng thêm ít nhất một mặt hàng vào phiếu');
+      return;
+    }
+
+    // Kiểm tra mọi dòng phải có quantity > 0
+    const hasInvalidQty = docItems.some((item) => {
+      const q = typeof item.quantity === 'string' ? parseFloat(item.quantity) : item.quantity;
+      return item.quantity === '' || item.quantity === undefined || isNaN(q) || q <= 0;
+    });
+
+    if (hasInvalidQty) {
+      showNotice('error', 'Vui lòng nhập số lượng hợp lệ (> 0) cho tất cả các mặt hàng');
       return;
     }
 
@@ -351,8 +365,8 @@ export const WarehouseModule: React.FC = () => {
         imageUrls: docImages.map((img) => img.dataUrl).join(';'),
         items: docItems.map((item) => ({
           itemId: item.itemId,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
+          quantity: typeof item.quantity === 'string' ? parseFloat(item.quantity) : item.quantity,
+          unitPrice: typeof item.unitPrice === 'string' ? parseFloat(item.unitPrice) : item.unitPrice,
           expiryDate: item.expiryDate || undefined,
           batchId: item.batchId,
         })),
@@ -1672,12 +1686,22 @@ export const WarehouseModule: React.FC = () => {
                         </span>
                         <input
                           type="number"
-                          step="0.5"
-                          min="0.1"
+                          step="any"
+                          min="0.001"
+                          placeholder="Nhập số lượng..."
                           value={item.quantity}
                           onChange={(e) =>
-                            handleDocItemChange(idx, 'quantity', parseFloat(e.target.value) || 0)
+                            handleDocItemChange(idx, 'quantity', e.target.value)
                           }
+                          onKeyDown={(e) => {
+                            if (e.key === ',') {
+                              e.preventDefault();
+                              const cur = String(item.quantity ?? '');
+                              if (!cur.includes('.')) {
+                                handleDocItemChange(idx, 'quantity', (cur ? cur : '0') + '.');
+                              }
+                            }
+                          }}
                           className="w-full h-9 px-2 rounded-lg border border-slate-300 font-bold"
                         />
                       </div>
@@ -2096,11 +2120,22 @@ export const WarehouseModule: React.FC = () => {
                             <td className="p-2.5">
                               <input
                                 type="number"
-                                step="0.1"
+                                step="any"
+                                min="0"
                                 value={row.actualStock}
-                                onChange={(e) =>
-                                  handleActualStockChange(idx, parseFloat(e.target.value) || 0)
-                                }
+                                onChange={(e) => {
+                                  const val = e.target.value.replace(',', '.');
+                                  handleActualStockChange(idx, parseFloat(val) || 0);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === ',') {
+                                    e.preventDefault();
+                                    const cur = String(row.actualStock ?? '');
+                                    if (!cur.includes('.')) {
+                                      handleActualStockChange(idx, ((cur ? cur : '0') + '.') as any);
+                                    }
+                                  }
+                                }}
                                 className="w-24 h-9 px-2 rounded-lg border border-slate-300 font-mono font-extrabold text-sm focus:ring-2 focus:ring-amber-500"
                               />
                             </td>
