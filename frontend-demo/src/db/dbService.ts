@@ -28,6 +28,33 @@ import {
 } from './seedData';
 
 /**
+ * Phiên bản dữ liệu mẫu (Cập nhật phiên bản sẽ kích hoạt tự động reset IndexedDB đồng bộ)
+ */
+export const SEED_DATA_VERSION = 'v2026_11_20_t11_complete_v6';
+
+let memorySeedVersion: string | null = null;
+
+function getStoredVersion(): string | null {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      return localStorage.getItem('senviet_seed_data_version');
+    } catch {
+      return memorySeedVersion;
+    }
+  }
+  return memorySeedVersion;
+}
+
+function setStoredVersion(version: string): void {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      localStorage.setItem('senviet_seed_data_version', version);
+    } catch {}
+  }
+  memorySeedVersion = version;
+}
+
+/**
  * Giả lập độ trễ mạng thực tế (100 - 150ms) để giữ trọn vẹn trải nghiệm loading/spinner cho UI
  */
 export async function simulateLatency(min = 100, max = 150): Promise<void> {
@@ -36,19 +63,25 @@ export async function simulateLatency(min = 100, max = 150): Promise<void> {
 }
 
 /**
- * Nạp dữ liệu mẫu vào IndexedDB nếu database trống (chạy lần đầu mở app)
+ * Nạp dữ liệu mẫu vào IndexedDB nếu database trống hoặc có phiên bản seed data mới
  */
 export async function initializeDatabaseIfEmpty(): Promise<boolean> {
   try {
+    const storedVersion = getStoredVersion();
     const userCount = await db.users.count();
-    if (userCount > 0) {
-      return false; // Đã có dữ liệu
+
+    // Nếu database trống HOẶC phiên bản seed data cũ -> Tự động nạp lại dữ liệu mẫu mới
+    if (userCount === 0 || storedVersion !== SEED_DATA_VERSION) {
+      console.log(
+        `[Dexie DB] Phát hiện phiên bản seed mới (${SEED_DATA_VERSION}), khởi tạo lại dữ liệu mẫu...`
+      );
+      await resetToSeedData();
+      setStoredVersion(SEED_DATA_VERSION);
+      console.log('[Dexie DB] Khởi tạo thành công 100% dữ liệu mẫu mới!');
+      return true;
     }
 
-    console.log('[Dexie DB] Khởi tạo dữ liệu mẫu lần đầu vào IndexedDB...');
-    await populateAllSeedData();
-    console.log('[Dexie DB] Khởi tạo thành công 100% dữ liệu mẫu!');
-    return true;
+    return false;
   } catch (error) {
     console.error('[Dexie DB] Lỗi khởi tạo database nhúng:', error);
     return false;
@@ -119,6 +152,7 @@ export async function resetToSeedData(): Promise<void> {
       await populateAllSeedData();
     }
   );
+  setStoredVersion(SEED_DATA_VERSION);
   console.log('[Dexie DB] Đã Reset dữ liệu thành công!');
 }
 
