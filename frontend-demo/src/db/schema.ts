@@ -25,26 +25,27 @@ export class SenVietDemoDatabase extends Dexie {
   reconciliations!: Table<any, number>;
   takeOutLogs!: Table<any, number>;
   dailyRemaining!: Table<any, number>;
+  dailyMeals!: Table<any, number>;
 
   constructor() {
     super('SenVietBuffetDemoDB');
     this.version(1).stores({
-      users: '++id, username, role, branchId',
+      users: '++id, username, role, branchId, bankAccount, bankName',
       branches: '++id, code, name',
-      items: '++id, itemCode, barcode, itemName, category, branchId',
+      items: '++id, itemCode, barcode, itemName, category, costGroup, branchId',
       recipes: '++id, itemId, itemCode',
       batches: '++id, batchCode, branchId, itemId, status, startedAt',
       damageReports: '++id, branchId, itemId, approvalStatus, status, createdAt',
       lineLogs: '++id, branchId, itemId, createdAt',
       inventoryLots: '++id, batchCode, branchId, itemId, supplierId, expiryDate',
-      suppliers: '++id, supplierCode, supplierName',
+      suppliers: '++id, supplierCode, supplierName, branchId',
       warehouseDocuments: '++id, docCode, docType, branchId, createdAt',
       inventoryChecks: '++id, checkCode, branchId, checkDate',
       attendances: '++id, userId, branchId, attendanceDate, date, isValidLocation, warningLocation',
       examQuestions: '++id, position, type',
       examSubmissions: '++id, userId, branchId, examId, status',
       salaryAdvances: '++id, userId, status, month, deductionMonth',
-      payrollRecords: '++id, userId, month, isLocked',
+      payrollRecords: '++id, userId, month, isLocked, bankAccount, bankName',
       payrollPeriods: '++id, periodMonth, branchId, status',
       salaryIncreaseProposals: '++id, branchId, status',
       uniformItems: '++id, itemCode',
@@ -53,6 +54,7 @@ export class SenVietDemoDatabase extends Dexie {
       reconciliations: '++id, branchId, reconDate, date, hasWarning, isOverThreshold',
       takeOutLogs: '++id, itemId, createdAt',
       dailyRemaining: '++id, itemId, branchId',
+      dailyMeals: '++id, branchId, branchCode, date, day',
     });
   }
 }
