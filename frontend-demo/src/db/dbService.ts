@@ -24,6 +24,7 @@ import {
   SEED_PAYROLLS,
   SEED_INCREASE_PROPOSALS,
   SEED_DAILY_REMAINING,
+  SEED_DAILY_MEALS,
 } from './seedData';
 
 /**
@@ -86,6 +87,7 @@ export async function resetToSeedData(): Promise<void> {
       db.payrollRecords,
       db.salaryIncreaseProposals,
       db.dailyRemaining,
+      db.dailyMeals,
     ],
     async () => {
       await db.branches.clear();
@@ -112,6 +114,7 @@ export async function resetToSeedData(): Promise<void> {
       await db.payrollRecords.clear();
       await db.salaryIncreaseProposals.clear();
       await db.dailyRemaining.clear();
+      await db.dailyMeals.clear();
 
       await populateAllSeedData();
     }
@@ -144,4 +147,5 @@ async function populateAllSeedData(): Promise<void> {
   await db.payrollRecords.bulkAdd(SEED_PAYROLLS);
   await db.salaryIncreaseProposals.bulkAdd(SEED_INCREASE_PROPOSALS);
   await db.dailyRemaining.bulkAdd(SEED_DAILY_REMAINING);
+  await db.dailyMeals.bulkAdd(SEED_DAILY_MEALS);
 }

@@ -52,6 +52,10 @@ export interface WarehouseDocumentItem {
   unitPrice: number;
   unit?: string;
   expiryDate?: string;
+  supplierReportedWeight?: number; // Khối lượng NCC báo (kg)
+  actualWeight?: number;          // Khối lượng thực cân (kg)
+  weightDiff?: number;            // Lệch = actualWeight - supplierReportedWeight
+  shortageAmount?: number;        // Tiền phạt/trừ do cân thiếu
 }
 
 export interface WarehouseDocument {
@@ -68,6 +72,9 @@ export interface WarehouseDocument {
   status?: string;
   note?: string;
   totalAmount: number;
+  totalReportedAmount?: number;    // Tổng tiền theo khối lượng NCC báo
+  totalShortageAmount?: number;    // Tổng tiền bị trừ do cân thiếu
+  finalPayableAmount?: number;     // Công nợ thực tế phải trả = totalReportedAmount - totalShortageAmount
   imageUrls?: string;
   createdAt: string;
   items: WarehouseDocumentItem[];
@@ -85,7 +92,29 @@ export interface CreateDocumentRequest {
     unitPrice: number;
     expiryDate?: string;
     batchId?: number;
+    supplierReportedWeight?: number;
+    actualWeight?: number;
+    weightDiff?: number;
+    shortageAmount?: number;
   }[];
+}
+
+export interface SupplierDebtSummary {
+  supplierId: number;
+  supplierCode: string;
+  supplierName: string;
+  phone?: string;
+  address?: string;
+  branchId?: number;
+  totalInvoicesCount: number;
+  totalReportedWeight: number; // Tổng khối lượng NCC báo (kg)
+  totalActualWeight: number;   // Tổng khối lượng thực cân (kg)
+  totalWeightDiff: number;     // Lệch = Thực cân - NCC báo (kg)
+  totalReportedAmount: number; // Tổng tiền hóa đơn NCC báo (đ)
+  totalShortageDeduction: number; // Tiền giảm trừ công nợ do cân thiếu (đ)
+  finalPayableDebt: number;    // Công nợ thực tế phải trả cuối tháng = totalReportedAmount - totalShortageDeduction
+  disputeStatus: 'KHOP_DU' | 'LECH_CAN_THIEU' | 'CAN_XAC_MINH';
+  lastImportDate?: string;
 }
 
 export interface InventoryStock {
@@ -301,32 +330,55 @@ export const warehouseApi = {
     const itemsList = await db.items.toArray();
     const itemMap = new Map(itemsList.map((i) => [i.id, i]));
 
-    const totalAmount = data.items.reduce((sum, it) => sum + it.quantity * it.unitPrice, 0);
-    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-    const codePrefix = data.docType === 'NHAP' ? 'PNK' : data.docType === 'XUAT_CHUYEN' ? 'PXK' : 'PHK';
-    const docCode = `${codePrefix}-${Date.now().toString().slice(-6)}`;
+    let totalReportedAmount = 0;
+    let totalShortageAmount = 0;
 
     const docItems: WarehouseDocumentItem[] = data.items.map((it, idx) => {
       const foundItem = itemMap.get(it.itemId);
+      const actualWeight = it.actualWeight !== undefined ? it.actualWeight : it.quantity;
+      const supplierReportedWeight =
+        it.supplierReportedWeight !== undefined ? it.supplierReportedWeight : it.quantity;
+      const weightDiff = Number((actualWeight - supplierReportedWeight).toFixed(2));
+      const shortage = weightDiff < 0 ? Math.round(Math.abs(weightDiff) * it.unitPrice) : 0;
+
+      totalReportedAmount += supplierReportedWeight * it.unitPrice;
+      totalShortageAmount += shortage;
+
       return {
         id: Date.now() + idx,
         itemId: it.itemId,
         itemCode: foundItem?.itemCode || 'M-01',
         itemName: foundItem?.itemName || 'Nguyên liệu',
         batchCode: it.batchId ? `LOT-${it.batchId}` : `LOT-NEW-${Date.now().toString().slice(-4)}`,
-        quantity: it.quantity,
+        quantity: actualWeight,
         unitPrice: it.unitPrice,
         unit: foundItem?.unit || 'kg',
         expiryDate: it.expiryDate,
+        supplierReportedWeight,
+        actualWeight,
+        weightDiff,
+        shortageAmount: shortage,
       };
     });
+
+    const totalAmount = data.items.reduce(
+      (sum, it) => sum + (it.actualWeight ?? it.quantity) * it.unitPrice,
+      0
+    );
+    const finalPayableAmount = Math.max(0, totalReportedAmount - totalShortageAmount);
+    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    const codePrefix = data.docType === 'NHAP' ? 'PNK' : data.docType === 'XUAT_CHUYEN' ? 'PXK' : 'PHK';
+    const docCode = `${codePrefix}-${Date.now().toString().slice(-6)}`;
 
     const newDoc: WarehouseDocument = {
       id: Date.now(),
       docType: data.docType,
       docCode,
       branchId: data.branchId || 1,
-      branchName: data.branchId === 2 ? 'Sen Việt Buffet - Chi nhánh Quế Võ' : 'Sen Việt Buffet - Chi nhánh Thái Nguyên',
+      branchName:
+        data.branchId === 2
+          ? 'Sen Việt Buffet - Chi nhánh Quế Võ'
+          : 'Sen Việt Buffet - Chi nhánh Thái Nguyên',
       supplierId: data.supplierId,
       supplierName: supplier?.supplierName,
       supplierCode: supplier?.supplierCode,
@@ -335,6 +387,9 @@ export const warehouseApi = {
       status: 'HOAN_THANH',
       note: data.note,
       totalAmount,
+      totalReportedAmount,
+      totalShortageAmount,
+      finalPayableAmount,
       imageUrls: data.imageUrls,
       createdAt: now,
       items: docItems,
@@ -542,6 +597,198 @@ export const warehouseApi = {
 
     const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
     XLSX.utils.book_append_sheet(wb, ws, 'BaoCaoTyLeHongNCC');
+    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+
+    return new Blob([wbout], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+  },
+
+  // --- Bảng tổng hợp công nợ NCC & Khấu trừ cân thiếu (TASK-S4-02) ---
+  getSupplierDebtSummary: async (params?: {
+    branchId?: number;
+    month?: string;
+  }): Promise<SupplierDebtSummary[]> => {
+    await initializeDatabaseIfEmpty();
+    await simulateLatency(80, 120);
+
+    const suppliers = await db.suppliers.toArray();
+    const documents = await db.warehouseDocuments.toArray();
+    const importDocs = documents.filter((d) => d.docType === 'NHAP');
+
+    const map = new Map<number, SupplierDebtSummary>();
+
+    for (const sup of suppliers) {
+      map.set(sup.id, {
+        supplierId: sup.id,
+        supplierCode: sup.supplierCode,
+        supplierName: sup.supplierName,
+        phone: sup.phone,
+        address: sup.address,
+        branchId: params?.branchId || 1,
+        totalInvoicesCount: 0,
+        totalReportedWeight: 0,
+        totalActualWeight: 0,
+        totalWeightDiff: 0,
+        totalReportedAmount: 0,
+        totalShortageDeduction: 0,
+        finalPayableDebt: 0,
+        disputeStatus: 'KHOP_DU',
+      });
+    }
+
+    for (const doc of importDocs) {
+      if (!doc.supplierId) continue;
+      let summary = map.get(doc.supplierId);
+      if (!summary) {
+        summary = {
+          supplierId: doc.supplierId,
+          supplierCode: doc.supplierCode || 'NCC-UNKNOWN',
+          supplierName: doc.supplierName || 'Nhà Cung Cấp',
+          branchId: doc.branchId || 1,
+          totalInvoicesCount: 0,
+          totalReportedWeight: 0,
+          totalActualWeight: 0,
+          totalWeightDiff: 0,
+          totalReportedAmount: 0,
+          totalShortageDeduction: 0,
+          finalPayableDebt: 0,
+          disputeStatus: 'KHOP_DU',
+        };
+        map.set(doc.supplierId, summary);
+      }
+
+      summary.totalInvoicesCount += 1;
+      summary.lastImportDate = doc.createdAt.slice(0, 10);
+
+      for (const it of doc.items || []) {
+        const repW = it.supplierReportedWeight ?? it.quantity;
+        const actW = it.actualWeight ?? it.quantity;
+        const diff = it.weightDiff !== undefined ? it.weightDiff : Number((actW - repW).toFixed(2));
+        const shortage =
+          it.shortageAmount !== undefined
+            ? it.shortageAmount
+            : diff < 0
+            ? Math.round(Math.abs(diff) * it.unitPrice)
+            : 0;
+
+        summary.totalReportedWeight = Number((summary.totalReportedWeight + repW).toFixed(2));
+        summary.totalActualWeight = Number((summary.totalActualWeight + actW).toFixed(2));
+        summary.totalWeightDiff = Number((summary.totalWeightDiff + diff).toFixed(2));
+        summary.totalReportedAmount += repW * it.unitPrice;
+        summary.totalShortageDeduction += shortage;
+      }
+      summary.finalPayableDebt = Math.max(
+        0,
+        summary.totalReportedAmount - summary.totalShortageDeduction
+      );
+      summary.disputeStatus = summary.totalShortageDeduction > 0 ? 'LECH_CAN_THIEU' : 'KHOP_DU';
+    }
+
+    // Nạp baseline thực tế từ sheet NCC Thái Nguyên & Quế Võ nếu chưa có phiếu cân mới
+    const list = Array.from(map.values()).map((s) => {
+      if (s.totalInvoicesCount === 0) {
+        if (s.supplierCode === 'TNCOTHUY' || s.supplierCode === 'NCC-RC03') {
+          return {
+            ...s,
+            totalInvoicesCount: 8,
+            totalReportedWeight: 420.5,
+            totalActualWeight: 405.0,
+            totalWeightDiff: -15.5,
+            totalReportedAmount: 45438000,
+            totalShortageDeduction: 1860000,
+            finalPayableDebt: 43578000,
+            disputeStatus: 'LECH_CAN_THIEU' as const,
+            lastImportDate: '2026-11-18',
+          };
+        }
+        if (s.supplierCode === 'TNANHTHO' || s.supplierCode === 'NCC-TB02') {
+          return {
+            ...s,
+            totalInvoicesCount: 12,
+            totalReportedWeight: 680.0,
+            totalActualWeight: 662.5,
+            totalWeightDiff: -17.5,
+            totalReportedAmount: 56328000,
+            totalShortageDeduction: 2450000,
+            finalPayableDebt: 53878000,
+            disputeStatus: 'LECH_CAN_THIEU' as const,
+            lastImportDate: '2026-11-18',
+          };
+        }
+        if (s.supplierCode === 'TNHUYENHS' || s.supplierCode === 'NCC-HS01') {
+          return {
+            ...s,
+            totalInvoicesCount: 6,
+            totalReportedWeight: 185.0,
+            totalActualWeight: 178.2,
+            totalWeightDiff: -6.8,
+            totalReportedAmount: 23805000,
+            totalShortageDeduction: 1496000,
+            finalPayableDebt: 22309000,
+            disputeStatus: 'LECH_CAN_THIEU' as const,
+            lastImportDate: '2026-11-18',
+          };
+        }
+        if (s.supplierCode === 'TNTHANHHIEP') {
+          return {
+            ...s,
+            totalInvoicesCount: 15,
+            totalReportedWeight: 890.0,
+            totalActualWeight: 871.0,
+            totalWeightDiff: -19.0,
+            totalReportedAmount: 98647000,
+            totalShortageDeduction: 4180000,
+            finalPayableDebt: 94467000,
+            disputeStatus: 'LECH_CAN_THIEU' as const,
+            lastImportDate: '2026-11-18',
+          };
+        }
+      }
+      return s;
+    });
+
+    return list;
+  },
+
+  exportSupplierDebtExcel: async (params?: {
+    branchId?: number;
+    month?: string;
+  }): Promise<Blob> => {
+    await simulateLatency(80, 120);
+    const data = await warehouseApi.getSupplierDebtSummary(params);
+
+    const wb = XLSX.utils.book_new();
+    const header = [
+      'STT',
+      'Mã NCC',
+      'Tên Nhà Cung Cấp',
+      'Số Phiếu Nhập',
+      'Khối Lượng NCC Báo (kg)',
+      'Khối Lượng Thực Cân (kg)',
+      'Lệch Cân (kg)',
+      'Tiền Hàng NCC Báo (đ)',
+      'Trừ Tiền Cân Thiếu (đ)',
+      'Công Nợ Thực Trả Cuối Tháng (đ)',
+      'Trạng Thái Đối Soát',
+    ];
+
+    const rows = data.map((d, idx) => [
+      idx + 1,
+      d.supplierCode,
+      d.supplierName,
+      d.totalInvoicesCount,
+      d.totalReportedWeight,
+      d.totalActualWeight,
+      d.totalWeightDiff,
+      d.totalReportedAmount,
+      d.totalShortageDeduction,
+      d.finalPayableDebt,
+      d.disputeStatus === 'LECH_CAN_THIEU' ? '⚠️ CÂN THIẾU (ĐÃ TRỪ TIỀN)' : '✓ ĐỦ KHỐI LƯỢNG',
+    ]);
+
+    const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+    XLSX.utils.book_append_sheet(wb, ws, 'CongNo_NCC_CuoiThang');
     const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
 
     return new Blob([wbout], {

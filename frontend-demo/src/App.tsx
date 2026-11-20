@@ -1,8 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from './context/AuthContext';
 import { LoginPage } from './components/auth/LoginPage';
 import { AdaptiveShell } from './components/layout/AdaptiveShell';
 import { Dashboard } from './components/dashboard/Dashboard';
+import { ExecutiveCockpit } from './components/dashboard/ExecutiveCockpit';
+import { HeadChefDashboard } from './components/kitchen/HeadChefDashboard';
+import { BranchManagerCenter } from './components/branch-manager/BranchManagerCenter';
 import { KitchenModule } from './components/kitchen/KitchenModule';
 import { ReconciliationModule } from './components/reconciliation/ReconciliationModule';
 import { WarehouseModule } from './components/warehouse/WarehouseModule';
@@ -19,26 +22,36 @@ export const App: React.FC = () => {
 
   // Khởi tạo phân hệ / view mặc định theo phân quyền người dùng (RBAC View Guard)
   const [activeView, setActiveView] = useState<string>('kitchen');
+  const prevUserIdRef = useRef<number | undefined>(user?.id);
 
-  // Tự động kiểm tra và chuyển về view mặc định hợp lệ khi thay đổi tài khoản
+  // Tự động kiểm tra và chuyển về view mặc định khi đăng nhập hoặc chuyển đổi tài khoản
   useEffect(() => {
     if (user) {
       const defaultView = getDefaultAuthorizedView(user, false);
-      if (!isViewAuthorized(activeView, user)) {
+      if (prevUserIdRef.current !== user.id) {
+        setActiveView(defaultView);
+        prevUserIdRef.current = user.id;
+      } else if (!isViewAuthorized(activeView, user)) {
         setActiveView(defaultView);
       }
     }
-  }, [user]);
+  }, [user, activeView]);
 
   // Đồng bộ không gian làm việc khi người dùng chuyển đổi Context (Kitchen / Portal / Management)
   useEffect(() => {
     if (user) {
-      if (activeContext === 'KITCHEN' && isViewAuthorized('kitchen', user)) {
-        setActiveView('kitchen');
+      if (activeContext === 'KITCHEN') {
+        const target = isViewAuthorized('head-chef', user) ? 'head-chef' : 'kitchen';
+        if (isViewAuthorized(target, user)) setActiveView(target);
       } else if (activeContext === 'EMPLOYEE_PORTAL' && isViewAuthorized('hr-attendance', user)) {
         setActiveView('hr-attendance');
-      } else if (activeContext === 'MANAGEMENT' && isViewAuthorized('dashboard', user)) {
-        setActiveView('dashboard');
+      } else if (activeContext === 'MANAGEMENT') {
+        const target = isViewAuthorized('executive-cockpit', user)
+          ? 'executive-cockpit'
+          : isViewAuthorized('branch-manager', user)
+          ? 'branch-manager'
+          : 'dashboard';
+        if (isViewAuthorized(target, user)) setActiveView(target);
       }
     }
   }, [activeContext, user]);
@@ -103,6 +116,12 @@ export const App: React.FC = () => {
       <AdaptiveShell activeView={activeView} onViewChange={setActiveView}>
         {!isViewAuthorized(activeView, user) ? (
           <AccessDeniedFallback targetView={activeView} />
+        ) : activeView === 'executive-cockpit' ? (
+          <ExecutiveCockpit />
+        ) : activeView === 'head-chef' ? (
+          <HeadChefDashboard />
+        ) : activeView === 'branch-manager' ? (
+          <BranchManagerCenter />
         ) : activeView === 'kitchen' ? (
           <KitchenModule />
         ) : activeView === 'warehouse' ? (
