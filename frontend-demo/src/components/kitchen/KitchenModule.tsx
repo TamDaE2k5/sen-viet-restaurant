@@ -49,6 +49,7 @@ interface VirtualNumpadProps {
 /**
  * Numpad ảo kích thước lớn cho màn hình cảm ứng Kiosk / Tablet bếp.
  * Phím số to rõ, hỗ trợ găng tay làm việc và các nút cộng dồn định lượng nhanh.
+ * Hỗ trợ dấu chấm '.' thập phân và gõ trực tiếp bàn phím cứng / cảm ứng.
  */
 const VirtualNumpad: React.FC<VirtualNumpadProps> = ({
   value,
@@ -60,7 +61,12 @@ const VirtualNumpad: React.FC<VirtualNumpadProps> = ({
   const [strVal, setStrVal] = useState<string>(value > 0 ? value.toString() : '');
 
   useEffect(() => {
-    setStrVal(value > 0 ? value.toString() : '');
+    // Chỉ đồng bộ lại khi giá trị số khác biệt thực sự
+    // Tránh xóa mất dấu chấm dở dang "0." hoặc "5." khi gõ
+    const curNum = parseFloat(strVal);
+    if ((isNaN(curNum) && value > 0) || (!isNaN(curNum) && curNum !== value)) {
+      setStrVal(value > 0 ? value.toString() : '');
+    }
   }, [value]);
 
   const handleDigit = (digit: string) => {
@@ -72,11 +78,13 @@ const VirtualNumpad: React.FC<VirtualNumpadProps> = ({
     } else {
       next = strVal + digit;
     }
+    setStrVal(next);
     const num = parseFloat(next);
     if (!isNaN(num)) {
       if (max !== undefined && num > max) return;
-      setStrVal(next);
       onChange(num);
+    } else {
+      onChange(0);
     }
   };
 
@@ -105,6 +113,34 @@ const VirtualNumpad: React.FC<VirtualNumpadProps> = ({
 
   return (
     <div className="bg-slate-50 p-3 sm:p-4 rounded-2xl border border-slate-200 space-y-2.5">
+      {/* Ô nhập trực tiếp hỗ trợ bàn phím cứng & chuyển đổi dấu phẩy ',' thành '.' */}
+      <div className="flex items-center justify-between bg-white px-3.5 py-2 rounded-xl border border-slate-200">
+        <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Số đang nhập:</span>
+        <div className="flex items-baseline gap-1">
+          <input
+            type="text"
+            inputMode="decimal"
+            value={strVal}
+            onChange={(e) => {
+              const raw = e.target.value.replace(',', '.');
+              if (raw === '' || /^[0-9]*\.?[0-9]*$/.test(raw)) {
+                setStrVal(raw);
+                const num = parseFloat(raw);
+                if (!isNaN(num)) {
+                  if (max !== undefined && num > max) return;
+                  onChange(num);
+                } else {
+                  onChange(0);
+                }
+              }
+            }}
+            placeholder="0"
+            className="w-32 text-right font-mono font-black text-2xl text-slate-900 bg-transparent focus:outline-none focus:border-b-2 focus:border-emerald-500"
+          />
+          <span className="font-extrabold text-slate-600 text-sm">{unit}</span>
+        </div>
+      </div>
+
       {/* Phím tắt định lượng nhanh */}
       <div className="flex items-center gap-1.5 flex-wrap">
         <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mr-1">Cộng nhanh:</span>
@@ -120,7 +156,7 @@ const VirtualNumpad: React.FC<VirtualNumpadProps> = ({
         ))}
       </div>
 
-      {/* Numpad 3x4 Grid lớn */}
+      {/* Numpad 3x4 Grid lớn + Nút dấu chấm '.' và Xóa */}
       <div className="grid grid-cols-3 gap-2">
         {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
           <button
@@ -134,10 +170,10 @@ const VirtualNumpad: React.FC<VirtualNumpadProps> = ({
         ))}
         <button
           type="button"
-          onClick={handleClear}
-          className="btn-touch h-12 sm:h-14 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 font-black text-xs text-rose-700 shadow-sm active:scale-95"
+          onClick={() => handleDigit('.')}
+          className="btn-touch h-12 sm:h-14 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-300 font-black text-2xl text-slate-900 shadow-sm active:scale-95"
         >
-          XÓA (C)
+          .
         </button>
         <button
           type="button"
@@ -152,6 +188,13 @@ const VirtualNumpad: React.FC<VirtualNumpadProps> = ({
           className="btn-touch h-12 sm:h-14 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-300 font-black text-xs text-slate-700 shadow-sm active:scale-95"
         >
           ⌫ Xóa
+        </button>
+        <button
+          type="button"
+          onClick={handleClear}
+          className="col-span-3 btn-touch h-10 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 font-bold text-xs text-rose-700 shadow-sm active:scale-95 flex items-center justify-center gap-1"
+        >
+          <span>✕</span> XÓA TẤT CẢ (C)
         </button>
       </div>
     </div>
@@ -174,14 +217,14 @@ export const KitchenModule: React.FC = () => {
 
   // --- Nút 1: Lấy hàng state ---
   const [selectedItemId, setSelectedItemId] = useState<number | ''>('');
-  const [takeOutQty, setTakeOutQty] = useState<number>(5);
+  const [takeOutQty, setTakeOutQty] = useState<number | ''>('');
   const [takeOutNote, setTakeOutNote] = useState<string>('');
   const [isTakingOut, setIsTakingOut] = useState<boolean>(false);
 
   // --- Nút 2: Chế biến mẻ state ---
   const [batchTab, setBatchTab] = useState<'start' | 'finish'>('start');
   const [batchItemId, setBatchItemId] = useState<number | ''>('');
-  const [batchInputWeight, setBatchInputWeight] = useState<number>(10);
+  const [batchInputWeight, setBatchInputWeight] = useState<number>(0);
   const [batchNote, setBatchNote] = useState<string>('');
   const [isStartingBatch, setIsStartingBatch] = useState<boolean>(false);
   // Cảnh báo mẻ thứ hai modal
@@ -341,7 +384,11 @@ export const KitchenModule: React.FC = () => {
   // -------------------------------------------------------------
   const handleTakeOutSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedItemId || takeOutQty <= 0) return;
+    const qty = typeof takeOutQty === 'string' ? parseFloat(takeOutQty) : takeOutQty;
+    if (!selectedItemId || !takeOutQty || isNaN(qty) || qty <= 0) {
+      showNotice('error', 'Vui lòng nhập số lượng xuất hợp lệ (> 0)');
+      return;
+    }
 
     const item = items.find((i) => i.id === Number(selectedItemId));
     if (!item) return;
@@ -350,11 +397,11 @@ export const KitchenModule: React.FC = () => {
       setIsTakingOut(true);
       await kitchenApi.recordTakeOut({
         itemId: item.id,
-        quantity: takeOutQty,
+        quantity: qty,
         unit: item.unit,
         note: takeOutNote || 'Lấy hàng ra bếp sơ chế',
       });
-      showNotice('success', `Đã xuất kho ${takeOutQty} ${item.unit} ${item.itemName}`);
+      showNotice('success', `Đã xuất kho ${qty} ${item.unit} ${item.itemName}`);
       setTakeOutNote('');
       setActiveModal(null);
     } catch (err: any) {
@@ -368,7 +415,10 @@ export const KitchenModule: React.FC = () => {
   // Xử lý Nút 2: CHẾ BIẾN MẺ
   // -------------------------------------------------------------
   const handleStartBatchSubmit = async (force = false) => {
-    if (!batchItemId || batchInputWeight <= 0) return;
+    if (!batchItemId || !batchInputWeight || batchInputWeight <= 0) {
+      showNotice('error', 'Vui lòng nhập khối lượng đầu vào hợp lệ (> 0 kg)');
+      return;
+    }
     const item = items.find((i) => i.id === Number(batchItemId));
     if (!item) return;
 
@@ -843,7 +893,11 @@ export const KitchenModule: React.FC = () => {
       <div className="grid grid-cols-2 gap-3.5 sm:gap-4">
         {/* NÚT 1: LẤY HÀNG (Màu Xanh Dương) */}
         <button
-          onClick={() => setActiveModal('takeOut')}
+          onClick={() => {
+            setTakeOutQty('');
+            setTakeOutNote('');
+            setActiveModal('takeOut');
+          }}
           className="btn-touch min-h-[140px] sm:min-h-[155px] rounded-2xl bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-800 hover:from-blue-700 hover:to-indigo-900 text-white p-4 sm:p-5 flex flex-col justify-between shadow-xl shadow-blue-600/25 active:scale-[0.97] transition-all text-left"
         >
           <div className="flex items-center justify-between w-full">
@@ -862,6 +916,8 @@ export const KitchenModule: React.FC = () => {
         <button
           onClick={() => {
             setBatchTab(activeBatches.length > 0 ? 'finish' : 'start');
+            setBatchInputWeight(0);
+            setBatchNote('');
             setActiveModal('batch');
           }}
           className="btn-touch min-h-[140px] sm:min-h-[155px] rounded-2xl bg-gradient-to-br from-emerald-600 via-emerald-700 to-teal-800 hover:from-emerald-700 hover:to-teal-900 text-white p-4 sm:p-5 flex flex-col justify-between shadow-xl shadow-emerald-600/25 active:scale-[0.97] transition-all text-left relative overflow-hidden"
@@ -1038,10 +1094,23 @@ export const KitchenModule: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <input
                     type="number"
-                    step="0.5"
-                    min="0.1"
+                    step="any"
+                    min="0.001"
+                    placeholder="Nhập số lượng..."
                     value={takeOutQty}
-                    onChange={(e) => setTakeOutQty(parseFloat(e.target.value) || 0)}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(',', '.');
+                      setTakeOutQty(val === '' ? '' : parseFloat(val) || 0);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === ',') {
+                        e.preventDefault();
+                        const cur = String(takeOutQty ?? '');
+                        if (!cur.includes('.')) {
+                          setTakeOutQty(((cur ? cur : '0') + '.') as any);
+                        }
+                      }
+                    }}
                     className="flex-1 h-12 px-4 rounded-xl border border-slate-300 font-extrabold text-xl text-slate-900 focus:ring-2 focus:ring-blue-500"
                   />
                   <div className="flex gap-1.5">
@@ -1594,10 +1663,23 @@ export const KitchenModule: React.FC = () => {
                   <label className="block text-xs font-bold text-slate-600 mb-1">SỐ LƯỢNG HỎNG</label>
                   <input
                     type="number"
-                    step="0.5"
-                    min="0.1"
+                    step="any"
+                    min="0.001"
+                    placeholder="Nhập số lượng..."
                     value={damageQty}
-                    onChange={(e) => setDamageQty(parseFloat(e.target.value) || 0)}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(',', '.');
+                      setDamageQty(parseFloat(val) || 0);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === ',') {
+                        e.preventDefault();
+                        const cur = String(damageQty ?? '');
+                        if (!cur.includes('.')) {
+                          setDamageQty(((cur ? cur : '0') + '.') as any);
+                        }
+                      }
+                    }}
                     className="w-full h-12 px-3 rounded-xl border border-slate-300 font-extrabold text-lg text-slate-900 focus:ring-2 focus:ring-rose-500"
                   />
                 </div>
@@ -1912,15 +1994,28 @@ export const KitchenModule: React.FC = () => {
                               <div className="flex items-center gap-1.5">
                                 <input
                                   type="number"
-                                  step="0.5"
+                                  step="any"
                                   min="0"
                                   value={dailyWasteQuantities[it.id] ?? 0}
-                                  onChange={(e) =>
+                                  onChange={(e) => {
+                                    const val = e.target.value.replace(',', '.');
                                     setDailyWasteQuantities({
                                       ...dailyWasteQuantities,
-                                      [it.id]: parseFloat(e.target.value) || 0,
-                                    })
-                                  }
+                                      [it.id]: parseFloat(val) || 0,
+                                    });
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === ',') {
+                                      e.preventDefault();
+                                      const cur = String(dailyWasteQuantities[it.id] ?? '');
+                                      if (!cur.includes('.')) {
+                                        setDailyWasteQuantities({
+                                          ...dailyWasteQuantities,
+                                          [it.id]: ((cur ? cur : '0') + '.') as any,
+                                        });
+                                      }
+                                    }
+                                  }}
                                   className="w-20 h-9 px-2 rounded-lg border border-slate-300 font-mono font-extrabold text-sm focus:ring-2 focus:ring-emerald-500"
                                 />
                                 <span className="text-xs font-bold text-slate-600">{it.unit}</span>

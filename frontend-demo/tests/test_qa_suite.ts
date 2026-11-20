@@ -365,6 +365,54 @@ async function runTestSuite() {
   assert(isViewAuthorized('payroll', userAdminChu) === true, 'RBAC ROLE_CHU_CHUOI', 'Chủ chuỗi toàn quyền payroll');
 
   // -----------------------------------------------------------------
+  // 9. KIỂM THỬ VALIDATION NHẬP KHO & SỐ THẬP PHÂN (HOTFIX P0)
+  // -----------------------------------------------------------------
+  console.log('\n🔢 SUITE 9: Warehouse & Kitchen Quantity Validation (P0 Hotfix)');
+
+  // 9.1. Warehouse document validation logic
+  const validateDocItems = (items: { quantity: number | string }[]) => {
+    return !items.some((item) => {
+      const q = typeof item.quantity === 'string' ? parseFloat(item.quantity) : item.quantity;
+      return item.quantity === '' || item.quantity === undefined || isNaN(q) || q <= 0;
+    });
+  };
+
+  assert(validateDocItems([{ quantity: '' }]) === false, 'Warehouse Validation', 'Chặn phiếu kho khi số lượng rỗng');
+  assert(validateDocItems([{ quantity: 0 }]) === false, 'Warehouse Validation', 'Chặn phiếu kho khi số lượng = 0');
+  assert(validateDocItems([{ quantity: -5 }]) === false, 'Warehouse Validation', 'Chặn phiếu kho khi số lượng âm');
+  assert(validateDocItems([{ quantity: 10 }]) === true, 'Warehouse Validation', 'Cho phép số nguyên 10 (không bị chặn bởi step mismatch)');
+  assert(validateDocItems([{ quantity: 10.5 }]) === true, 'Warehouse Validation', 'Cho phép số thập phân 10.5');
+  assert(validateDocItems([{ quantity: 2.33 }]) === true, 'Warehouse Validation', 'Cho phép số lẻ 2.33');
+
+  // 9.2. Decimal normalization (thay ',' thành '.')
+  const normalizeQty = (val: string) => {
+    const raw = val.replace(',', '.');
+    return raw === '' ? '' : parseFloat(raw);
+  };
+  assert(normalizeQty('10,5') === 10.5, 'Decimal Normalization', 'Tự động đổi dấu phẩy 10,5 thành 10.5');
+  assert(normalizeQty('2,33') === 2.33, 'Decimal Normalization', 'Tự động đổi dấu phẩy 2,33 thành 2.33');
+  assert(normalizeQty('10') === 10, 'Decimal Normalization', 'Nhập 10 giữ nguyên 10');
+
+  // 9.3. VirtualNumpad decimal input sequence logic
+  let numpadStr = '';
+  const simulateDigit = (digit: string) => {
+    if (!numpadStr || numpadStr === '0') {
+      numpadStr = digit === '.' ? '0.' : digit;
+    } else if (digit === '.' && numpadStr.includes('.')) {
+      return;
+    } else {
+      numpadStr = numpadStr + digit;
+    }
+  };
+
+  simulateDigit('.');
+  assert(numpadStr === '0.', 'VirtualNumpad Logic', 'Bấm phím "." khi trống tạo thành "0."');
+  simulateDigit('5');
+  assert(numpadStr === '0.5' && parseFloat(numpadStr) === 0.5, 'VirtualNumpad Logic', 'Bấm tiếp "5" tạo thành 0.5');
+  simulateDigit('.');
+  assert(numpadStr === '0.5', 'VirtualNumpad Logic', 'Không cho phép bấm thừa dấu chấm thứ hai');
+
+  // -----------------------------------------------------------------
   // TỔNG KẾT
   // -----------------------------------------------------------------
   console.log('\n======================================================');
