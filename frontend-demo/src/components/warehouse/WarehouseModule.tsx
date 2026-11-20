@@ -28,7 +28,11 @@ import {
   ArrowUpDown,
   Phone,
   MapPin,
-  Tag
+  Tag,
+  Scale,
+  MinusCircle,
+  Calculator,
+  DollarSign
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
@@ -40,6 +44,7 @@ import {
   InventoryStock,
   InventoryCheck,
   SupplierLossReport,
+  SupplierDebtSummary,
   CreateDocumentRequest,
   CreateSupplierRequest,
   CreateInventoryCheckRequest,
@@ -47,7 +52,13 @@ import {
 import { kitchenApi, Item } from '../../api/kitchen';
 import { compressImage, CompressionResult } from '../../utils/imageCompressor';
 
-type WarehouseTab = 'documents' | 'batches' | 'suppliers' | 'inventory-check' | 'loss-report';
+type WarehouseTab =
+  | 'documents'
+  | 'batches'
+  | 'suppliers'
+  | 'inventory-check'
+  | 'loss-report'
+  | 'supplier-debt';
 
 export const WarehouseModule: React.FC = () => {
   const { user } = useAuth();
@@ -80,6 +91,8 @@ export const WarehouseModule: React.FC = () => {
   const [stocks, setStocks] = useState<InventoryStock[]>([]);
   const [checks, setChecks] = useState<InventoryCheck[]>([]);
   const [lossReports, setLossReports] = useState<SupplierLossReport[]>([]);
+  const [supplierDebts, setSupplierDebts] = useState<SupplierDebtSummary[]>([]);
+  const [isExportingDebt, setIsExportingDebt] = useState<boolean>(false);
 
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
@@ -172,7 +185,17 @@ export const WarehouseModule: React.FC = () => {
   const [selectedSupplierId, setSelectedSupplierId] = useState<number | undefined>(undefined);
   const [docNote, setDocNote] = useState<string>('');
   const [docItems, setDocItems] = useState<
-    { itemId: number; quantity: number; unitPrice: number; expiryDate: string; batchId?: number }[]
+    {
+      itemId: number;
+      quantity: number | string;
+      unitPrice: number;
+      expiryDate: string;
+      batchId?: number;
+      supplierReportedWeight?: number | string;
+      actualWeight?: number | string;
+      weightDiff?: number;
+      shortageAmount?: number;
+    }[]
   >([]);
   const [docImages, setDocImages] = useState<CompressionResult[]>([]);
   const [isSubmittingDoc, setIsSubmittingDoc] = useState<boolean>(false);
@@ -220,7 +243,7 @@ export const WarehouseModule: React.FC = () => {
   const loadAllData = async () => {
     setIsLoading(true);
     try {
-      const [itemsRes, suppliersRes, docsRes, batchesRes, stocksRes, checksRes, lossRes] =
+      const [itemsRes, suppliersRes, docsRes, batchesRes, stocksRes, checksRes, lossRes, debtsRes] =
         await Promise.allSettled([
           kitchenApi.getBuffetItems(),
           warehouseApi.getSuppliers(),
@@ -229,6 +252,7 @@ export const WarehouseModule: React.FC = () => {
           warehouseApi.getStocks(),
           warehouseApi.getInventoryChecks(),
           warehouseApi.getSupplierLossReport({ month: reportMonth, year: reportYear }),
+          warehouseApi.getSupplierDebtSummary({ branchId: user?.branchId || 1 }),
         ]);
 
       if (itemsRes.status === 'fulfilled') setBuffetItems(itemsRes.value);
@@ -238,6 +262,7 @@ export const WarehouseModule: React.FC = () => {
       if (stocksRes.status === 'fulfilled') setStocks(stocksRes.value);
       if (checksRes.status === 'fulfilled') setChecks(checksRes.value);
       if (lossRes.status === 'fulfilled') setLossReports(lossRes.value);
+      if (debtsRes.status === 'fulfilled') setSupplierDebts(debtsRes.value);
     } catch (err) {
       console.error('Lỗi khi nạp dữ liệu phân hệ kho:', err);
     } finally {
@@ -250,7 +275,7 @@ export const WarehouseModule: React.FC = () => {
   }, [reportMonth, reportYear]);
 
   // =========================================================================
-  // HANDLERS: WAREHOUSE DOCUMENTS
+  // HANDLERS: WAREHOUSE DOCUMENTS & CÂN LỆCH NCC (TASK-S4-02)
   // =========================================================================
   const handleOpenDocModal = (type: 'NHAP' | 'XUAT_CHUYEN' | 'HUY') => {
     setDocType(type);
@@ -263,7 +288,11 @@ export const WarehouseModule: React.FC = () => {
       setDocItems([
         {
           itemId: buffetItems[0].id,
-          quantity: 10,
+          quantity: '',
+          supplierReportedWeight: '',
+          actualWeight: '',
+          weightDiff: 0,
+          shortageAmount: 0,
           unitPrice: buffetItems[0].costPrice || 250000,
           expiryDate: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
         },
@@ -280,7 +309,11 @@ export const WarehouseModule: React.FC = () => {
       ...docItems,
       {
         itemId: buffetItems[0].id,
-        quantity: 10,
+        quantity: '',
+        supplierReportedWeight: '',
+        actualWeight: '',
+        weightDiff: 0,
+        shortageAmount: 0,
         unitPrice: buffetItems[0].costPrice || 200000,
         expiryDate: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
       },
@@ -295,10 +328,62 @@ export const WarehouseModule: React.FC = () => {
     const updated = [...docItems];
     if (field === 'itemId') {
       const selectedItem = buffetItems.find((i) => i.id === Number(value));
+      const newPrice = selectedItem?.costPrice || updated[index].unitPrice;
+      const diff = updated[index].weightDiff || 0;
       updated[index] = {
         ...updated[index],
         itemId: Number(value),
-        unitPrice: selectedItem?.costPrice || updated[index].unitPrice,
+        unitPrice: newPrice,
+        shortageAmount: diff < 0 ? Math.round(Math.abs(diff) * newPrice) : 0,
+      };
+    } else if (field === 'supplierReportedWeight') {
+      const val = typeof value === 'string' ? value.replace(',', '.') : value;
+      const rep = parseFloat(val) || 0;
+      const act =
+        parseFloat(String(updated[index].actualWeight || updated[index].quantity || 0)) || 0;
+      const diff = Number((act - rep).toFixed(2));
+      const shortage = diff < 0 ? Math.round(Math.abs(diff) * updated[index].unitPrice) : 0;
+      updated[index] = {
+        ...updated[index],
+        supplierReportedWeight: val,
+        weightDiff: diff,
+        shortageAmount: shortage,
+      };
+    } else if (field === 'actualWeight') {
+      const val = typeof value === 'string' ? value.replace(',', '.') : value;
+      const act = parseFloat(val) || 0;
+      const rep =
+        parseFloat(String(updated[index].supplierReportedWeight || act)) || 0;
+      const diff = Number((act - rep).toFixed(2));
+      const shortage = diff < 0 ? Math.round(Math.abs(diff) * updated[index].unitPrice) : 0;
+      updated[index] = {
+        ...updated[index],
+        actualWeight: val,
+        quantity: val,
+        weightDiff: diff,
+        shortageAmount: shortage,
+      };
+    } else if (field === 'quantity') {
+      const val = typeof value === 'string' ? value.replace(',', '.') : value;
+      const act = parseFloat(val) || 0;
+      const rep =
+        parseFloat(String(updated[index].supplierReportedWeight || act)) || act;
+      const diff = Number((act - rep).toFixed(2));
+      const shortage = diff < 0 ? Math.round(Math.abs(diff) * updated[index].unitPrice) : 0;
+      updated[index] = {
+        ...updated[index],
+        quantity: val,
+        actualWeight: val,
+        weightDiff: diff,
+        shortageAmount: shortage,
+      };
+    } else if (field === 'unitPrice') {
+      const price = parseFloat(value) || 0;
+      const diff = updated[index].weightDiff || 0;
+      updated[index] = {
+        ...updated[index],
+        unitPrice: price,
+        shortageAmount: diff < 0 ? Math.round(Math.abs(diff) * price) : 0,
       };
     } else {
       updated[index] = { ...updated[index], [field]: value };
@@ -331,14 +416,58 @@ export const WarehouseModule: React.FC = () => {
     }
   };
 
-  const calculateDocTotal = () => {
-    return docItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+  const calculateDocTotals = () => {
+    let totalReported = 0;
+    let totalActual = 0;
+    let totalShortage = 0;
+
+    for (const it of docItems) {
+      const price = Number(it.unitPrice) || 0;
+      const act =
+        typeof it.actualWeight === 'string'
+          ? parseFloat(it.actualWeight) || 0
+          : it.actualWeight ?? (parseFloat(String(it.quantity)) || 0);
+      const rep =
+        typeof it.supplierReportedWeight === 'string'
+          ? parseFloat(it.supplierReportedWeight) || act
+          : it.supplierReportedWeight ?? act;
+
+      const diff = Number((act - rep).toFixed(2));
+      const shortage = diff < 0 ? Math.round(Math.abs(diff) * price) : 0;
+
+      totalReported += rep * price;
+      totalActual += act * price;
+      totalShortage += shortage;
+    }
+
+    return {
+      totalReported,
+      totalActual,
+      totalShortage,
+      finalPayable: Math.max(0, totalReported - totalShortage),
+    };
   };
 
   const handleSubmitDoc = async (e: React.FormEvent) => {
     e.preventDefault();
     if (docItems.length === 0) {
       showNotice('error', 'Vui lòng thêm ít nhất một mặt hàng vào phiếu');
+      return;
+    }
+
+    // Kiểm tra mọi dòng phải có quantity/thực cân > 0
+    const hasInvalidQty = docItems.some((item) => {
+      const q = typeof item.quantity === 'string' ? parseFloat(item.quantity) : item.quantity;
+      const act =
+        typeof item.actualWeight === 'string'
+          ? parseFloat(item.actualWeight)
+          : item.actualWeight;
+      const effective = act !== undefined && !isNaN(act) && act > 0 ? act : q;
+      return effective === undefined || isNaN(effective as number) || (effective as number) <= 0;
+    });
+
+    if (hasInvalidQty) {
+      showNotice('error', 'Vui lòng nhập số lượng/thực cân hợp lệ (> 0) cho tất cả các mặt hàng');
       return;
     }
 
@@ -349,22 +478,50 @@ export const WarehouseModule: React.FC = () => {
         supplierId: docType === 'NHAP' ? selectedSupplierId : undefined,
         note: docNote || undefined,
         imageUrls: docImages.map((img) => img.dataUrl).join(';'),
-        items: docItems.map((item) => ({
-          itemId: item.itemId,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          expiryDate: item.expiryDate || undefined,
-          batchId: item.batchId,
-        })),
+        items: docItems.map((item) => {
+          const act =
+            typeof item.actualWeight === 'string'
+              ? parseFloat(item.actualWeight)
+              : item.actualWeight;
+          const rep =
+            typeof item.supplierReportedWeight === 'string'
+              ? parseFloat(item.supplierReportedWeight)
+              : item.supplierReportedWeight;
+          const qty =
+            typeof item.quantity === 'string' ? parseFloat(item.quantity) : item.quantity;
+          const price =
+            typeof item.unitPrice === 'string' ? parseFloat(item.unitPrice) : item.unitPrice;
+
+          const effectiveActual = act !== undefined && !isNaN(act) ? act : qty;
+          const effectiveRep =
+            rep !== undefined && !isNaN(rep) ? rep : effectiveActual;
+          const diff = Number((effectiveActual - effectiveRep).toFixed(2));
+          const shortage = diff < 0 ? Math.round(Math.abs(diff) * price) : 0;
+
+          return {
+            itemId: item.itemId,
+            quantity: effectiveActual,
+            actualWeight: effectiveActual,
+            supplierReportedWeight: effectiveRep,
+            weightDiff: diff,
+            shortageAmount: shortage,
+            unitPrice: price,
+            expiryDate: item.expiryDate || undefined,
+            batchId: item.batchId,
+          };
+        }),
       };
 
       const res = await warehouseApi.createDocument(payload);
-      showNotice('success', `✅ Đã tạo ${res.docCode || 'phiếu kho'} thành công! Tồn kho và Lô hàng đã được cập nhật.`);
+      showNotice(
+        'success',
+        `✅ Đã tạo ${res.docCode || 'phiếu kho'} thành công! Tồn kho, Lô hàng & Công nợ NCC đã được cập nhật.`
+      );
       setShowDocModal(false);
       loadAllData();
     } catch (err: any) {
       console.error('Lỗi tạo phiếu kho:', err);
-      showNotice('error', err.response?.data?.message || 'Không thể tạo phiếu kho. Vui lòng kiểm tra lại');
+      showNotice('error', 'Lỗi khi lưu phiếu kho: ' + (err.message || 'Lỗi hệ thống'));
     } finally {
       setIsSubmittingDoc(false);
     }
@@ -697,6 +854,18 @@ export const WarehouseModule: React.FC = () => {
           >
             <TrendingDown className="h-4 w-4" />
             <span>Báo Cáo % Hỏng NCC</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('supplier-debt')}
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all whitespace-nowrap ${
+              activeTab === 'supplier-debt'
+                ? 'bg-amber-400 text-slate-950 shadow-md shadow-amber-400/40 font-black ring-2 ring-amber-300'
+                : 'text-amber-300 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <Scale className="h-4 w-4" />
+            <span>Cân Lệch & Công Nợ NCC (Mới)</span>
           </button>
         </div>
       </div>
@@ -1574,6 +1743,234 @@ export const WarehouseModule: React.FC = () => {
       )}
 
       {/* =================================================================== */}
+      {/* TAB 6: BẢNG TỔNG HỢP CÔNG NỢ NCC & KHẤU TRỪ CÂN THIẾU (TASK-S4-02) */}
+      {/* =================================================================== */}
+      {activeTab === 'supplier-debt' && (
+        <div className="space-y-4 animate-in fade-in">
+          {/* Header & Export button */}
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-amber-100 text-amber-900 text-xs font-bold mb-1">
+                <Scale className="h-3.5 w-3.5" />
+                <span>Nghiệp Vụ Cân Lệch & Công Nợ NCC (TASK-S4-02)</span>
+              </div>
+              <h3 className="text-base font-extrabold text-slate-900">
+                Bảng Tổng Hợp Công Nợ & Khấu Trừ Cân Thiếu NCC Cuối Tháng
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Công thức:{' '}
+                <strong className="text-slate-800">Lệch = Thực cân - NCC báo</strong> | Tự động trừ tiền phần cân thiếu vào công nợ phải trả NCC cuối tháng.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    setIsExportingDebt(true);
+                    const blob = await warehouseApi.exportSupplierDebtExcel({
+                      branchId: user?.branchId || 1,
+                    });
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `Bang_TongHop_CongNo_NCC_T11_2026.xlsx`;
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                    showNotice('success', 'Đã xuất file Excel công nợ & cân thiếu NCC thành công');
+                  } catch (e: any) {
+                    showNotice('error', 'Lỗi xuất file: ' + e.message);
+                  } finally {
+                    setIsExportingDebt(false);
+                  }
+                }}
+                disabled={isExportingDebt}
+                className="btn-touch px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-emerald-600/20"
+              >
+                <Download className="h-4 w-4" />
+                <span>
+                  {isExportingDebt ? 'Đang xuất...' : 'Xuất Excel Đối Soát Công Nợ (.xlsx)'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleOpenDocModal('NHAP')}
+                className="btn-touch px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-indigo-600/20"
+              >
+                <Plus className="h-4 w-4" />
+                <span>+ Lập Phiếu Cân Nhập Kho</span>
+              </button>
+            </div>
+          </div>
+
+          {/* 4 KPI Summary Cards */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
+                1. Tiền Hàng NCC Báo
+              </span>
+              <div className="text-xl font-black font-mono text-slate-900 mt-1">
+                {supplierDebts
+                  .reduce((s, d) => s + d.totalReportedAmount, 0)
+                  .toLocaleString('vi-VN')}{' '}
+                đ
+              </div>
+              <span className="text-[10px] text-slate-400 mt-0.5 block">
+                Tổng kg báo:{' '}
+                {supplierDebts.reduce((s, d) => s + d.totalReportedWeight, 0).toFixed(1)} kg
+              </span>
+            </div>
+
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+              <span className="text-[11px] font-bold text-blue-600 uppercase tracking-wide">
+                2. Tổng Khối Lượng Thực Cân
+              </span>
+              <div className="text-xl font-black font-mono text-blue-700 mt-1">
+                {supplierDebts.reduce((s, d) => s + d.totalActualWeight, 0).toFixed(1)} kg
+              </div>
+              <span className="text-[10px] text-slate-400 mt-0.5 block">
+                Tổng cộng {supplierDebts.reduce((s, d) => s + d.totalInvoicesCount, 0)} phiếu nhập
+              </span>
+            </div>
+
+            <div className="bg-white p-4 rounded-xl border border-rose-200 bg-rose-50/40 shadow-sm">
+              <span className="text-[11px] font-bold text-rose-700 uppercase tracking-wide flex items-center gap-1">
+                <MinusCircle className="h-3.5 w-3.5 text-rose-600" />
+                <span>3. Giảm Trừ Cân Thiếu</span>
+              </span>
+              <div className="text-xl font-black font-mono text-rose-700 mt-1">
+                -
+                {supplierDebts
+                  .reduce((s, d) => s + d.totalShortageDeduction, 0)
+                  .toLocaleString('vi-VN')}{' '}
+                đ
+              </div>
+              <span className="text-[10px] text-rose-600 font-semibold mt-0.5 block">
+                Hụt{' '}
+                {Math.abs(supplierDebts.reduce((s, d) => s + d.totalWeightDiff, 0)).toFixed(1)} kg
+                cân thiếu
+              </span>
+            </div>
+
+            <div className="bg-white p-4 rounded-xl border border-emerald-300 bg-emerald-50/30 shadow-sm">
+              <span className="text-[11px] font-bold text-emerald-800 uppercase tracking-wide">
+                4. Thực Trả NCC Cuối Tháng
+              </span>
+              <div className="text-xl font-black font-mono text-emerald-700 mt-1">
+                {supplierDebts
+                  .reduce((s, d) => s + d.finalPayableDebt, 0)
+                  .toLocaleString('vi-VN')}{' '}
+                đ
+              </div>
+              <span className="text-[10px] text-emerald-700 font-semibold mt-0.5 block">
+                Đã tự động trừ 100% tiền cân thiếu
+              </span>
+            </div>
+          </div>
+
+          {/* Supplier Debt Master Table */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs sm:text-sm">
+                <thead>
+                  <tr className="bg-slate-100 border-b border-slate-200 text-slate-600 font-bold text-[11px] uppercase tracking-wider">
+                    <th className="p-3.5">Mã NCC</th>
+                    <th className="p-3.5">Tên Nhà Cung Cấp</th>
+                    <th className="p-3.5 text-center">Số Phiếu</th>
+                    <th className="p-3.5 text-right">Khối Lượng NCC Báo</th>
+                    <th className="p-3.5 text-right">Khối Lượng Thực Cân</th>
+                    <th className="p-3.5 text-right font-bold text-rose-600">Lệch (Thực - Báo)</th>
+                    <th className="p-3.5 text-right font-mono">Tiền Hàng Báo (đ)</th>
+                    <th className="p-3.5 text-right font-mono text-rose-700 font-black bg-rose-50/50">
+                      Trừ Cân Thiếu (-đ)
+                    </th>
+                    <th className="p-3.5 text-right font-mono text-emerald-800 font-black bg-emerald-50/50">
+                      Công Nợ Thực Trả (đ)
+                    </th>
+                    <th className="p-3.5 text-center">Trạng Thái</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {supplierDebts.length === 0 ? (
+                    <tr>
+                      <td colSpan={10} className="p-8 text-center text-slate-400">
+                        Chưa có dữ liệu công nợ nhà cung cấp
+                      </td>
+                    </tr>
+                  ) : (
+                    supplierDebts.map((sup) => (
+                      <tr key={sup.supplierId} className="hover:bg-slate-50 transition-colors">
+                        <td className="p-3.5 font-mono font-bold text-indigo-700">
+                          {sup.supplierCode}
+                        </td>
+                        <td className="p-3.5 font-bold text-slate-900">
+                          {sup.supplierName}
+                          {sup.phone && (
+                            <div className="text-[11px] text-slate-400 font-normal">
+                              {sup.phone}
+                            </div>
+                          )}
+                        </td>
+                        <td className="p-3.5 text-center font-mono font-bold text-slate-600">
+                          {sup.totalInvoicesCount}
+                        </td>
+                        <td className="p-3.5 text-right font-mono">
+                          {sup.totalReportedWeight} kg
+                        </td>
+                        <td className="p-3.5 text-right font-mono font-bold text-blue-700">
+                          {sup.totalActualWeight} kg
+                        </td>
+                        <td
+                          className={`p-3.5 text-right font-mono font-black ${
+                            sup.totalWeightDiff < 0 ? 'text-rose-600' : 'text-emerald-600'
+                          }`}
+                        >
+                          {sup.totalWeightDiff !== 0
+                            ? sup.totalWeightDiff > 0
+                              ? `+${sup.totalWeightDiff}`
+                              : `${sup.totalWeightDiff}`
+                            : '0.0'}{' '}
+                          kg
+                        </td>
+                        <td className="p-3.5 text-right font-mono text-slate-800">
+                          {sup.totalReportedAmount.toLocaleString('vi-VN')} đ
+                        </td>
+                        <td className="p-3.5 text-right font-mono font-black text-rose-700 bg-rose-50/30">
+                          {sup.totalShortageDeduction > 0
+                            ? `-${sup.totalShortageDeduction.toLocaleString('vi-VN')} đ`
+                            : '0 đ'}
+                        </td>
+                        <td className="p-3.5 text-right font-mono font-black text-emerald-700 bg-emerald-50/40 text-sm">
+                          {sup.finalPayableDebt.toLocaleString('vi-VN')} đ
+                        </td>
+                        <td className="p-3.5 text-center">
+                          {sup.disputeStatus === 'LECH_CAN_THIEU' ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-black bg-rose-100 text-rose-800 border border-rose-300">
+                              <AlertTriangle className="h-3 w-3" />
+                              <span>Đã trừ tiền thiếu</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800">
+                              <CheckCircle2 className="h-3 w-3" />
+                              <span>Khớp đủ</span>
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
       {/* MODAL: TẠO PHIẾU NHẬP / XUẤT HUỶ KHO                               */}
       {/* =================================================================== */}
       {showDocModal && (
@@ -1647,89 +2044,213 @@ export const WarehouseModule: React.FC = () => {
                   {docItems.map((item, idx) => (
                     <div
                       key={idx}
-                      className="p-3 rounded-xl bg-slate-50 border border-slate-200 grid grid-cols-12 gap-2 items-center text-xs"
+                      className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-2"
                     >
-                      <div className="col-span-4">
-                        <span className="text-[10px] text-slate-500 font-semibold block mb-0.5">
-                          Nguyên liệu
-                        </span>
-                        <select
-                          value={item.itemId}
-                          onChange={(e) => handleDocItemChange(idx, 'itemId', e.target.value)}
-                          className="w-full h-9 px-2 rounded-lg border border-slate-300 font-semibold text-slate-800"
-                        >
-                          {buffetItems.map((bi) => (
-                            <option key={bi.id} value={bi.id}>
-                              {bi.itemName} ({bi.unit})
-                            </option>
-                          ))}
-                        </select>
+                      <div className="grid grid-cols-12 gap-2 items-center">
+                        <div className={docType === 'NHAP' ? 'col-span-3' : 'col-span-4'}>
+                          <span className="text-[10px] text-slate-500 font-semibold block mb-0.5">
+                            Nguyên liệu
+                          </span>
+                          <select
+                            value={item.itemId}
+                            onChange={(e) => handleDocItemChange(idx, 'itemId', e.target.value)}
+                            className="w-full h-9 px-2 rounded-lg border border-slate-300 font-semibold text-slate-800"
+                          >
+                            {buffetItems.map((bi) => (
+                              <option key={bi.id} value={bi.id}>
+                                {bi.itemName} ({bi.unit})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {docType === 'NHAP' ? (
+                          <>
+                            <div className="col-span-2">
+                              <span className="text-[10px] text-amber-800 font-bold block mb-0.5">
+                                NCC Báo (kg)
+                              </span>
+                              <input
+                                type="number"
+                                step="any"
+                                min="0.001"
+                                placeholder="NCC báo..."
+                                value={item.supplierReportedWeight ?? item.quantity}
+                                onChange={(e) =>
+                                  handleDocItemChange(idx, 'supplierReportedWeight', e.target.value)
+                                }
+                                className="w-full h-9 px-2 rounded-lg border border-amber-300 font-bold bg-amber-50/70"
+                              />
+                            </div>
+
+                            <div className="col-span-2">
+                              <span className="text-[10px] text-indigo-800 font-bold block mb-0.5">
+                                Thực Cân (kg)
+                              </span>
+                              <input
+                                type="number"
+                                step="any"
+                                min="0.001"
+                                placeholder="Thực cân..."
+                                value={item.actualWeight ?? item.quantity}
+                                onChange={(e) =>
+                                  handleDocItemChange(idx, 'actualWeight', e.target.value)
+                                }
+                                className="w-full h-9 px-2 rounded-lg border border-indigo-400 font-black bg-indigo-50/70 text-indigo-950"
+                              />
+                            </div>
+                          </>
+                        ) : (
+                          <div className="col-span-2">
+                            <span className="text-[10px] text-slate-500 font-semibold block mb-0.5">
+                              Số lượng
+                            </span>
+                            <input
+                              type="number"
+                              step="any"
+                              min="0.001"
+                              placeholder="Nhập số lượng..."
+                              value={item.quantity}
+                              onChange={(e) =>
+                                handleDocItemChange(idx, 'quantity', e.target.value)
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === ',') {
+                                  e.preventDefault();
+                                  const cur = String(item.quantity ?? '');
+                                  if (!cur.includes('.')) {
+                                    handleDocItemChange(idx, 'quantity', (cur ? cur : '0') + '.');
+                                  }
+                                }
+                              }}
+                              className="w-full h-9 px-2 rounded-lg border border-slate-300 font-bold"
+                            />
+                          </div>
+                        )}
+
+                        <div className={docType === 'NHAP' ? 'col-span-2' : 'col-span-3'}>
+                          <span className="text-[10px] text-slate-500 font-semibold block mb-0.5">
+                            Đơn giá (đ)
+                          </span>
+                          <input
+                            type="number"
+                            step="1000"
+                            min="0"
+                            value={item.unitPrice}
+                            onChange={(e) =>
+                              handleDocItemChange(idx, 'unitPrice', parseFloat(e.target.value) || 0)
+                            }
+                            className="w-full h-9 px-2 rounded-lg border border-slate-300 font-mono text-xs"
+                          />
+                        </div>
+
+                        <div className="col-span-2">
+                          <span className="text-[10px] text-slate-500 font-semibold block mb-0.5">
+                            Hạn dùng
+                          </span>
+                          <input
+                            type="date"
+                            value={item.expiryDate}
+                            onChange={(e) => handleDocItemChange(idx, 'expiryDate', e.target.value)}
+                            className="w-full h-9 px-1 rounded-lg border border-slate-300 text-[11px]"
+                          />
+                        </div>
+
+                        <div className="col-span-1 text-right">
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveDocItem(idx)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 rounded"
+                            disabled={docItems.length <= 1}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
                       </div>
 
-                      <div className="col-span-2">
-                        <span className="text-[10px] text-slate-500 font-semibold block mb-0.5">
-                          Số lượng
-                        </span>
-                        <input
-                          type="number"
-                          step="0.5"
-                          min="0.1"
-                          value={item.quantity}
-                          onChange={(e) =>
-                            handleDocItemChange(idx, 'quantity', parseFloat(e.target.value) || 0)
-                          }
-                          className="w-full h-9 px-2 rounded-lg border border-slate-300 font-bold"
-                        />
-                      </div>
-
-                      <div className="col-span-3">
-                        <span className="text-[10px] text-slate-500 font-semibold block mb-0.5">
-                          Đơn giá (đ)
-                        </span>
-                        <input
-                          type="number"
-                          step="1000"
-                          min="0"
-                          value={item.unitPrice}
-                          onChange={(e) =>
-                            handleDocItemChange(idx, 'unitPrice', parseFloat(e.target.value) || 0)
-                          }
-                          className="w-full h-9 px-2 rounded-lg border border-slate-300 font-mono text-xs"
-                        />
-                      </div>
-
-                      <div className="col-span-2">
-                        <span className="text-[10px] text-slate-500 font-semibold block mb-0.5">
-                          Hạn dùng
-                        </span>
-                        <input
-                          type="date"
-                          value={item.expiryDate}
-                          onChange={(e) => handleDocItemChange(idx, 'expiryDate', e.target.value)}
-                          className="w-full h-9 px-1 rounded-lg border border-slate-300 text-[11px]"
-                        />
-                      </div>
-
-                      <div className="col-span-1 text-right">
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveDocItem(idx)}
-                          className="p-1.5 text-slate-400 hover:text-rose-600 rounded"
-                          disabled={docItems.length <= 1}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
+                      {/* Chi tiết cân lệch và tự động khấu trừ tiền thiếu */}
+                      {docType === 'NHAP' && (
+                        <div className="flex flex-wrap items-center justify-between pt-1.5 border-t border-slate-200 text-[11px]">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-semibold text-slate-500">
+                              Lệch (Thực cân - NCC báo):
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 rounded-full font-black ${
+                                (item.weightDiff || 0) < 0
+                                  ? 'bg-rose-100 text-rose-700 border border-rose-300 animate-pulse'
+                                  : (item.weightDiff || 0) > 0
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-slate-100 text-slate-700'
+                              }`}
+                            >
+                              {(item.weightDiff || 0) > 0
+                                ? `+${item.weightDiff}`
+                                : item.weightDiff || 0}{' '}
+                              kg
+                            </span>
+                            {(item.weightDiff || 0) < 0 && (
+                              <span className="text-rose-600 font-bold ml-1">
+                                ⚠️ Cân thiếu {Math.abs(item.weightDiff || 0)} kg — Giảm trừ:{' '}
+                                <strong className="text-rose-700">
+                                  -{(item.shortageAmount || 0).toLocaleString('vi-VN')} đ
+                                </strong>
+                              </span>
+                            )}
+                          </div>
+                          <div className="font-bold text-slate-700">
+                            Thực tính phiếu:{' '}
+                            <strong className="text-indigo-700 font-mono">
+                              {(
+                                (Number(item.actualWeight || item.quantity) || 0) *
+                                (Number(item.unitPrice) || 0)
+                              ).toLocaleString('vi-VN')}{' '}
+                              đ
+                            </strong>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
 
-                <div className="flex justify-end items-center gap-2 pt-2 text-sm font-extrabold text-slate-900">
-                  <span>Tổng tiền phiếu:</span>
-                  <span className="text-indigo-700 font-mono text-base">
-                    {calculateDocTotal().toLocaleString('vi-VN')} đ
-                  </span>
-                </div>
+                {/* Summary Totals */}
+                {docType === 'NHAP' ? (
+                  <div className="p-3 bg-slate-100 rounded-xl space-y-1.5 text-xs">
+                    <div className="flex justify-between items-center text-slate-600">
+                      <span>Tổng tiền hóa đơn theo NCC báo:</span>
+                      <span className="font-mono font-bold text-slate-800">
+                        {calculateDocTotals().totalReported.toLocaleString('vi-VN')} đ
+                      </span>
+                    </div>
+                    {calculateDocTotals().totalShortage > 0 && (
+                      <div className="flex justify-between items-center text-rose-700 font-bold bg-rose-50 p-1.5 rounded-lg border border-rose-200">
+                        <span className="flex items-center gap-1">
+                          <MinusCircle className="h-3.5 w-3.5 text-rose-600" />
+                          <span>Tự động giảm trừ công nợ do cân thiếu:</span>
+                        </span>
+                        <span className="font-mono text-rose-700 font-black">
+                          -{calculateDocTotals().totalShortage.toLocaleString('vi-VN')} đ
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex justify-between items-center pt-1 border-t border-slate-300 text-sm font-extrabold text-slate-900">
+                      <span className="text-indigo-900">
+                        Công nợ thực tế ghi nhận (Phải trả NCC):
+                      </span>
+                      <span className="text-indigo-700 font-mono text-base">
+                        {calculateDocTotals().finalPayable.toLocaleString('vi-VN')} đ
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex justify-end items-center gap-2 pt-2 text-sm font-extrabold text-slate-900">
+                    <span>Tổng tiền phiếu:</span>
+                    <span className="text-indigo-700 font-mono text-base">
+                      {calculateDocTotals().finalPayable.toLocaleString('vi-VN')} đ
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* UPLOAD ẢNH HÓA ĐƠN / CHỨNG TỪ */}
@@ -1861,29 +2382,110 @@ export const WarehouseModule: React.FC = () => {
                     <thead className="bg-slate-100 font-bold text-slate-600">
                       <tr>
                         <th className="p-2.5">Nguyên liệu</th>
-                        <th className="p-2.5">Mã Lô</th>
-                        <th className="p-2.5">Số lượng</th>
-                        <th className="p-2.5">Đơn giá</th>
+                        {viewingDoc.docType === 'NHAP' ? (
+                          <>
+                            <th className="p-2.5 text-right">NCC Báo</th>
+                            <th className="p-2.5 text-right">Thực Cân</th>
+                            <th className="p-2.5 text-right text-rose-600">Lệch (kg)</th>
+                          </>
+                        ) : (
+                          <th className="p-2.5">Số lượng</th>
+                        )}
+                        <th className="p-2.5 text-right">Đơn giá</th>
                         <th className="p-2.5 text-right">Thành tiền</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {(viewingDoc.items || []).map((it, idx) => (
-                        <tr key={idx}>
-                          <td className="p-2.5 font-bold text-slate-800">{it.itemName || it.itemCode}</td>
-                          <td className="p-2.5 font-mono text-indigo-600 font-semibold">{it.batchCode || '--'}</td>
-                          <td className="p-2.5 font-mono">
-                            {it.quantity} {it.unit || 'kg'}
-                          </td>
-                          <td className="p-2.5 font-mono">{Number(it.unitPrice).toLocaleString('vi-VN')} đ</td>
-                          <td className="p-2.5 font-mono font-bold text-right">
-                            {(it.quantity * it.unitPrice).toLocaleString('vi-VN')} đ
-                          </td>
-                        </tr>
-                      ))}
+                      {(viewingDoc.items || []).map((it, idx) => {
+                        const rep = it.supplierReportedWeight ?? it.quantity;
+                        const act = it.actualWeight ?? it.quantity;
+                        const diff =
+                          it.weightDiff !== undefined
+                            ? it.weightDiff
+                            : Number((act - rep).toFixed(2));
+                        const shortage =
+                          it.shortageAmount !== undefined
+                            ? it.shortageAmount
+                            : diff < 0
+                            ? Math.round(Math.abs(diff) * it.unitPrice)
+                            : 0;
+
+                        return (
+                          <tr key={idx}>
+                            <td className="p-2.5 font-bold text-slate-800">
+                              {it.itemName || it.itemCode}
+                              <div className="text-[10px] text-slate-400 font-mono">
+                                {it.batchCode || '--'}
+                              </div>
+                            </td>
+                            {viewingDoc.docType === 'NHAP' ? (
+                              <>
+                                <td className="p-2.5 font-mono text-right text-slate-600">
+                                  {rep} {it.unit || 'kg'}
+                                </td>
+                                <td className="p-2.5 font-mono font-bold text-right text-blue-700">
+                                  {act} {it.unit || 'kg'}
+                                </td>
+                                <td
+                                  className={`p-2.5 font-mono font-bold text-right ${
+                                    diff < 0 ? 'text-rose-600' : 'text-emerald-600'
+                                  }`}
+                                >
+                                  {diff !== 0 ? (diff > 0 ? `+${diff}` : `${diff}`) : '0.0'} kg
+                                  {diff < 0 && (
+                                    <div className="text-[10px] text-rose-500 font-normal">
+                                      -{(shortage || 0).toLocaleString('vi-VN')} đ
+                                    </div>
+                                  )}
+                                </td>
+                              </>
+                            ) : (
+                              <td className="p-2.5 font-mono">
+                                {it.quantity} {it.unit || 'kg'}
+                              </td>
+                            )}
+                            <td className="p-2.5 font-mono text-right">
+                              {Number(it.unitPrice).toLocaleString('vi-VN')} đ
+                            </td>
+                            <td className="p-2.5 font-mono font-bold text-right text-indigo-900">
+                              {(act * it.unitPrice).toLocaleString('vi-VN')} đ
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
+
+                {viewingDoc.docType === 'NHAP' && viewingDoc.totalShortageAmount ? (
+                  <div className="mt-2.5 p-3 bg-slate-50 rounded-xl space-y-1 text-xs border border-slate-200">
+                    <div className="flex justify-between text-slate-600">
+                      <span>Tổng tiền hóa đơn NCC báo:</span>
+                      <span className="font-mono font-bold">
+                        {(viewingDoc.totalReportedAmount || viewingDoc.totalAmount).toLocaleString(
+                          'vi-VN'
+                        )}{' '}
+                        đ
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-rose-600 font-bold">
+                      <span>Giảm trừ do cân thiếu:</span>
+                      <span className="font-mono">
+                        -{viewingDoc.totalShortageAmount.toLocaleString('vi-VN')} đ
+                      </span>
+                    </div>
+                    <div className="flex justify-between pt-1 border-t border-slate-200 text-sm font-extrabold text-slate-900">
+                      <span className="text-indigo-900">Công nợ thực trả phiếu này:</span>
+                      <span className="font-mono text-indigo-700 font-black">
+                        {(
+                          viewingDoc.finalPayableAmount ||
+                          viewingDoc.totalAmount - (viewingDoc.totalShortageAmount || 0)
+                        ).toLocaleString('vi-VN')}{' '}
+                        đ
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
               </div>
 
               {/* Invoice Photos */}
@@ -2096,11 +2698,22 @@ export const WarehouseModule: React.FC = () => {
                             <td className="p-2.5">
                               <input
                                 type="number"
-                                step="0.1"
+                                step="any"
+                                min="0"
                                 value={row.actualStock}
-                                onChange={(e) =>
-                                  handleActualStockChange(idx, parseFloat(e.target.value) || 0)
-                                }
+                                onChange={(e) => {
+                                  const val = e.target.value.replace(',', '.');
+                                  handleActualStockChange(idx, parseFloat(val) || 0);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === ',') {
+                                    e.preventDefault();
+                                    const cur = String(row.actualStock ?? '');
+                                    if (!cur.includes('.')) {
+                                      handleActualStockChange(idx, ((cur ? cur : '0') + '.') as any);
+                                    }
+                                  }
+                                }}
                                 className="w-24 h-9 px-2 rounded-lg border border-slate-300 font-mono font-extrabold text-sm focus:ring-2 focus:ring-amber-500"
                               />
                             </td>

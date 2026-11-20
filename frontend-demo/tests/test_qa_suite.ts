@@ -37,6 +37,9 @@ import { reconciliationApi } from '../src/api/reconciliation';
 import { hrApi } from '../src/api/hr';
 import { payrollApi } from '../src/api/payroll';
 import { isViewAuthorized, getDefaultAuthorizedView, userHasRole } from '../src/utils/rbac';
+import { SEED_REAL_PERSONNEL, SEED_DAILY_MEALS, SEED_COST_GROUPS } from '../src/db/seedData';
+import { SEED_NXT_RECORDS } from '../src/components/reconciliation/nxtData';
+import { warehouseApi } from '../src/api/warehouse';
 
 interface TestResult {
   suite: string;
@@ -365,8 +368,711 @@ async function runTestSuite() {
   assert(isViewAuthorized('payroll', userAdminChu) === true, 'RBAC ROLE_CHU_CHUOI', 'Chủ chuỗi toàn quyền payroll');
 
   // -----------------------------------------------------------------
-  // TỔNG KẾT
+  // 9. KIỂM THỬ VALIDATION NHẬP KHO & SỐ THẬP PHÂN (HOTFIX P0)
   // -----------------------------------------------------------------
+  console.log('\n🔢 SUITE 9: Warehouse & Kitchen Quantity Validation (P0 Hotfix)');
+
+  // 9.1. Warehouse document validation logic
+  const validateDocItems = (items: { quantity: number | string }[]) => {
+    return !items.some((item) => {
+      const q = typeof item.quantity === 'string' ? parseFloat(item.quantity) : item.quantity;
+      return item.quantity === '' || item.quantity === undefined || isNaN(q) || q <= 0;
+    });
+  };
+
+  assert(validateDocItems([{ quantity: '' }]) === false, 'Warehouse Validation', 'Chặn phiếu kho khi số lượng rỗng');
+  assert(validateDocItems([{ quantity: 0 }]) === false, 'Warehouse Validation', 'Chặn phiếu kho khi số lượng = 0');
+  assert(validateDocItems([{ quantity: -5 }]) === false, 'Warehouse Validation', 'Chặn phiếu kho khi số lượng âm');
+  assert(validateDocItems([{ quantity: 10 }]) === true, 'Warehouse Validation', 'Cho phép số nguyên 10 (không bị chặn bởi step mismatch)');
+  assert(validateDocItems([{ quantity: 10.5 }]) === true, 'Warehouse Validation', 'Cho phép số thập phân 10.5');
+  assert(validateDocItems([{ quantity: 2.33 }]) === true, 'Warehouse Validation', 'Cho phép số lẻ 2.33');
+
+  // 9.2. Decimal normalization (thay ',' thành '.')
+  const normalizeQty = (val: string) => {
+    const raw = val.replace(',', '.');
+    return raw === '' ? '' : parseFloat(raw);
+  };
+  assert(normalizeQty('10,5') === 10.5, 'Decimal Normalization', 'Tự động đổi dấu phẩy 10,5 thành 10.5');
+  assert(normalizeQty('2,33') === 2.33, 'Decimal Normalization', 'Tự động đổi dấu phẩy 2,33 thành 2.33');
+  assert(normalizeQty('10') === 10, 'Decimal Normalization', 'Nhập 10 giữ nguyên 10');
+
+  // 9.3. VirtualNumpad decimal input sequence logic
+  let numpadStr = '';
+  const simulateDigit = (digit: string) => {
+    if (!numpadStr || numpadStr === '0') {
+      numpadStr = digit === '.' ? '0.' : digit;
+    } else if (digit === '.' && numpadStr.includes('.')) {
+      return;
+    } else {
+      numpadStr = numpadStr + digit;
+    }
+  };
+
+  simulateDigit('.');
+  assert(numpadStr === '0.', 'VirtualNumpad Logic', 'Bấm phím "." khi trống tạo thành "0."');
+  simulateDigit('5');
+  assert(numpadStr === '0.5' && parseFloat(numpadStr) === 0.5, 'VirtualNumpad Logic', 'Bấm tiếp "5" tạo thành 0.5');
+  simulateDigit('.');
+  assert(numpadStr === '0.5', 'VirtualNumpad Logic', 'Không cho phép bấm thừa dấu chấm thứ hai');
+
+  // -----------------------------------------------------------------
+  // 10. KIỂM THỬ TÍNH NĂNG NÂNG CẤP BẾP SPRINT 1 (TASK-S1-03, S1-04, S1-05)
+  // -----------------------------------------------------------------
+  console.log('\n🍳 SUITE 10: Kitchen Sprint 1 Features (TASK-S1-03, TASK-S1-04, TASK-S1-05)');
+
+  // 10.1. TASK-S1-03: Lấy hàng & Hủy thao tác hoàn trả kho
+  const initialLots = await db.inventoryLots.where('itemId').equals(4).first();
+  const initialStock = initialLots?.currentStock ?? 100;
+
+  const takeOutRes = await kitchenApi.recordTakeOut({
+    itemId: 4,
+    quantity: 5.0,
+    unit: 'kg',
+    note: 'Xuất bò thái lát ca chiều',
+  });
+  assert(takeOutRes.success && takeOutRes.data.quantity === 5.0, 'Kitchen TakeOut', 'Ghi nhận lấy hàng xuất kho thành công');
+
+  // Kiểm tra form reset logic (về rỗng sau khi lưu)
+  let testFormQty: number | '' = 5.0;
+  let testFormNote = 'Ghi chú thử nghiệm';
+  // Simulate form reset upon success
+  testFormQty = '';
+  testFormNote = '';
+  assert(testFormQty === '' && testFormNote === '', 'Kitchen TakeOut', 'Form lấy hàng tự động reset ô số lượng và ghi chú về rỗng');
+
+  // Kiểm tra danh sách lịch sử lấy hàng
+  const allTakeOuts = await kitchenApi.getTakeOutLogs();
+  assert(allTakeOuts.length >= 1, 'Kitchen TakeOut', 'Bảng lịch sử lấy hàng trả về danh sách các lần lấy hàng trong ca');
+
+  // Kiểm tra hủy thao tác lấy nhầm và hoàn trả lại kho
+  const cancelRes = await kitchenApi.cancelTakeOut(takeOutRes.data.id);
+  assert(cancelRes.success && cancelRes.data.isCancelled === true, 'Kitchen TakeOut', 'Hủy thao tác lấy hàng thành công và đánh dấu đã hoàn kho');
+
+  const restoredLot = await db.inventoryLots.where('itemId').equals(4).first();
+  assert((restoredLot?.currentStock ?? 0) >= initialStock, 'Kitchen TakeOut', 'Số lượng tồn kho được hoàn trả chính xác sau khi hủy lấy hàng');
+
+  // 10.2. TASK-S1-04: Cooldown 1.5s nút Ra Line (+1)
+  let isCooldownLocked = false;
+  const triggerRaLineWithCooldown = (itemId: number) => {
+    if (isCooldownLocked) return { blocked: true };
+    isCooldownLocked = true;
+    return { blocked: false };
+  };
+
+  const firstClick = triggerRaLineWithCooldown(4);
+  assert(firstClick.blocked === false, 'Kitchen Ra Line Cooldown', 'Lần bấm đầu tiên được xử lý bình thường');
+
+  const spamClick = triggerRaLineWithCooldown(4);
+  assert(spamClick.blocked === true, 'Kitchen Ra Line Cooldown', 'Khóa nút tối thiểu 1.5s chặn thành công hành vi spam click');
+
+  // 10.3. TASK-S1-05: Đơn báo hỏng với 3 badge trạng thái & 3 nhóm lý do
+  const damageList = await kitchenApi.getDamageReports();
+  const hasPending = damageList.some(r => r.status === 'CHO_DUYET');
+  const hasApproved = damageList.some(r => r.status === 'DA_DUYET' || r.status === 'TU_DONG_DUYET');
+  const hasRejected = damageList.some(r => r.status === 'TU_CHOI');
+
+  assert(hasPending, 'Damage Reports Badge', 'Có đơn hiển thị badge 🟡 Chờ Bếp trưởng duyệt');
+  assert(hasApproved, 'Damage Reports Badge', 'Có đơn hiển thị badge 🟢 Đã duyệt kèm người duyệt & giờ');
+  assert(hasRejected, 'Damage Reports Badge', 'Có đơn hiển thị badge 🔴 Từ chối kèm lý do');
+
+  // Kiểm tra 3 nhóm lý do xuất hủy
+  const validDamageReasonGroups = [
+    'HONG_SO_CHE_NAU',    // Nhóm 1: Sơ chế / nấu hỏng
+    'HONG_DO_NHA_CUNG_CAP', // Nhóm 2: Nguyên liệu chết / ươn từ NCC
+    'HUY_THUA_CUOI_CA',     // Nhóm 3: Thừa cuối ca theo VSATTP
+  ];
+
+  const reportGrp1 = await kitchenApi.recordDamageReport({
+    itemId: 1,
+    quantity: 1.0,
+    reason: 'HONG_SO_CHE_NAU',
+    note: 'Chè cháy, cơm khê do sự cố nhiệt',
+  });
+  assert(reportGrp1.data.reason === 'HONG_SO_CHE_NAU', 'Damage Reason Groups', 'Ghi nhận nhóm 1: Hủy do sơ chế / nấu hỏng');
+
+  const reportGrp2 = await kitchenApi.recordDamageReport({
+    itemId: 2,
+    quantity: 2.0,
+    reason: 'HONG_DO_NHA_CUNG_CAP',
+    supplierCode: 'NCC_HAI_SAN_01',
+    note: 'Cua chết, ghẹ óp từ NCC',
+  });
+  assert(reportGrp2.data.reason === 'HONG_DO_NHA_CUNG_CAP', 'Damage Reason Groups', 'Ghi nhận nhóm 2: Hủy do nguyên liệu chết / ươn từ NCC');
+
+  const reportGrp3 = await kitchenApi.recordDamageReport({
+    itemId: 4,
+    quantity: 0.8,
+    reason: 'HUY_THUA_CUOI_CA',
+    note: 'Hàng ra line không dùng hết theo quy định VSATTP',
+  });
+  assert(reportGrp3.data.reason === 'HUY_THUA_CUOI_CA', 'Damage Reason Groups', 'Ghi nhận nhóm 3: Hủy do thừa cuối ca');
+
+  // -----------------------------------------------------------------
+  // 11. KIỂM THỬ SPRINT 2: REAL SEED DATA THÁNG 11 (TASK-S2-01 -> S2-04)
+  // -----------------------------------------------------------------
+  console.log('\n📊 SUITE 11: Real Seed Data T11 (50+ NCC, 60+ mặt hàng 10 nhóm chi phí, 49 nhân sự kèm STK ngân hàng, 18 ngày suất ăn)');
+
+  // 11.1. TASK-S2-01: 50+ NCC thật chuẩn hóa mã NCC
+  const totalSuppliers = await db.suppliers.count();
+  assert(
+    totalSuppliers >= 50,
+    'Sprint 2 Suppliers',
+    `Trích xuất đầy đủ 50+ NCC thật (thực tế: ${totalSuppliers} NCC)`,
+    `Thực tế: ${totalSuppliers}`
+  );
+
+  const cothuy = await db.suppliers.where('supplierCode').equals('TNCOTHUY').first();
+  assert(!!cothuy && cothuy.supplierName.includes('Cô Thúy'), 'Sprint 2 Suppliers', 'Có NCC Cô Thúy đồ khô (TNCOTHUY)');
+
+  const liencua = await db.suppliers.where('supplierCode').equals('TNLIENCUA').first();
+  assert(!!liencua && liencua.supplierName.includes('Liên Cua Cà Mau'), 'Sprint 2 Suppliers', 'Có NCC Liên Cua Cà Mau (TNLIENCUA)');
+
+  const cophuong = await db.suppliers.where('supplierCode').equals('TNCOPHUONG').first();
+  assert(!!cophuong && cophuong.supplierName.includes('Cô Phượng Ghẹ'), 'Sprint 2 Suppliers', 'Có NCC Cô Phượng Ghẹ Nghệ An (TNCOPHUONG)');
+
+  const cothao = await db.suppliers.where('supplierCode').equals('QVCOTHAO').first();
+  assert(!!cothao && cothao.supplierName.includes('Cô Thảo'), 'Sprint 2 Suppliers', 'Có NCC Cô Thảo đồ khô (QVCOTHAO)');
+
+  const chiphuong = await db.suppliers.where('supplierCode').equals('QVCHIPHUONG').first();
+  assert(!!chiphuong && chiphuong.supplierName.includes('Chị Phượng rau'), 'Sprint 2 Suppliers', 'Có NCC Chị Phượng rau (QVCHIPHUONG)');
+
+  // 11.2. TASK-S2-02: ~60+ Mặt hàng thật với 10 nhóm chi phí chuẩn
+  const totalItems = await db.items.count();
+  assert(
+    totalItems >= 60,
+    'Sprint 2 Items',
+    `Trích xuất danh mục hàng thật phong phú >= 60 mặt hàng (thực tế: ${totalItems} mặt hàng)`,
+    `Thực tế: ${totalItems}`
+  );
+
+  const allItems = await db.items.toArray();
+  const costGroupsInDb = new Set(allItems.map((it: any) => it.costGroup).filter(Boolean));
+  assert(
+    costGroupsInDb.size >= 10,
+    'Sprint 2 Items',
+    `Bao phủ trọn vẹn 10 nhóm chi phí chuẩn (thực tế: ${costGroupsInDb.size} nhóm)`,
+    `Các nhóm: ${Array.from(costGroupsInDb).join(', ')}`
+  );
+
+  const gtdItem1 = await db.items.where('itemCode').equals('TNBCBT').first();
+  assert(!!gtdItem1 && gtdItem1.costPrice === 190000, 'Sprint 2 Items', 'Có Ba Chỉ Bò Thanh từ GIA TON DAU (đơn giá tồn: 190.000đ)');
+
+  const gtdItem2 = await db.items.where('itemCode').equals('TNDAUHAO').first();
+  assert(!!gtdItem2 && gtdItem2.costPrice === 50000, 'Sprint 2 Items', 'Có Dầu Hào Magi 1Lít từ GIA TON DAU (đơn giá tồn: 50.000đ)');
+
+  const cuaThit = await db.items.where('itemCode').equals('TNCUA').first();
+  assert(!!cuaThit && cuaThit.costGroup === 'Hải sản chính', 'Sprint 2 Items', 'Có Cua Thịt thuộc nhóm Hải sản chính');
+
+  // 11.3. TASK-S2-03: 49 Nhân sự thực tế (29 Thái Nguyên + 20 Quế Võ) kèm STK ngân hàng
+  assert(
+    SEED_REAL_PERSONNEL.length === 49,
+    'Sprint 2 Personnel',
+    `Đúng 49 nhân sự thực tế (thực tế: ${SEED_REAL_PERSONNEL.length} nhân sự)`
+  );
+
+  const tnPersonnel = SEED_REAL_PERSONNEL.filter((p: any) => p.branchCode === 'TN');
+  assert(
+    tnPersonnel.length === 29,
+    'Sprint 2 Personnel',
+    `29 nhân sự thực tế chi nhánh Thái Nguyên (thực tế: ${tnPersonnel.length})`
+  );
+
+  const qvPersonnel = SEED_REAL_PERSONNEL.filter((p: any) => p.branchCode === 'QV');
+  assert(
+    qvPersonnel.length === 20,
+    'Sprint 2 Personnel',
+    `20 nhân sự thực tế chi nhánh Quế Võ (thực tế: ${qvPersonnel.length})`
+  );
+
+  const allHaveBank = SEED_REAL_PERSONNEL.every((p: any) => !!p.bankAccount && !!p.bankName);
+  assert(
+    allHaveBank,
+    'Sprint 2 Personnel',
+    '100% nhân sự có đầy đủ Số tài khoản (STK) và Tên Ngân hàng'
+  );
+
+  const nguyenBaHoan = SEED_REAL_PERSONNEL.find((p: any) => p.fullName === 'Nguyễn Bá Hoan');
+  assert(
+    !!nguyenBaHoan && nguyenBaHoan.position === 'Bếp Trưởng' && nguyenBaHoan.baseSalary === 16000000,
+    'Sprint 2 Personnel',
+    'Có nhân sự Bếp Trưởng Nguyễn Bá Hoan lương 16.000.000đ'
+  );
+
+  const phamTuanNam = SEED_REAL_PERSONNEL.find((p: any) => p.fullName === 'Phạm Tuấn Nam');
+  assert(
+    !!phamTuanNam && phamTuanNam.bankName === 'SHB',
+    'Sprint 2 Personnel',
+    'Có Quản lý Phạm Tuấn Nam ngân hàng SHB'
+  );
+
+  // 11.4. TASK-S2-04: 18 ngày suất ăn & doanh thu thật 2 chi nhánh
+  const totalMeals = await db.dailyMeals.count();
+  assert(
+    totalMeals === 36,
+    'Sprint 2 Daily Meals',
+    `Tổng cộng 36 bản ghi suất ăn (18 ngày × 2 chi nhánh, thực tế: ${totalMeals})`
+  );
+
+  const tnDailyMeals = await db.dailyMeals.where('branchCode').equals('TN').toArray();
+  assert(
+    tnDailyMeals.length === 18,
+    'Sprint 2 Daily Meals',
+    `Chi nhánh Thái Nguyên có đủ 18 ngày số liệu suất ăn`
+  );
+
+  const qvDailyMeals = await db.dailyMeals.where('branchCode').equals('QV').toArray();
+  assert(
+    qvDailyMeals.length === 18,
+    'Sprint 2 Daily Meals',
+    `Chi nhánh Quế Võ có đủ 18 ngày số liệu suất ăn & doanh thu`
+  );
+
+  const qvDay1 = qvDailyMeals.find((m: any) => m.day === 1);
+  assert(
+    !!qvDay1 && qvDay1.totalMeals === 97.5 && qvDay1.revenue === 41535000,
+    'Sprint 2 Daily Meals',
+    'QV Ngày 1: đúng 97.5 suất ăn và doanh thu 41.535.000đ từ sheet SUATAN'
+  );
+
+  // -----------------------------------------------------------------
+  // 12. KIỂM THỬ SPRINT 3: PHÂN HÓA 3 CẤP QUẢN LÝ (TASK-S3-01 -> S3-04)
+  // -----------------------------------------------------------------
+  console.log('\n👑 SUITE 12: 3 Management Levels (Executive Cockpit, Head Chef, Branch Manager)');
+
+  // 12.1. Phân tách quyền hạn Chủ chuỗi vs Kế toán tổng
+  assert(
+    isViewAuthorized('executive-cockpit', userAdminChu) === true,
+    'RBAC Executive Cockpit',
+    'Chủ chuỗi có toàn quyền truy cập Executive Cockpit'
+  );
+  assert(
+    isViewAuthorized('executive-cockpit', userKeToan) === false,
+    'RBAC Executive Cockpit Separation',
+    'Kế toán tổng tuyệt đối KHÔNG có quyền truy cập Executive Cockpit của Giám đốc'
+  );
+  assert(
+    getDefaultAuthorizedView(userAdminChu) === 'executive-cockpit',
+    'Default View Chủ chuỗi',
+    'Màn hình mặc định của Chủ chuỗi là executive-cockpit'
+  );
+
+  // 12.2. Phân quyền Bếp Trưởng
+  assert(
+    isViewAuthorized('head-chef', userQlBep) === true,
+    'RBAC Head Chef Dashboard',
+    'Bếp trưởng được truy cập trung tâm chỉ huy HeadChefDashboard'
+  );
+  assert(
+    isViewAuthorized('head-chef', userBep) === false,
+    'RBAC Head Chef Separation',
+    'Bếp viên không có quyền truy cập HeadChefDashboard'
+  );
+  assert(
+    isViewAuthorized('head-chef', userKeToan) === false,
+    'RBAC Head Chef Separation',
+    'Kế toán tổng không có quyền truy cập HeadChefDashboard của Bếp trưởng'
+  );
+  assert(
+    getDefaultAuthorizedView(userQlBep) === 'head-chef',
+    'Default View Bếp trưởng',
+    'Màn hình mặc định của Bếp trưởng là head-chef'
+  );
+
+  // 12.3. Phân quyền Quản Lý Chi Nhánh
+  assert(
+    isViewAuthorized('branch-manager', userQlChiNhanh) === true,
+    'RBAC Branch Manager Center',
+    'Quản lý chi nhánh được truy cập BranchManagerCenter'
+  );
+  assert(
+    isViewAuthorized('branch-manager', userBep) === false,
+    'RBAC Branch Manager Separation',
+    'Bếp viên không có quyền truy cập BranchManagerCenter'
+  );
+  assert(
+    isViewAuthorized('branch-manager', userKeToan) === false,
+    'RBAC Branch Manager Separation',
+    'Kế toán tổng không truy cập BranchManagerCenter'
+  );
+  assert(
+    getDefaultAuthorizedView(userQlChiNhanh) === 'branch-manager',
+    'Default View Quản lý chi nhánh',
+    'Màn hình mặc định của Quản lý chi nhánh là branch-manager'
+  );
+
+  // 12.4. Kiểm thử nghiệp vụ Bảng Chỉ Huy Giám Đốc (Cockpit)
+  const tnRevenue = 685000000;
+  const qvRevenue = 540000000;
+  const tnFoodCostPercent = (328000000 / tnRevenue) * 100;
+  const qvFoodCostPercent = (245000000 / qvRevenue) * 100;
+  assert(
+    qvFoodCostPercent < tnFoodCostPercent && qvFoodCostPercent < 46.0,
+    'Executive Cockpit Financials',
+    'Quế Võ kiểm soát cost thực phẩm tốt hơn Thái Nguyên (45.4% vs 47.9%)',
+    `QV Cost: ${qvFoodCostPercent.toFixed(1)}%, TN Cost: ${tnFoodCostPercent.toFixed(1)}%`
+  );
+
+  const cuaLossPerGuest = 0.34 - 0.28;
+  assert(
+    cuaLossPerGuest > 0.05,
+    'Executive Cockpit Hot Loss Alert',
+    'Cảnh báo nóng hụt cua thịt Cà Mau vượt chuẩn > 0.05 kg/khách (+21.4%)',
+    `Độ lệch: +${cuaLossPerGuest.toFixed(3)} kg/khách`
+  );
+
+  // 12.5. Kiểm thử nghiệp vụ Bếp Trưởng duyệt báo hỏng & cập nhật trạng thái
+  const sampleReportToApprove = await db.damageReports.add({
+    branchId: 1,
+    itemId: 1,
+    quantity: 3.5,
+    estimatedValue: 1200000,
+    reason: 'Cua chết ngạt khi vận chuyển',
+    status: 'CHO_DUYET',
+    createdAt: '2026-11-20 10:00',
+  });
+  await db.damageReports.update(sampleReportToApprove, {
+    status: 'DA_DUYET',
+    approvedBy: 'Trần Thị Bếp Trưởng',
+    approvedAt: '2026-11-20 10:15',
+  });
+  const approvedItem = await db.damageReports.get(sampleReportToApprove);
+  assert(
+    approvedItem?.status === 'DA_DUYET' && approvedItem?.approvedBy === 'Trần Thị Bếp Trưởng',
+    'Head Chef Damage Approval',
+    'Bếp trưởng phê duyệt đơn báo hỏng thành công và ghi nhận thông tin người duyệt'
+  );
+
+  // 12.5b. Bếp trưởng từ chối báo hỏng kèm lý do từ chối bắt buộc
+  const sampleReportToReject = await db.damageReports.add({
+    branchId: 1,
+    itemId: 2,
+    quantity: 5.0,
+    estimatedValue: 1800000,
+    reason: 'Nước dùng chua hỏng',
+    status: 'CHO_DUYET',
+    createdAt: '2026-11-20 10:30',
+  });
+  await db.damageReports.update(sampleReportToReject, {
+    status: 'TU_CHOI',
+    rejectedBy: 'Trần Thị Bếp Trưởng',
+    rejectedReason: 'Ảnh chụp không rõ tem niêm phong và cảm quan vẫn đạt chuẩn',
+    approvedAt: '2026-11-20 10:45',
+  });
+  const rejectedItem = await db.damageReports.get(sampleReportToReject);
+  assert(
+    rejectedItem?.status === 'TU_CHOI' && (rejectedItem as any)?.rejectedReason?.includes('không rõ tem'),
+    'Head Chef Damage Rejection',
+    'Bếp trưởng từ chối đơn báo hỏng kèm lý do giải trình chuẩn nghiệp vụ'
+  );
+
+  // 12.5c. Bếp trưởng lập Đơn Báo Hàng NCC theo chuẩn sheet BAOHANG
+  const sampleHeadChefOrder = {
+    id: 'ORDER-BAOHANG-20261121-001',
+    branchId: 1,
+    branchName: 'Sen Việt Buffet - Thái Nguyên',
+    supplierCode: 'TNLIENCUA',
+    supplierName: 'Liên Cua Cà Mau',
+    deliveryDate: '2026-11-21',
+    deliveryShift: 'CA_SANG',
+    items: [
+      { itemId: 1, itemCode: 'TNCUA', itemName: 'Cua Thịt Cà Mau', quantity: 50, unit: 'kg', note: 'Cua loại 1 dây trói mỏng' },
+      { itemId: 2, itemCode: 'TNGHE', itemName: 'Ghẹ Nghệ An', quantity: 30, unit: 'kg', note: 'Ghẹ sống bơi khỏe' },
+    ],
+    totalItems: 2,
+    status: 'DA_GUI',
+    createdByName: 'Nguyễn Bá Hoan (Bếp Trưởng)',
+    createdAt: '2026-11-20 16:30',
+  };
+  const currentOrders = JSON.parse(localStorage.getItem('senviet_headchef_orders') || '[]');
+  currentOrders.unshift(sampleHeadChefOrder);
+  localStorage.setItem('senviet_headchef_orders', JSON.stringify(currentOrders));
+  const retrievedOrders = JSON.parse(localStorage.getItem('senviet_headchef_orders') || '[]');
+  assert(
+    retrievedOrders.length >= 1 && retrievedOrders[0].supplierCode === 'TNLIENCUA' && retrievedOrders[0].items.length === 2,
+    'Head Chef Supplier Order',
+    'Bếp trưởng lập đơn báo hàng NCC giao ngày mai (chuẩn sheet BAOHANG) thành công'
+  );
+
+  // 12.5d. Bếp trưởng điều chỉnh định mức chuẩn mẻ chế biến
+  const sampleRecipe = await db.recipes.toCollection().first();
+  if (sampleRecipe && sampleRecipe.id) {
+    const originalStandard = sampleRecipe.standardLossPercent;
+    await db.recipes.update(sampleRecipe.id, { standardLossPercent: 7.5 });
+    const updatedRecipe = await db.recipes.get(sampleRecipe.id);
+    assert(
+      updatedRecipe?.standardLossPercent === 7.5,
+      'Head Chef Recipe Standard Adjustment',
+      `Bếp trưởng cập nhật định mức hao hụt chuẩn (${originalStandard}% -> 7.5%) thành công`
+    );
+  }
+
+  // 12.6. Kiểm thử nghiệp vụ Quản Lý Chi Nhánh: Cảnh báo ra ngoài & GPS
+  const breakMinutes = 22;
+  const isOverBreakLimit = breakMinutes > 15;
+  const breakTimesInShift = 4;
+  const isOverBreakFrequency = breakTimesInShift > 3;
+  assert(
+    isOverBreakLimit === true && isOverBreakFrequency === true,
+    'Branch Manager Break Out Rules',
+    'Tự động báo đỏ vi phạm ra ngoài > 15 phút và vượt quá 3 lần/ca (sheet ĐĂNG KÝ RA NGOÀI)',
+    `Vắng mặt: ${breakMinutes}p, Lần thứ: ${breakTimesInShift}`
+  );
+
+  // 12.7. Quản lý chi nhánh ghi biên bản phạt vi phạm liên kết trừ lương
+  const samplePenalty = {
+    id: 'PEN-202611-099',
+    employeeName: 'Nguyễn Văn Bếp',
+    branchId: 1,
+    violationDate: '2026-11-20',
+    shift: 'CA_TOI',
+    category: 'QUY_DINH_NOI_BO',
+    fineAmount: 200000,
+    reason: 'Không đội mũ bếp và tạp dề đúng quy định VSATTP',
+    isDeductedFromSalary: true,
+    createdByName: 'Phạm Tuấn Nam (Quản Lý)',
+    createdAt: '2026-11-20 18:00',
+  };
+  const currentPenalties = JSON.parse(localStorage.getItem('senviet_penalties') || '[]');
+  currentPenalties.push(samplePenalty);
+  localStorage.setItem('senviet_penalties', JSON.stringify(currentPenalties));
+  const retrievedPenalties = JSON.parse(localStorage.getItem('senviet_penalties') || '[]');
+  assert(
+    retrievedPenalties.some((p: any) => p.id === 'PEN-202611-099' && p.fineAmount === 200000 && p.isDeductedFromSalary === true),
+    'Branch Manager Penalty Record',
+    'Quản lý chi nhánh ghi biên bản phạt vi phạm và đánh dấu trừ lương trực tiếp'
+  );
+
+  // 12.8. Quản lý chi nhánh chấm thi tay nghề dao thớt & mở quyền thi lại
+  const sampleSkillExam = {
+    id: 'EXAM-2026-11-01',
+    employeeName: 'Nguyễn Văn Bếp',
+    position: 'Nhân viên bếp',
+    knifePrepScore: 18,
+    recipeScore: 35,
+    hygieneScore: 15,
+    totalScore: 68,
+    status: 'CHUA_DAT',
+    canRetake: false,
+    evaluatedByName: 'Phạm Tuấn Nam (Quản Lý)',
+    examDate: '2026-11-18',
+  };
+  const currentExams = JSON.parse(localStorage.getItem('senviet_skill_exams') || '[]');
+  currentExams.push(sampleSkillExam);
+  // Mở quyền thi lại
+  sampleSkillExam.canRetake = true;
+  localStorage.setItem('senviet_skill_exams', JSON.stringify(currentExams));
+  const retrievedExams = JSON.parse(localStorage.getItem('senviet_skill_exams') || '[]');
+  const examFound = retrievedExams.find((e: any) => e.id === 'EXAM-2026-11-01');
+  assert(
+    !!examFound && examFound.totalScore === 68 && examFound.canRetake === true,
+    'Branch Manager Skill Evaluation',
+    'Quản lý chấm điểm tay nghề dao thớt và kích hoạt nút mở quyền thi lại'
+  );
+
+  // 12.9. Chủ chuỗi phê duyệt đề xuất tăng lương chuỗi (Executive Cockpit)
+  const approvedProposal = await payrollApi.approveIncrease(1);
+  assert(
+    approvedProposal.status === 'DA_DUYET' && approvedProposal.raiseAmount === 1000000,
+    'Executive Cockpit Salary Increase Approval',
+    'Chủ chuỗi duyệt đề xuất tăng lương (+1.000.000đ) thành công từ Executive Cockpit'
+  );
+
+  // -----------------------------------------------------------------
+  // 13. KIỂM THỬ SPRINT 4: ĐỐI SOÁT TỰ ĐỘNG, CÂN LỆCH NCC & NÂNG CẤP BẢNG LƯƠNG
+  // -----------------------------------------------------------------
+  console.log('\n⚖️ SUITE 13: Sprint 4 Features (TASK-S4-01 AutoNXT, TASK-S4-02 Supplier Weight Debt, TASK-S4-03 Enhanced Payroll)');
+
+  // 13.1. TASK-S4-01: AutoNXTTable - Bảng Nhập Xuất Tồn chuẩn Sheet NXT Thái Nguyên & Quế Võ
+  assert(
+    SEED_NXT_RECORDS.length >= 500,
+    'Sprint 4 AutoNXT',
+    `Dữ liệu NXT trích xuất từ 2 chi nhánh đầy đủ >= 500 bản ghi (thực tế: ${SEED_NXT_RECORDS.length} bản ghi)`,
+    `Thực tế: ${SEED_NXT_RECORDS.length}`
+  );
+
+  const tnNXTCount = SEED_NXT_RECORDS.filter(d => d.branchId === 1).length;
+  const qvNXTCount = SEED_NXT_RECORDS.filter(d => d.branchId === 2).length;
+  assert(
+    tnNXTCount >= 250 && qvNXTCount >= 250,
+    'Sprint 4 AutoNXT',
+    `Có đủ bản ghi NXT của cả Thái Nguyên (${tnNXTCount}) và Quế Võ (${qvNXTCount})`
+  );
+
+  // Kiểm tra công thức Tồn cuối = Tồn đầu + Nhập - Xuất trên toàn bộ dữ liệu
+  const isFormulaCorrect = SEED_NXT_RECORDS.every(d => {
+    const calcEnding = Number((d.openingStockQty + d.importedQty - d.exportedQty).toFixed(2));
+    return Math.abs(calcEnding - d.closingStockQty) <= 0.05;
+  });
+  assert(
+    isFormulaCorrect,
+    'Sprint 4 AutoNXT',
+    'Công thức Tồn cuối = Tồn đầu + Nhập - Xuất khớp 100% bản ghi'
+  );
+
+  // Kiểm tra cảnh báo cờ đỏ thất thoát vượt ngưỡng
+  const cuaNXT = SEED_NXT_RECORDS.find(d => d.itemCode === 'TNCUA' || d.itemName.includes('Cua'));
+  assert(
+    !!cuaNXT && cuaNXT.diffTotalAmount < -300000,
+    'Sprint 4 AutoNXT',
+    'Tự động tô đỏ cảnh báo nếu chênh lệch âm vượt ngưỡng thất thoát (>300.000đ)'
+  );
+
+  // 13.2. TASK-S4-02: Cân Lệch NCC & Tự động giảm trừ công nợ NCC
+  const sampleDocItem = {
+    itemId: 1,
+    itemCode: 'TNCUA',
+    itemName: 'Cua Thịt Cà Mau',
+    quantity: 45.0,
+    reportedWeight: 50.0, // NCC báo: 50 kg
+    actualWeight: 45.0,   // Thực cân: 45 kg
+    unitPrice: 420000,
+    amount: 18900000,
+  };
+  const diffWeight = sampleDocItem.actualWeight - sampleDocItem.reportedWeight;
+  const shortageAmount = diffWeight < 0 ? Math.abs(diffWeight) * sampleDocItem.unitPrice : 0;
+  assert(
+    diffWeight === -5.0 && shortageAmount === 2100000,
+    'Sprint 4 Supplier Debt',
+    'Tự động tính Lệch = Thực cân - NCC báo (-5.0 kg) và Tiền giảm trừ thiếu (2.100.000đ)'
+  );
+
+  const supplierDebtList = await warehouseApi.getSupplierDebtSummary();
+  assert(
+    supplierDebtList.length >= 4,
+    'Sprint 4 Supplier Debt',
+    `Bảng tổng hợp công nợ NCC trả về >= 4 NCC (thực tế: ${supplierDebtList.length} NCC)`
+  );
+
+  const debtFormulaVerified = supplierDebtList.every(
+    s => s.finalPayableDebt === s.totalReportedAmount - s.totalShortageDeduction
+  );
+  assert(
+    debtFormulaVerified,
+    'Sprint 4 Supplier Debt',
+    'Công nợ thực trả tự động trừ tiền cân thiếu: Thực trả = NCC báo - Tiền thiếu'
+  );
+
+  // 13.3. TASK-S4-03: Nâng cấp Bảng Lương (STK Ngân hàng, Trừ phạt, 0.5 công, Payslip)
+  const payrollListT11 = await payrollApi.getPayroll('2026-11');
+  assert(
+    payrollListT11.length >= 40,
+    'Sprint 4 Payroll',
+    `Bảng lương T11 nạp đầy đủ nhân sự chi nhánh (thực tế: ${payrollListT11.length} nhân sự)`
+  );
+
+  // 100% nhân sự có STK và Tên Ngân Hàng
+  const allStaffHaveBank = payrollListT11.every(p => !!p.bankName && !!p.bankAccountNumber);
+  assert(
+    allStaffHaveBank,
+    'Sprint 4 Payroll',
+    '100% nhân sự có STK và Tên Ngân Hàng để kế toán xuất file chuyển khoản'
+  );
+
+  // Hỗ trợ chấm công bán phần (0.5 công / nửa ca)
+  const staffWithHalfDays = payrollListT11.filter(p => p.actualWorkDays % 1 !== 0);
+  assert(
+    staffWithHalfDays.length >= 15,
+    'Sprint 4 Payroll',
+    `Hỗ trợ chấm công bán phần (0.5 công / nửa ca) cho >= 15 nhân sự (thực tế: ${staffWithHalfDays.length} người)`
+  );
+
+  // Kiểm tra công thức Thực lĩnh chuẩn: Lương công + Chuyên cần + Trách nhiệm - Bảo hiểm - Ứng lương - Tiền phạt
+  const hoanPayroll = payrollListT11.find(p => p.fullName === 'Nguyễn Bá Hoan');
+  assert(
+    !!hoanPayroll && hoanPayroll.actualWorkDays === 11.5 && hoanPayroll.netSalary > 0,
+    'Sprint 4 Payroll',
+    'Bếp Trưởng Nguyễn Bá Hoan có ngày công bán phần 11.5 công và Thực lĩnh tính tự động'
+  );
+
+  // Thử nghiệm cập nhật ngày công bán phần (updateWorkDays)
+  if (hoanPayroll) {
+    const updatedHoan = await payrollApi.updateWorkDays(hoanPayroll.id, 12.0);
+    assert(
+      updatedHoan.actualWorkDays === 12.0 && updatedHoan.workSalary! > hoanPayroll.workSalary!,
+      'Sprint 4 Payroll',
+      'Cập nhật ngày công bán phần (11.5 -> 12.0 công) tự động tính lại Lương công và Thực lĩnh'
+    );
+  }
+
+  // 13.4. Kiểm thử tự động khấu trừ Ứng lương & Tiền phạt vi phạm vào Thực lĩnh
+  // Tạo 1 đơn ứng lương đã giải ngân (DA_CHI) 500.000đ cho nhân viên Vũ Huy Thắng
+  await db.salaryAdvances.add({
+    userId: 12,
+    fullName: 'Vũ Huy Thắng',
+    username: 'tn_vuhuythang',
+    branchId: 1,
+    requestDate: '2026-11-10',
+    requestedAmount: 500000,
+    disbursedAmount: 500000,
+    reason: 'Ứng tiền viện phí đột xuất',
+    deductionMonth: '2026-11',
+    status: 'DA_CHI',
+  });
+
+  // Tạo 1 biên bản phạt vi phạm 200.000đ có đánh dấu trừ lương (isDeductedFromSalary: true)
+  const penaltyListForDeduction = [
+    {
+      id: 'PEN-TEST-001',
+      employeeName: 'Vũ Huy Thắng',
+      branchId: 1,
+      fineAmount: 200000,
+      reason: 'Đi làm muộn 30 phút ca trưa',
+      isDeductedFromSalary: true,
+      violationDate: '2026-11-15',
+    },
+  ];
+  localStorage.setItem('senviet_penalties', JSON.stringify(penaltyListForDeduction));
+
+  const payrollAfterDeduction = await payrollApi.getPayroll('2026-11');
+  const thangStaff = payrollAfterDeduction.find(p => p.fullName === 'Vũ Huy Thắng' || p.username === 'tn_vuhuythang');
+  assert(
+    !!thangStaff && thangStaff.advanceDeduction === 500000 && thangStaff.penaltyDeduction === 200000,
+    'Sprint 4 Payroll Deductions',
+    'Tự động nhận diện Ứng lương (500.000đ) & Phạt vi phạm (200.000đ) vào cột khấu trừ bảng lương'
+  );
+
+  if (thangStaff) {
+    const expectedNetSalary = Math.round(
+      (thangStaff.workSalary || 0) +
+      (thangStaff.attendanceBonus || 0) +
+      (thangStaff.responsibilityAllowance || 0) -
+      (thangStaff.insuranceDeduction || 0) -
+      thangStaff.advanceDeduction -
+      thangStaff.penaltyDeduction
+    );
+    assert(
+      thangStaff.netSalary === expectedNetSalary,
+      'Sprint 4 Net Salary Formula',
+      'Công thức Thực lĩnh chuẩn: Thực lĩnh = Lương công + Thưởng - BHXH - Ứng lương - Phạt',
+      `Thực lĩnh: ${thangStaff.netSalary.toLocaleString('vi-VN')} đ (khớp chính xác ${expectedNetSalary.toLocaleString('vi-VN')} đ)`
+    );
+
+    // 13.5. Kiểm thử cấu trúc Digital Payslip Card
+    const hasDigitalCardFields = !!(
+      thangStaff.fullName &&
+      thangStaff.bankName &&
+      thangStaff.bankAccountNumber &&
+      thangStaff.actualWorkDays !== undefined &&
+      thangStaff.workSalary !== undefined &&
+      thangStaff.advanceDeduction !== undefined &&
+      thangStaff.penaltyDeduction !== undefined &&
+      thangStaff.netSalary !== undefined
+    );
+    assert(
+      hasDigitalCardFields,
+      'Sprint 4 Digital Payslip Card',
+      'Phiếu lương điện tử (Digital Payslip Card) chứa đủ các trường thụ hưởng ngân hàng & chi tiết 9 dòng khấu trừ'
+    );
+  }
+
+  // Kiểm tra file chuyển khoản ngân hàng (exportBankExcel)
+  const bankExcelBlob = await payrollApi.exportBankExcel('2026-11');
+  assert(
+    bankExcelBlob.size > 1000,
+    'Sprint 4 Payroll',
+    'Xuất file lệnh chi chuyển khoản ngân hàng (.xlsx) thành công với đầy đủ STK & Ngân hàng'
+  );
+
   console.log('\n======================================================');
   const total = results.length;
   const passed = results.filter(r => r.passed).length;

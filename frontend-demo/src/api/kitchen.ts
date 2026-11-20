@@ -46,10 +46,14 @@ export interface BatchResponse {
 
 export interface TakeOutLog {
   id: number;
+  itemId?: number;
   item: Item;
   quantity: number;
   unit: string;
   note?: string;
+  isCancelled?: boolean;
+  status?: 'ACTIVE' | 'CANCELLED';
+  cancelledAt?: string;
   createdAt: string;
 }
 
@@ -64,6 +68,9 @@ export interface DamageReport {
   imageUrls?: string;
   status: 'TU_DONG_DUYET' | 'CHO_DUYET' | 'DA_DUYET' | 'TU_CHOI';
   note?: string;
+  approvedBy?: string;
+  approvedAt?: string;
+  rejectedReason?: string;
   createdAt: string;
 }
 
@@ -160,6 +167,46 @@ export const kitchenApi = {
       success: true,
       message: `Đã xuất kho ${data.quantity} ${data.unit} [${item.itemName}] thành công`,
       data: newLog,
+    };
+  },
+
+  // Lấy lịch sử lấy hàng
+  getTakeOutLogs: async (): Promise<TakeOutLog[]> => {
+    await initializeDatabaseIfEmpty();
+    await simulateLatency(60, 100);
+    const logs = await db.takeOutLogs.toArray();
+    return logs.reverse();
+  },
+
+  // Hủy thao tác lấy hàng (hoàn trả lại kho)
+  cancelTakeOut: async (id: number) => {
+    await initializeDatabaseIfEmpty();
+    await simulateLatency(100, 140);
+    const log = await db.takeOutLogs.get(id);
+    if (!log) throw new Error('Không tìm thấy bản ghi lấy hàng');
+    if (log.isCancelled) throw new Error('Bản ghi lấy hàng này đã được hoàn trả trước đó');
+
+    const itemId = log.item?.id || log.itemId;
+    if (itemId) {
+      const lot = await db.inventoryLots.where('itemId').equals(itemId).first();
+      if (lot && lot.currentStock !== undefined) {
+        await db.inventoryLots.update(lot.id, { currentStock: lot.currentStock + log.quantity });
+      }
+    }
+
+    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    const updated = {
+      ...log,
+      isCancelled: true,
+      status: 'CANCELLED' as const,
+      cancelledAt: now,
+    };
+    await db.takeOutLogs.put(updated);
+
+    return {
+      success: true,
+      message: `Đã hủy thao tác lấy hàng và hoàn trả ${log.quantity} ${log.unit} vào kho`,
+      data: updated,
     };
   },
 

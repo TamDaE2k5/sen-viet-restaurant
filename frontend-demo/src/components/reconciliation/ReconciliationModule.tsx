@@ -26,12 +26,13 @@ import {
   SupplierLoss,
   CukCukImportResponse
 } from '../../api/reconciliation';
+import { AutoNXTTable } from './AutoNXTTable';
 
 export const ReconciliationModule: React.FC = () => {
   const { user } = useAuth();
   const { showError, showSuccess, showWarning } = useNotification();
 
-  const [activeTab, setActiveTab] = useState<'summary' | 'cukcuk' | 'suppliers'>('summary');
+  const [activeTab, setActiveTab] = useState<'summary' | 'nxt' | 'cukcuk' | 'suppliers'>('summary');
   const [reconciliations, setReconciliations] = useState<ReconciliationSummary[]>([]);
   const [supplierLosses, setSupplierLosses] = useState<SupplierLoss[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -314,10 +315,10 @@ export const ReconciliationModule: React.FC = () => {
       </div>
 
       {/* TABS ĐIỀU HƯỚNG */}
-      <div className="flex border-b border-slate-200 bg-white rounded-t-2xl px-4 pt-3">
+      <div className="flex border-b border-slate-200 bg-white rounded-t-2xl px-4 pt-3 overflow-x-auto no-scrollbar">
         <button
           onClick={() => setActiveTab('summary')}
-          className={`btn-touch px-4 py-3 font-bold text-xs sm:text-sm border-b-2 flex items-center gap-2 transition-all ${
+          className={`btn-touch px-4 py-3 font-bold text-xs sm:text-sm border-b-2 flex items-center gap-2 transition-all whitespace-nowrap ${
             activeTab === 'summary'
               ? 'border-brand-600 text-brand-600 font-extrabold'
               : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -328,27 +329,39 @@ export const ReconciliationModule: React.FC = () => {
         </button>
 
         <button
+          onClick={() => setActiveTab('nxt')}
+          className={`btn-touch px-4 py-3 font-bold text-xs sm:text-sm border-b-2 flex items-center gap-2 transition-all whitespace-nowrap ${
+            activeTab === 'nxt'
+              ? 'border-brand-600 text-brand-600 font-extrabold'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Sparkles className="h-4 w-4 text-amber-500" />
+          <span>2. Bảng Nhập - Xuất - Tồn Chuẩn Sheet NXT (Mới)</span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('cukcuk')}
-          className={`btn-touch px-4 py-3 font-bold text-xs sm:text-sm border-b-2 flex items-center gap-2 transition-all ${
+          className={`btn-touch px-4 py-3 font-bold text-xs sm:text-sm border-b-2 flex items-center gap-2 transition-all whitespace-nowrap ${
             activeTab === 'cukcuk'
               ? 'border-brand-600 text-brand-600 font-extrabold'
               : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
           <Upload className="h-4 w-4" />
-          <span>2. Nạp File Bán Hàng CukCuk POS</span>
+          <span>3. Nạp File Bán Hàng CukCuk POS</span>
         </button>
 
         <button
           onClick={() => setActiveTab('suppliers')}
-          className={`btn-touch px-4 py-3 font-bold text-xs sm:text-sm border-b-2 flex items-center gap-2 transition-all ${
+          className={`btn-touch px-4 py-3 font-bold text-xs sm:text-sm border-b-2 flex items-center gap-2 transition-all whitespace-nowrap ${
             activeTab === 'suppliers'
               ? 'border-brand-600 text-brand-600 font-extrabold'
               : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
           <Building2 className="h-4 w-4" />
-          <span>3. Báo Cáo Tỷ Lệ Hỏng Theo NCC</span>
+          <span>4. Báo Cáo Tỷ Lệ Hỏng Theo NCC</span>
         </button>
       </div>
 
@@ -551,7 +564,17 @@ export const ReconciliationModule: React.FC = () => {
       )}
 
       {/* ============================================================== */}
-      {/* TAB 2: NẠP FILE BÁN HÀNG CUKCUK POS                             */}
+      {/* TAB 2: BẢNG NHẬP - XUẤT - TỒN CHUẨN SHEET NXT (TASK-S4-01)       */}
+      {/* ============================================================== */}
+      {activeTab === 'nxt' && (
+        <AutoNXTTable
+          branchId={user?.branchId || 1}
+          branchName={user?.branchName || 'Sen Việt Thái Nguyên'}
+        />
+      )}
+
+      {/* ============================================================== */}
+      {/* TAB 3: NẠP FILE BÁN HÀNG CUKCUK POS                             */}
       {/* ============================================================== */}
       {activeTab === 'cukcuk' && (
         <div className="bg-white rounded-b-2xl border border-slate-200 shadow-sm p-6 space-y-6">
@@ -695,7 +718,7 @@ export const ReconciliationModule: React.FC = () => {
       )}
 
       {/* ============================================================== */}
-      {/* TAB 3: BÁO CÁO TỶ LỆ HỎNG THEO NHÀ CUNG CẤP                    */}
+      {/* TAB 4: BÁO CÁO TỶ LỆ HỎNG THEO NHÀ CUNG CẤP                    */}
       {/* ============================================================== */}
       {activeTab === 'suppliers' && (
         <div className="bg-white rounded-b-2xl border border-slate-200 shadow-sm p-6 space-y-4">

@@ -19,6 +19,9 @@ import {
   ChevronLeft,
   ChevronRight,
   ShieldAlert,
+  Crown,
+  ChefHat,
+  Briefcase,
   Building2,
 } from 'lucide-react';
 
@@ -33,12 +36,42 @@ interface NavItem {
   label: string;
   shortLabel?: string;
   icon: React.ElementType;
-  section: 'kitchen-ops' | 'hr-mgmt';
+  section: 'primary-mgmt' | 'kitchen-ops' | 'hr-mgmt';
   badge?: string;
 }
 
 const ALL_NAV_ITEMS: NavItem[] = [
-  // Nhóm 1: Vận hành & Kho Bếp
+  // Nhóm Quản Trị Cấp Cao & Chỉ Huy
+  {
+    id: 'executive-cockpit',
+    label: 'Bảng Chỉ Huy Giám Đốc (10s)',
+    shortLabel: 'Chỉ Huy 10s',
+    icon: Crown,
+    section: 'primary-mgmt',
+  },
+  {
+    id: 'head-chef',
+    label: 'Chỉ Huy Bếp Trưởng (Duyệt & Đặt)',
+    shortLabel: 'Bếp Trưởng',
+    icon: ChefHat,
+    section: 'primary-mgmt',
+  },
+  {
+    id: 'branch-manager',
+    label: 'Trung Tâm Quản Lý Chi Nhánh',
+    shortLabel: 'Điều Hành',
+    icon: Briefcase,
+    section: 'primary-mgmt',
+  },
+  {
+    id: 'dashboard',
+    label: 'Tổng Quan Hệ Thống',
+    shortLabel: 'Tổng Quan',
+    icon: LayoutDashboard,
+    section: 'primary-mgmt',
+  },
+
+  // Nhóm Vận Hành & Kho Bếp
   {
     id: 'kitchen',
     label: 'Bếp 4 Nút & Cân Mẻ',
@@ -49,7 +82,7 @@ const ALL_NAV_ITEMS: NavItem[] = [
   {
     id: 'warehouse',
     label: 'Kho Cơ Sở & Lô Hàng',
-    shortLabel: 'Kho Bếp',
+    shortLabel: 'Kho Hàng',
     icon: Boxes,
     section: 'kitchen-ops',
   },
@@ -61,7 +94,7 @@ const ALL_NAV_ITEMS: NavItem[] = [
     section: 'kitchen-ops',
   },
 
-  // Nhóm 2: Nhân sự & Quản trị
+  // Nhóm Nhân Sự & Bảng Lương
   {
     id: 'hr-attendance',
     label: 'Nhân Sự & Chấm Công GPS',
@@ -76,20 +109,11 @@ const ALL_NAV_ITEMS: NavItem[] = [
     icon: Wallet,
     section: 'hr-mgmt',
   },
-  {
-    id: 'dashboard',
-    label: 'Tổng Quan Hệ Thống',
-    shortLabel: 'Tổng Quan',
-    icon: LayoutDashboard,
-    section: 'hr-mgmt',
-  },
 ];
 
 /**
  * AdaptiveShell (Khung bố cục thích ứng đa nền tảng theo chuẩn ui-ux-pro-max).
- * - Mobile (<640px): Header gọn gàng + Bottom Navigation 5 tab mượt mà.
- * - Tablet (640px - 1024px): Slim sidebar rail co giãn + Bento Layout.
- * - Desktop (>1024px): Full enterprise sidebar + User Profile Card + Phân nhóm chuẩn mực.
+ * Phân hóa hoàn toàn menu giữa Chủ Chuỗi, Kế Toán Tổng, Bếp Trưởng, Quản Lý Chi Nhánh và Nhân viên.
  */
 export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
   children,
@@ -102,18 +126,196 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
 
   if (!user) return null;
 
-  // Lấy danh sách menu được cấp quyền cho Desktop / Tablet
-  const authorizedNavItems = ALL_NAV_ITEMS.filter((item) => isViewAuthorized(item.id, user));
+  const isChuChuoi = userHasRole(user, 'ROLE_CHU_CHUOI') || user.username === 'admin_chu';
+  const isHeadChef = userHasRole(user, 'ROLE_QL_BEP') || user.username === 'ql_bep_tn';
+  const isBranchMgr = userHasRole(user, 'ROLE_QL_CHINHANH') || user.username === 'ql_chinhanh_tn';
+  const isGenAcc = userHasRole(user, 'ROLE_GENERAL_ACCOUNTANT');
+  const isMgr = userHasRole(user, 'ROLE_RESTAURANT_MANAGER');
+  const isBrAcc = userHasRole(user, 'ROLE_BRANCH_ACCOUNTANT');
+  const isKitchen = userHasRole(user, 'ROLE_KITCHEN_STAFF');
+
+  // Lấy danh sách menu điều hướng riêng biệt theo vai trò người dùng (TASK-S3-01)
+  const getRoleNavItems = (): NavItem[] => {
+    // 1. CHỦ CHUỖI (admin_chu): Ưu tiên Bảng Chỉ Huy 10s, Báo Cáo Lãi/Lỗ, Đối Soát Chuỗi, Duyệt Lương
+    if (isChuChuoi) {
+      return [
+        {
+          id: 'executive-cockpit',
+          label: 'Bảng Chỉ Huy Giám Đốc (10s)',
+          shortLabel: 'Chỉ Huy',
+          icon: Crown,
+          section: 'primary-mgmt',
+        },
+        {
+          id: 'reconciliation',
+          label: 'Báo Cáo Đối Soát Chuỗi',
+          shortLabel: 'Đối Soát',
+          icon: FileSpreadsheet,
+          section: 'kitchen-ops',
+        },
+        {
+          id: 'payroll',
+          label: 'Duyệt Lương & Thưởng Chuỗi',
+          shortLabel: 'Quỹ Lương',
+          icon: Wallet,
+          section: 'hr-mgmt',
+        },
+        {
+          id: 'warehouse',
+          label: 'Giám Sát Kho Chuỗi',
+          shortLabel: 'Kho Chuỗi',
+          icon: Boxes,
+          section: 'kitchen-ops',
+        },
+        {
+          id: 'dashboard',
+          label: 'Tổng Quan Hệ Thống',
+          shortLabel: 'Tổng Quan',
+          icon: LayoutDashboard,
+          section: 'primary-mgmt',
+        },
+      ];
+    }
+
+    // 2. BẾP TRƯỞNG (ql_bep_tn): Chỉ huy bếp, duyệt báo hỏng, giám sát mẻ, đặt hàng NCC
+    if (isHeadChef) {
+      return [
+        {
+          id: 'head-chef',
+          label: 'Chỉ Huy Bếp Trưởng (Duyệt & Đặt)',
+          shortLabel: 'Bếp Trưởng',
+          icon: ChefHat,
+          section: 'primary-mgmt',
+        },
+        {
+          id: 'kitchen',
+          label: 'Bếp 4 Nút & Cân Mẻ',
+          shortLabel: 'Bếp 4 Nút',
+          icon: Flame,
+          section: 'kitchen-ops',
+        },
+        {
+          id: 'reconciliation',
+          label: 'Đối Soát Nguyên Liệu Bếp',
+          shortLabel: 'Đối Soát',
+          icon: FileSpreadsheet,
+          section: 'kitchen-ops',
+        },
+        {
+          id: 'hr-attendance',
+          label: 'Quân Số Bếp & Chấm Công',
+          shortLabel: 'Chấm Công',
+          icon: Users,
+          section: 'hr-mgmt',
+        },
+      ];
+    }
+
+    // 3. QUẢN LÝ CHI NHÁNH (ql_chinhanh_tn): Kỷ luật ca, GPS, ra ngoài, ghi phạt, chấm thi tay nghề
+    if (isBranchMgr) {
+      return [
+        {
+          id: 'branch-manager',
+          label: 'Điều Hành Quản Lý Chi Nhánh',
+          shortLabel: 'Điều Hành',
+          icon: Briefcase,
+          section: 'primary-mgmt',
+        },
+        {
+          id: 'kitchen',
+          label: 'Giám Sát Bếp Chi Nhánh',
+          shortLabel: 'Bếp & Mẻ',
+          icon: Flame,
+          section: 'kitchen-ops',
+        },
+        {
+          id: 'reconciliation',
+          label: 'Đối Soát Ca Chi Nhánh',
+          shortLabel: 'Đối Soát',
+          icon: FileSpreadsheet,
+          section: 'kitchen-ops',
+        },
+        {
+          id: 'hr-attendance',
+          label: 'Nhân Sự & Kỷ Luật Ca',
+          shortLabel: 'Nhân Sự',
+          icon: Users,
+          section: 'hr-mgmt',
+        },
+        {
+          id: 'dashboard',
+          label: 'Tổng Quan Chi Nhánh',
+          shortLabel: 'Tổng Quan',
+          icon: LayoutDashboard,
+          section: 'primary-mgmt',
+        },
+      ];
+    }
+
+    // 4. KẾ TOÁN TỔNG (ketoan_tong): Hạch toán kế toán chi tiết, đối soát CukCuk, kho lô hàng, bảng lương
+    if (isGenAcc) {
+      return [
+        {
+          id: 'dashboard',
+          label: 'Tổng Quan Kế Toán Tổng',
+          shortLabel: 'Kế Toán',
+          icon: LayoutDashboard,
+          section: 'primary-mgmt',
+        },
+        {
+          id: 'warehouse',
+          label: 'Kho Cơ Sở & Lô Hàng',
+          shortLabel: 'Kho Hàng',
+          icon: Boxes,
+          section: 'kitchen-ops',
+        },
+        {
+          id: 'reconciliation',
+          label: 'Đối Soát Cuối Ngày (CukCuk)',
+          shortLabel: 'Đối Soát',
+          icon: FileSpreadsheet,
+          section: 'kitchen-ops',
+        },
+        {
+          id: 'payroll',
+          label: 'Bảng Lương & Ứng Lương',
+          shortLabel: 'Bảng Lương',
+          icon: Wallet,
+          section: 'hr-mgmt',
+        },
+        {
+          id: 'kitchen',
+          label: 'Giám Sát Bếp & Mẻ',
+          shortLabel: 'Bếp & Mẻ',
+          icon: Flame,
+          section: 'kitchen-ops',
+        },
+        {
+          id: 'hr-attendance',
+          label: 'Nhân Sự Toàn Hệ Thống',
+          shortLabel: 'Nhân Sự',
+          icon: Users,
+          section: 'hr-mgmt',
+        },
+      ];
+    }
+
+    // 5. Fallback vai trò khác (Bếp viên, Nhân viên phục vụ, Kế toán chi nhánh)
+    return ALL_NAV_ITEMS.filter((item) => isViewAuthorized(item.id, user));
+  };
+
+  const authorizedNavItems = getRoleNavItems();
 
   // Tên hiển thị vai trò người dùng
   const getRoleDisplayName = (roles: string[]) => {
-    const names: string[] = [];
-    if (roles.includes('ROLE_KITCHEN_STAFF')) names.push('Bếp / Bar');
-    if (roles.includes('ROLE_RESTAURANT_MANAGER')) names.push('Quản lý');
-    if (roles.includes('ROLE_BRANCH_ACCOUNTANT')) names.push('Kế toán CN');
-    if (roles.includes('ROLE_GENERAL_ACCOUNTANT')) names.push('Kế toán Tổng');
-    if (roles.includes('ROLE_EMPLOYEE')) names.push('Nhân viên');
-    return names.length > 0 ? names.join(' + ') : 'Người dùng';
+    if (roles.includes('ROLE_CHU_CHUOI') || user.username === 'admin_chu') return 'Chủ Chuỗi / Ban Giám Đốc';
+    if (roles.includes('ROLE_QL_BEP') || user.username === 'ql_bep_tn') return 'Bếp Trưởng Điều Hành';
+    if (roles.includes('ROLE_QL_CHINHANH') || user.username === 'ql_chinhanh_tn') return 'Quản Lý Chi Nhánh';
+    if (roles.includes('ROLE_GENERAL_ACCOUNTANT')) return 'Kế Toán Tổng Chuỗi';
+    if (roles.includes('ROLE_BRANCH_ACCOUNTANT')) return 'Kế Toán Chi Nhánh';
+    if (roles.includes('ROLE_KITCHEN_STAFF')) return 'Bếp / Bar 4 Nút';
+    if (roles.includes('ROLE_RESTAURANT_MANAGER')) return 'Quản Lý Nhà Hàng';
+    return 'Nhân Viên Phục Vụ';
   };
 
   // Avatar chữ cái đầu
@@ -126,55 +328,76 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
 
   // Danh sách các tab Mobile theo vai trò RBAC (tối đa 5 tab chuẩn Thumb-zone)
   const getMobileTabs = () => {
-    const isGenAcc = userHasRole(user, 'ROLE_GENERAL_ACCOUNTANT');
-    const isMgr = userHasRole(user, 'ROLE_RESTAURANT_MANAGER');
-    const isBrAcc = userHasRole(user, 'ROLE_BRANCH_ACCOUNTANT');
-    const isKitchen = userHasRole(user, 'ROLE_KITCHEN_STAFF');
+    // 1. CHỦ CHUỖI
+    if (isChuChuoi) {
+      return [
+        { id: 'executive-cockpit', label: 'Chỉ Huy', icon: Crown },
+        { id: 'reconciliation', label: 'Đối Soát', icon: FileSpreadsheet },
+        { id: 'payroll', label: 'Quỹ Lương', icon: Wallet },
+        { id: 'warehouse', label: 'Kho Hàng', icon: Boxes },
+        { id: 'profile', label: 'Cá Nhân', icon: UserCheck },
+      ];
+    }
 
-    // 1. Kế toán tổng
+    // 2. BẾP TRƯỞNG
+    if (isHeadChef) {
+      return [
+        { id: 'head-chef', label: 'Bếp Trưởng', icon: ChefHat },
+        { id: 'kitchen', label: 'Bếp 4 Nút', icon: Flame },
+        { id: 'reconciliation', label: 'Đối Soát', icon: FileSpreadsheet },
+        { id: 'attendance', label: 'Chấm Công', icon: Clock },
+        { id: 'profile', label: 'Cá Nhân', icon: UserCheck },
+      ];
+    }
+
+    // 3. QUẢN LÝ CHI NHÁNH
+    if (isBranchMgr) {
+      return [
+        { id: 'branch-manager', label: 'Điều Hành', icon: Briefcase },
+        { id: 'kitchen', label: 'Bếp & Mẻ', icon: Flame },
+        { id: 'reconciliation', label: 'Đối Soát', icon: FileSpreadsheet },
+        { id: 'attendance', label: 'Chấm Công', icon: Clock },
+        { id: 'profile', label: 'Cá Nhân', icon: UserCheck },
+      ];
+    }
+
+    // 4. KẾ TOÁN TỔNG
     if (isGenAcc) {
       return [
-        { id: 'dashboard', label: 'Tổng quan', icon: LayoutDashboard },
-        { id: 'kitchen', label: 'Bếp 4 Nút', icon: Flame },
-        { id: 'warehouse', label: 'Kho hàng', icon: Boxes },
-        { id: 'reconciliation', label: 'Đối soát', icon: FileSpreadsheet },
+        { id: 'dashboard', label: 'Tổng Quan', icon: LayoutDashboard },
+        { id: 'reconciliation', label: 'Đối Soát', icon: FileSpreadsheet },
         { id: 'payroll', label: 'Lương', icon: Wallet },
+        { id: 'warehouse', label: 'Kho Hàng', icon: Boxes },
+        { id: 'profile', label: 'Cá Nhân', icon: UserCheck },
       ];
     }
-    // 2. Quản lý nhà hàng
-    if (isMgr) {
-      return [
-        { id: 'dashboard', label: 'Tổng quan', icon: LayoutDashboard },
-        { id: 'kitchen', label: 'Bếp & Mẻ', icon: Flame },
-        { id: 'reconciliation', label: 'Đối soát', icon: FileSpreadsheet },
-        { id: 'attendance', label: 'Nhân sự', icon: Clock },
-        { id: 'profile', label: 'Cá nhân', icon: UserCheck },
-      ];
-    }
-    // 3. Kế toán chi nhánh
+
+    // 5. KẾ TOÁN CHI NHÁNH
     if (isBrAcc) {
       return [
-        { id: 'dashboard', label: 'Tổng quan', icon: LayoutDashboard },
-        { id: 'warehouse', label: 'Kho cơ sở', icon: Boxes },
-        { id: 'reconciliation', label: 'Đối soát', icon: FileSpreadsheet },
-        { id: 'payroll', label: 'Bảng lương', icon: Wallet },
-        { id: 'profile', label: 'Cá nhân', icon: UserCheck },
+        { id: 'dashboard', label: 'Tổng Quan', icon: LayoutDashboard },
+        { id: 'warehouse', label: 'Kho Cơ Sở', icon: Boxes },
+        { id: 'reconciliation', label: 'Đối Soát', icon: FileSpreadsheet },
+        { id: 'payroll', label: 'Bảng Lương', icon: Wallet },
+        { id: 'profile', label: 'Cá Nhân', icon: UserCheck },
       ];
     }
-    // 4. Nhân viên Bếp / Bar
+
+    // 6. NHÂN VIÊN BẾP
     if (isKitchen) {
       return [
         { id: 'kitchen', label: 'Bếp 4 Nút', icon: Flame },
-        { id: 'attendance', label: 'Chấm công', icon: Clock },
-        { id: 'exam', label: 'Thi nghề', icon: Award },
-        { id: 'profile', label: 'Cá nhân', icon: UserCheck },
+        { id: 'attendance', label: 'Chấm Công', icon: Clock },
+        { id: 'exam', label: 'Thi Nghề', icon: Award },
+        { id: 'profile', label: 'Cá Nhân', icon: UserCheck },
       ];
     }
-    // 5. Nhân viên chung
+
+    // 7. NHÂN VIÊN CHUNG
     return [
-      { id: 'attendance', label: 'Chấm công', icon: Clock },
-      { id: 'exam', label: 'Thi nghề', icon: Award },
-      { id: 'profile', label: 'Cá nhân', icon: UserCheck },
+      { id: 'attendance', label: 'Chấm Công', icon: Clock },
+      { id: 'exam', label: 'Thi Nghề', icon: Award },
+      { id: 'profile', label: 'Cá Nhân', icon: UserCheck },
     ];
   };
 
@@ -184,13 +407,19 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
   const isMobileTabActive = (tabId: string) => {
     if (activeView === tabId) return true;
     if (tabId === 'attendance' && (activeView === 'hr-attendance' || activeView === 'attendance')) return true;
-    if (tabId === 'profile' && (activeView === 'payroll' || activeView === 'profile')) return true;
+    if (tabId === 'profile' && activeView === 'profile') return true;
     if (tabId === 'exam' && activeView === 'exam') return true;
     return false;
   };
 
-  const kitchenOpsItems = authorizedNavItems.filter((i) => i.section === 'kitchen-ops');
-  const hrMgmtItems = authorizedNavItems.filter((i) => i.section === 'hr-mgmt');
+  // Tiêu đề nhóm Sidebar động theo vai trò
+  const getSidebarHeaderTitle = () => {
+    if (isChuChuoi) return 'BAN GIÁM ĐỐC CHỦ CHUỖI';
+    if (isHeadChef) return 'ĐIỀU HÀNH BẾP TRƯỞNG';
+    if (isBranchMgr) return 'QUẢN LÝ CHI NHÁNH';
+    if (isGenAcc) return 'HẠCH TOÁN KẾ TOÁN TỔNG';
+    return 'CHỨC NĂNG HỆ THỐNG';
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
@@ -211,7 +440,7 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
               <span className="text-[11px] sm:text-xs text-slate-500 flex items-center gap-1 font-medium mt-0.5">
                 <MapPin className="h-3 w-3 text-brand-600 shrink-0" />
                 <span className="truncate max-w-[130px] sm:max-w-none">
-                  {user.branchName || 'Chi nhánh Thái Nguyên'}
+                  {user.branchName || 'Toàn hệ thống (Hội sở)'}
                 </span>
               </span>
             </div>
@@ -351,80 +580,38 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
 
             {/* Navigation Groups */}
             <div className="space-y-4">
-              {/* Nhóm 1: Vận hành & Kho Bếp */}
-              {kitchenOpsItems.length > 0 && (
-                <div>
-                  <div className="flex items-center justify-between px-2.5 py-1 text-[11px] font-extrabold text-slate-400 uppercase tracking-wider">
-                    <span>Vận Hành Kho Bếp</span>
-                    <span className="text-[10px] font-bold text-brand-600 bg-brand-50 px-1.5 py-0.2 rounded">
-                      {kitchenOpsItems.length}
-                    </span>
-                  </div>
-                  <nav className="space-y-1 mt-1">
-                    {kitchenOpsItems.map((item) => {
-                      const Icon = item.icon;
-                      const isActive = activeView === item.id;
-                      return (
-                        <button
-                          key={item.id}
-                          onClick={() => onViewChange(item.id)}
-                          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-all text-left ${
-                            isActive
-                              ? 'bg-brand-50 text-brand-700 font-extrabold border-l-4 border-brand-600 shadow-sm'
-                              : 'text-slate-600 hover:bg-slate-100/80 hover:text-slate-900'
-                          }`}
-                        >
-                          <Icon
-                            className={`h-4.5 w-4.5 shrink-0 ${
-                              isActive ? 'text-brand-600' : 'text-slate-400'
-                            }`}
-                          />
-                          <span className="truncate">{item.label}</span>
-                        </button>
-                      );
-                    })}
-                  </nav>
+              <div>
+                <div className="flex items-center justify-between px-2.5 py-1 text-[11px] font-extrabold text-slate-400 uppercase tracking-wider">
+                  <span>{getSidebarHeaderTitle()}</span>
+                  <span className="text-[10px] font-bold text-brand-600 bg-brand-50 px-1.5 py-0.2 rounded">
+                    {authorizedNavItems.length}
+                  </span>
                 </div>
-              )}
-
-              {/* Nhóm 2: Nhân sự & Quản trị */}
-              {hrMgmtItems.length > 0 && (
-                <div>
-                  <div className="flex items-center justify-between px-2.5 py-1 text-[11px] font-extrabold text-slate-400 uppercase tracking-wider">
-                    <span>Nhân Sự &amp; Quản Trị</span>
-                    <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.2 rounded">
-                      {hrMgmtItems.length}
-                    </span>
-                  </div>
-                  <nav className="space-y-1 mt-1">
-                    {hrMgmtItems.map((item) => {
-                      const Icon = item.icon;
-                      const isActive =
-                        activeView === item.id ||
-                        (item.id === 'hr-attendance' && (activeView === 'attendance' || activeView === 'exam')) ||
-                        (item.id === 'payroll' && activeView === 'profile');
-                      return (
-                        <button
-                          key={item.id}
-                          onClick={() => onViewChange(item.id)}
-                          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-all text-left ${
-                            isActive
-                              ? 'bg-brand-50 text-brand-700 font-extrabold border-l-4 border-brand-600 shadow-sm'
-                              : 'text-slate-600 hover:bg-slate-100/80 hover:text-slate-900'
+                <nav className="space-y-1 mt-1">
+                  {authorizedNavItems.map((item) => {
+                    const Icon = item.icon;
+                    const isActive = activeView === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => onViewChange(item.id)}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-all text-left ${
+                          isActive
+                            ? 'bg-brand-50 text-brand-700 font-extrabold border-l-4 border-brand-600 shadow-sm'
+                            : 'text-slate-600 hover:bg-slate-100/80 hover:text-slate-900'
+                        }`}
+                      >
+                        <Icon
+                          className={`h-4.5 w-4.5 shrink-0 ${
+                            isActive ? 'text-brand-600' : 'text-slate-400'
                           }`}
-                        >
-                          <Icon
-                            className={`h-4.5 w-4.5 shrink-0 ${
-                              isActive ? 'text-brand-600' : 'text-slate-400'
-                            }`}
-                          />
-                          <span className="truncate">{item.label}</span>
-                        </button>
-                      );
-                    })}
-                  </nav>
-                </div>
-              )}
+                        />
+                        <span className="truncate">{item.label}</span>
+                      </button>
+                    );
+                  })}
+                </nav>
+              </div>
 
               {authorizedNavItems.length === 0 && (
                 <div className="p-3 text-xs text-amber-700 bg-amber-50 rounded-xl flex items-center gap-2">
@@ -441,7 +628,7 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
                 <span>IndexedDB Online</span>
               </span>
               <span className="font-mono text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500">
-                v1.0.0
+                Sprint 3 Ready
               </span>
             </div>
           </div>
