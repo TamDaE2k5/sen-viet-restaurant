@@ -5396,6 +5396,11 @@ export const SEED_BATCHES = [
     startedAt: '2026-11-18 09:15:00',
     finishedAt: '2026-11-18 10:05:00',
     warningMessage: null,
+    approvalStatus: 'HOP_LE',
+    approvedBy: 'Trần Thị Bếp Trưởng',
+    approvedAt: '2026-11-18 10:30:00',
+    scalePhotoUrl:
+      "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'><rect width='600' height='400' fill='%231e293b'/><rect x='40' y='30' width='520' height='300' rx='16' fill='%23f1f5f9' stroke='%2394a3b8' stroke-width='6'/><rect x='100' y='70' width='400' height='160' rx='12' fill='%230f172a'/><text x='300' y='110' font-family='monospace' font-size='14' fill='%2394a3b8' text-anchor='middle' font-weight='bold'>MẶT BÀN CÂN ĐIỆN TỬ ĐỐI SOÁT - SEN VIỆT</text><text x='300' y='185' font-family='monospace' font-size='56' fill='%2322c55e' text-anchor='middle' font-weight='900'>19.30 kg</text><text x='300' y='275' font-family='sans-serif' font-size='15' fill='%23334155' text-anchor='middle' font-weight='bold'>Mẻ: BATCH-202611-001 - Ba chỉ bò Mỹ cuộn nướng</text><rect x='0' y='360' width='600' height='40' fill='rgba(0,0,0,0.85)'/><text x='15' y='385' font-family='sans-serif' font-size='13' fill='%23ffffff' font-weight='bold'>📍 [Sen Việt - Thái Nguyên] 18/11/2026 10:05 | NV: bep_tn | Phiếu: Cân mẻ BATCH-202611-001</text></svg>",
   },
   {
     id: 2,
@@ -5416,6 +5421,9 @@ export const SEED_BATCHES = [
     startedAt: '2026-11-18 10:30:00',
     finishedAt: '2026-11-18 11:20:00',
     warningMessage: '⚠️ Hao hụt thực tế 12.0% vượt quá định mức chuẩn cho phép 8.0% (+4.0%)',
+    approvalStatus: 'CHO_DUYET',
+    scalePhotoUrl:
+      "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'><rect width='600' height='400' fill='%231e293b'/><rect x='40' y='30' width='520' height='300' rx='16' fill='%23f1f5f9' stroke='%2394a3b8' stroke-width='6'/><rect x='100' y='70' width='400' height='160' rx='12' fill='%230f172a'/><text x='300' y='110' font-family='monospace' font-size='14' fill='%2394a3b8' text-anchor='middle' font-weight='bold'>MẶT BÀN CÂN ĐIỆN TỬ ĐỐI SOÁT - SEN VIỆT</text><text x='300' y='185' font-family='monospace' font-size='56' fill='%23ef4444' text-anchor='middle' font-weight='900'>13.20 kg</text><text x='300' y='275' font-family='sans-serif' font-size='15' fill='%23334155' text-anchor='middle' font-weight='bold'>Mẻ: BATCH-202611-002 - Cá hồi phi lê Nauy</text><rect x='0' y='360' width='600' height='40' fill='rgba(0,0,0,0.85)'/><text x='15' y='385' font-family='sans-serif' font-size='13' fill='%23ffffff' font-weight='bold'>📍 [Sen Việt - Thái Nguyên] 18/11/2026 11:20 | NV: bep_tn | Phiếu: Cân mẻ BATCH-202611-002</text></svg>",
   },
   {
     id: 3,
@@ -5436,6 +5444,7 @@ export const SEED_BATCHES = [
     startedAt: '2026-11-18 11:30:00',
     finishedAt: null,
     warningMessage: null,
+    approvalStatus: 'CHO_DUYET',
   },
   {
     id: 4,
@@ -5456,6 +5465,11 @@ export const SEED_BATCHES = [
     startedAt: '2026-11-20 09:30:00',
     finishedAt: '2026-11-20 10:20:00',
     warningMessage: null,
+    approvalStatus: 'HOP_LE',
+    approvedBy: 'Trần Thị Bếp Trưởng',
+    approvedAt: '2026-11-20 10:45:00',
+    scalePhotoUrl:
+      "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'><rect width='600' height='400' fill='%231e293b'/><rect x='40' y='30' width='520' height='300' rx='16' fill='%23f1f5f9' stroke='%2394a3b8' stroke-width='6'/><rect x='100' y='70' width='400' height='160' rx='12' fill='%230f172a'/><text x='300' y='110' font-family='monospace' font-size='14' fill='%2394a3b8' text-anchor='middle' font-weight='bold'>MẶT BÀN CÂN ĐIỆN TỬ ĐỐI SOÁT - SEN VIỆT</text><text x='300' y='185' font-family='monospace' font-size='56' fill='%2322c55e' text-anchor='middle' font-weight='900'>23.30 kg</text><text x='300' y='275' font-family='sans-serif' font-size='15' fill='%23334155' text-anchor='middle' font-weight='bold'>Mẻ: BATCH-202611-004 - Cua Cà Mau sốt me</text><rect x='0' y='360' width='600' height='40' fill='rgba(0,0,0,0.85)'/><text x='15' y='385' font-family='sans-serif' font-size='13' fill='%23ffffff' font-weight='bold'>📍 [Sen Việt - Thái Nguyên] 20/11/2026 10:20 | NV: bep_tn | Phiếu: Cân mẻ BATCH-202611-004</text></svg>",
   },
   {
     id: 5,
@@ -5476,6 +5490,9 @@ export const SEED_BATCHES = [
     startedAt: '2026-11-20 10:30:00',
     finishedAt: '2026-11-20 11:15:00',
     warningMessage: '⚠️ Hao hụt thực tế 12.0% vượt quá định mức chuẩn cho phép 10.0% (+2.0%)',
+    approvalStatus: 'CHO_DUYET',
+    scalePhotoUrl:
+      "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'><rect width='600' height='400' fill='%231e293b'/><rect x='40' y='30' width='520' height='300' rx='16' fill='%23f1f5f9' stroke='%2394a3b8' stroke-width='6'/><rect x='100' y='70' width='400' height='160' rx='12' fill='%230f172a'/><text x='300' y='110' font-family='monospace' font-size='14' fill='%2394a3b8' text-anchor='middle' font-weight='bold'>MẶT BÀN CÂN ĐIỆN TỬ ĐỐI SOÁT - SEN VIỆT</text><text x='300' y='185' font-family='monospace' font-size='56' fill='%23ef4444' text-anchor='middle' font-weight='900'>17.60 kg</text><text x='300' y='275' font-family='sans-serif' font-size='15' fill='%23334155' text-anchor='middle' font-weight='bold'>Mẻ: BATCH-202611-005 - Ghẹ Phú Quốc hấp sả</text><rect x='0' y='360' width='600' height='40' fill='rgba(0,0,0,0.85)'/><text x='15' y='385' font-family='sans-serif' font-size='13' fill='%23ffffff' font-weight='bold'>📍 [Sen Việt - Thái Nguyên] 20/11/2026 11:15 | NV: bep_tn | Phiếu: Cân mẻ BATCH-202611-005</text></svg>",
   },
   {
     id: 6,
@@ -5496,6 +5513,7 @@ export const SEED_BATCHES = [
     startedAt: '2026-11-20 11:30:00',
     finishedAt: null,
     warningMessage: null,
+    approvalStatus: 'CHO_DUYET',
   },
 ];
 
@@ -5919,6 +5937,46 @@ export const SEED_INVENTORY_LOTS = [
     unit: 'gói',
     status: 'ACTIVE',
     location: 'KHO_BEP',
+  },
+  {
+    id: 12,
+    batchCode: 'LOT-202611-QV01',
+    supplierId: 1,
+    supplierCode: 'NCC-HS01',
+    supplierName: 'Công ty Hải Sản Biển Đông',
+    itemId: 1,
+    itemCode: 'HS-CAHOI',
+    itemName: 'Cá hồi phi lê Nauy',
+    branchId: 2,
+    branchName: 'Sen Việt Buffet - Chi nhánh Quế Võ',
+    importDate: '2026-11-17',
+    expiryDate: '2026-11-21',
+    initialQuantity: 30.0,
+    currentStock: 25.0,
+    unitPrice: 380000,
+    unit: 'kg',
+    status: 'ACTIVE',
+    location: 'KHO_DONG_LANH',
+  },
+  {
+    id: 13,
+    batchCode: 'LOT-202611-QV02',
+    supplierId: 1,
+    supplierCode: 'NCC-HS01',
+    supplierName: 'Công ty Hải Sản Biển Đông',
+    itemId: 2,
+    itemCode: 'HS-TOMCANG',
+    itemName: 'Tôm càng xanh sông',
+    branchId: 2,
+    branchName: 'Sen Việt Buffet - Chi nhánh Quế Võ',
+    importDate: '2026-11-17',
+    expiryDate: '2026-11-23',
+    initialQuantity: 40.0,
+    currentStock: 35.0,
+    unitPrice: 260000,
+    unit: 'kg',
+    status: 'ACTIVE',
+    location: 'KHO_BE_SONG',
   },
 ];
 

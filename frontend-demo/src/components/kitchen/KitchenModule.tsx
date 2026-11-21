@@ -22,6 +22,7 @@ import {
   Search,
   Check,
   Clock,
+  ZoomIn,
   Undo2,
   History,
   XCircle,
@@ -244,6 +245,11 @@ export const KitchenModule: React.FC = () => {
   const [selectedFinishBatch, setSelectedFinishBatch] = useState<BatchResponse | null>(null);
   const [finishOutputWeight, setFinishOutputWeight] = useState<number>(0);
   const [isFinishingBatch, setIsFinishingBatch] = useState<boolean>(false);
+  // TASK-WH-04: Bắt buộc ảnh mặt bàn cân điện tử chống gian lận
+  const [finishScalePhoto, setFinishScalePhoto] = useState<string | null>(null);
+  const [isCompressingScalePhoto, setIsCompressingScalePhoto] = useState<boolean>(false);
+  const [previewScalePhoto, setPreviewScalePhoto] = useState<string | null>(null);
+  const finishScalePhotoInputRef = useRef<HTMLInputElement>(null);
 
   // --- GIAI ĐOẠN 8: Chặn cứng mẻ có báo hỏng chưa duyệt (HTTP 422) ---
   const [showUnapprovedDamageModal, setShowUnapprovedDamageModal] = useState<boolean>(false);
@@ -626,14 +632,55 @@ export const KitchenModule: React.FC = () => {
     }
   };
 
-  // Hoàn tất cân mẻ thành phẩm (Offline Resilience)
+  // TASK-WH-04: Xử lý chụp ảnh mặt bàn cân điện tử kèm Watermark tự động
+  const handleFinishScalePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setIsCompressingScalePhoto(true);
+      const res = await compressImage(file, 1280, 720, 0.75, {
+        branchName:
+          user?.branchName || (user?.branchId === 2 ? 'Sen Việt - Quế Võ' : 'Sen Việt - Thái Nguyên'),
+        userName: user?.fullName || 'Bếp viên',
+        docType: `Cân mẻ ${selectedFinishBatch?.batchCode || ''}`,
+        docTypeName: `Cân mẻ ${selectedFinishBatch?.batchCode || ''}`,
+      });
+      setFinishScalePhoto(res.dataUrl);
+      showNotice('success', 'Đã chụp & lưu ảnh mặt bàn cân kèm Watermark thành công!');
+    } catch (err) {
+      console.error('Lỗi khi nén ảnh bàn cân:', err);
+      showNotice('error', 'Lỗi khi chụp hoặc nén ảnh mặt bàn cân');
+    } finally {
+      setIsCompressingScalePhoto(false);
+      if (finishScalePhotoInputRef.current) finishScalePhotoInputRef.current.value = '';
+    }
+  };
+
+  // Hoàn tất cân mẻ thành phẩm (TASK-WH-03: Blind Weighing & TASK-WH-04: Anti-Fraud Photo)
   const handleFinishBatchSubmit = async () => {
-    if (!selectedFinishBatch || finishOutputWeight <= 0) return;
+    if (!selectedFinishBatch) return;
+
+    if (finishOutputWeight <= 0) {
+      showNotice('error', '⚠️ Vui lòng nhập khối lượng thành phẩm hợp lệ (> 0 kg)');
+      return;
+    }
+
+    // TASK-WH-04: Chặn cứng nếu chưa chụp ảnh bàn cân
+    if (!finishScalePhoto) {
+      showNotice(
+        'error',
+        '⚠️ BẮT BUỘC chụp ảnh mặt bàn cân điện tử hiển thị rõ số kg thành phẩm để chống gian lận!'
+      );
+      return;
+    }
 
     try {
       setIsFinishingBatch(true);
       if (!navigator.onLine) {
-        localStorage.setItem(`senviet_offline_finish_batch_${selectedFinishBatch.id}`, finishOutputWeight.toString());
+        localStorage.setItem(
+          `senviet_offline_finish_batch_${selectedFinishBatch.id}`,
+          JSON.stringify({ weight: finishOutputWeight, photo: finishScalePhoto })
+        );
         showNotice(
           'error',
           `⚠️ Mất kết nối mạng! Số cân thành phẩm ${finishOutputWeight} kg của mẻ [${selectedFinishBatch.batchCode}] đã được lưu tạm an toàn. Vui lòng bấm 'Thử lại' khi có mạng.`
@@ -643,21 +690,22 @@ export const KitchenModule: React.FC = () => {
       const res = await kitchenApi.finishBatch({
         batchId: selectedFinishBatch.id,
         outputWeight: finishOutputWeight,
+        scalePhotoUrl: finishScalePhoto,
+        requireScalePhoto: true,
       });
 
       localStorage.removeItem(`senviet_offline_finish_batch_${selectedFinishBatch.id}`);
       const batchData = res.data;
-      if (batchData.overStandard) {
-        showNotice(
-          'error',
-          `⚠️ CẢNH BÁO: Mẻ [${batchData.batchCode}] hao hụt ${batchData.lossRate}% (vượt chuẩn ${batchData.standardLossRate}%)!`
-        );
-      } else {
-        showNotice('success', `✅ Mẻ [${batchData.batchCode}] hoàn tất thành công. Hao hụt chuẩn: ${batchData.lossRate}%`);
-      }
+
+      // TASK-WH-03: TUYỆT ĐỐI KHÔNG hiện hao hụt thực tế, chuẩn hay cảnh báo lệch trước mắt Bếp viên!
+      showNotice(
+        'success',
+        `✅ Đã ghi nhận số cân mẻ [${batchData.batchCode}] (${finishOutputWeight} kg) kèm ảnh bàn cân. Đã chuyển Quản lý đối soát!`
+      );
 
       setSelectedFinishBatch(null);
       setFinishOutputWeight(0);
+      setFinishScalePhoto(null);
       const updatedBatches = await kitchenApi.getActiveBatches();
       setActiveBatches(updatedBatches);
       setActiveModal(null);
@@ -670,14 +718,16 @@ export const KitchenModule: React.FC = () => {
         !err.response;
 
       if (isNetworkErr) {
-        // Giữ nguyên số kg nhân viên vừa cân xong, không làm mất dữ liệu
-        localStorage.setItem(`senviet_offline_finish_batch_${selectedFinishBatch.id}`, finishOutputWeight.toString());
+        localStorage.setItem(
+          `senviet_offline_finish_batch_${selectedFinishBatch.id}`,
+          JSON.stringify({ weight: finishOutputWeight, photo: finishScalePhoto })
+        );
         showNotice(
           'error',
           `⚠️ Mất kết nối mạng! Dữ liệu cân mẻ ${finishOutputWeight} kg đã được lưu tạm an toàn trên máy. Vui lòng bấm 'Thử lại' khi có mạng lại.`
         );
       } else {
-        showNotice('error', err.response?.data?.message || 'Lỗi khi hoàn thành mẻ');
+        showNotice('error', err.response?.data?.message || err.message || 'Lỗi khi hoàn thành mẻ');
       }
     } finally {
       setIsFinishingBatch(false);
@@ -1670,14 +1720,11 @@ export const KitchenModule: React.FC = () => {
                     onChange={(e) => setBatchItemId(Number(e.target.value))}
                     className="w-full h-12 px-3 rounded-xl border border-slate-300 font-medium text-slate-800 focus:ring-2 focus:ring-emerald-500"
                   >
-                    {items.map((i) => {
-                      const recipe = recipes.find((r) => r.itemId === i.id);
-                      return (
-                        <option key={i.id} value={i.id}>
-                          {i.itemName} {recipe ? `(Chuẩn hao hụt: ${recipe.standardLossRate}%)` : ''}
-                        </option>
-                      );
-                    })}
+                    {items.map((i) => (
+                      <option key={i.id} value={i.id}>
+                        {i.itemName}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -1750,12 +1797,20 @@ export const KitchenModule: React.FC = () => {
                             key={b.id}
                             onClick={() => {
                               setSelectedFinishBatch(b);
+                              setFinishScalePhoto(null);
                               const savedDraft = localStorage.getItem(`senviet_offline_finish_batch_${b.id}`);
                               if (savedDraft) {
-                                setFinishOutputWeight(parseFloat(savedDraft));
-                                showNotice('success', `Đã khôi phục số cân lưu tạm: ${savedDraft} kg`);
+                                try {
+                                  const parsed = JSON.parse(savedDraft);
+                                  if (parsed.weight) setFinishOutputWeight(parsed.weight);
+                                  if (parsed.photo) setFinishScalePhoto(parsed.photo);
+                                  showNotice('success', `Đã khôi phục số cân lưu tạm: ${parsed.weight} kg kèm ảnh`);
+                                } catch {
+                                  setFinishOutputWeight(parseFloat(savedDraft) || 0);
+                                  showNotice('success', `Đã khôi phục số cân lưu tạm: ${savedDraft} kg`);
+                                }
                               } else {
-                                setFinishOutputWeight(b.inputWeight ? Math.round(b.inputWeight * 0.8 * 10) / 10 : 0);
+                                setFinishOutputWeight(0);
                               }
                             }}
                             className={`p-3 rounded-xl border cursor-pointer transition-all ${
@@ -1771,8 +1826,7 @@ export const KitchenModule: React.FC = () => {
                               </span>
                             </div>
                             <div className="text-xs text-slate-500 mt-1 flex items-center justify-between">
-                              <span>Đầu vào: <strong className="text-slate-800">{b.inputWeight} kg</strong></span>
-                              <span>Chuẩn hụt: <strong>{b.standardLossRate}%</strong></span>
+                              <span>Khối lượng đầu vào: <strong className="text-slate-800">{b.inputWeight} kg</strong></span>
                             </div>
                           </div>
                         ))}
@@ -1780,65 +1834,111 @@ export const KitchenModule: React.FC = () => {
                     </div>
 
                     {selectedFinishBatch && (
-                      <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <label className="block text-xs font-bold text-slate-700">KHỐI LƯỢNG THÀNH PHẨM CÂN ĐƯỢC (KG)</label>
-                          <span className="text-xs text-slate-500">
-                            Đang cân: <strong className="text-base text-slate-900 font-mono">{finishOutputWeight}</strong> / {selectedFinishBatch.inputWeight} kg
-                          </span>
-                        </div>
-                        <VirtualNumpad
-                          value={finishOutputWeight}
-                          onChange={(val) => setFinishOutputWeight(val)}
-                          unit="kg"
-                          quickAddValues={[1, 5, 10]}
-                          max={selectedFinishBatch.inputWeight}
-                        />
-
-                        {/* Realtime Loss Rate Preview */}
-                        {finishOutputWeight > 0 && (
-                          <div className="pt-1">
-                            {(() => {
-                              const inW = selectedFinishBatch.inputWeight;
-                              const outW = finishOutputWeight;
-                              const actualLoss = Math.round(((inW - outW) / inW) * 10000) / 100;
-                              const isOver = actualLoss > selectedFinishBatch.standardLossRate;
-
-                              return (
-                                <div
-                                  className={`p-3 rounded-lg border text-xs font-medium ${
-                                    isOver
-                                      ? 'bg-rose-50 border-rose-300 text-rose-800'
-                                      : 'bg-emerald-50 border-emerald-300 text-emerald-800'
-                                  }`}
-                                >
-                                  <div className="flex items-center justify-between font-bold">
-                                    <span>Hao hụt thực tế: {actualLoss}%</span>
-                                    <span>Chuẩn cho phép: {selectedFinishBatch.standardLossRate}%</span>
-                                  </div>
-                                  <div className="mt-1">
-                                    {isOver ? (
-                                      <span className="text-rose-700 font-bold flex items-center gap-1">
-                                        <AlertTriangle className="h-4 w-4" />
-                                        CẢNH BÁO: Vượt định mức hao hụt {Math.round((actualLoss - selectedFinishBatch.standardLossRate) * 100) / 100}%!
-                                      </span>
-                                    ) : (
-                                      <span className="text-emerald-700 font-bold flex items-center gap-1">
-                                        <CheckCircle2 className="h-4 w-4" />
-                                        Đạt chuẩn định mức cho phép.
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            })()}
+                      <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-4">
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="block text-xs font-bold text-slate-700">KHỐI LƯỢNG THÀNH PHẨM CÂN ĐƯỢC (KG)</label>
+                            <span className="text-xs text-slate-500">
+                              Đang cân: <strong className="text-base text-slate-900 font-mono">{finishOutputWeight}</strong> / {selectedFinishBatch.inputWeight} kg
+                            </span>
                           </div>
-                        )}
+                          <VirtualNumpad
+                            value={finishOutputWeight}
+                            onChange={(val) => setFinishOutputWeight(val)}
+                            unit="kg"
+                            quickAddValues={[1, 5, 10]}
+                            max={selectedFinishBatch.inputWeight}
+                          />
+                        </div>
+
+                        {/* TASK-WH-04: Bắt buộc chụp ảnh mặt bàn cân điện tử hiển thị rõ số kg */}
+                        <div className="p-4 rounded-xl bg-white border-2 border-dashed border-slate-300 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <label className="block text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                              <Camera className="w-4 h-4 text-emerald-600" />
+                              <span>ẢNH CHỤP MẶT BÀN CÂN ĐIỆN TỬ</span>
+                              <span className="text-rose-600 font-black">(*)</span>
+                            </label>
+                            <span className="text-[11px] font-bold text-slate-400">Chống gian lận cân</span>
+                          </div>
+
+                          <input
+                            ref={finishScalePhotoInputRef}
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            onChange={handleFinishScalePhotoUpload}
+                            className="hidden"
+                          />
+
+                          {finishScalePhoto ? (
+                            <div className="space-y-2">
+                              <div className="relative rounded-xl overflow-hidden border border-emerald-400 bg-slate-950 aspect-video max-h-56 flex items-center justify-center group">
+                                <img
+                                  src={finishScalePhoto}
+                                  alt="Mặt bàn cân điện tử"
+                                  className="w-full h-full object-contain"
+                                />
+                                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setPreviewScalePhoto(finishScalePhoto)}
+                                    className="p-2 rounded-lg bg-white/90 text-slate-800 text-xs font-bold flex items-center gap-1 shadow"
+                                  >
+                                    <ZoomIn className="w-4 h-4" /> Soi cận cảnh
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => finishScalePhotoInputRef.current?.click()}
+                                    className="p-2 rounded-lg bg-emerald-600 text-white text-xs font-bold flex items-center gap-1 shadow"
+                                  >
+                                    <Camera className="w-4 h-4" /> Chụp lại
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                                  <CheckCircle2 className="w-4 h-4" /> Đã có ảnh bàn cân kèm Watermark xác thực
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setFinishScalePhoto(null)}
+                                  className="text-rose-600 hover:text-rose-800 font-bold"
+                                >
+                                  Xóa ảnh
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="text-center py-3">
+                              {isCompressingScalePhoto ? (
+                                <div className="flex flex-col items-center justify-center gap-2 text-emerald-700 py-4">
+                                  <Loader2 className="w-6 h-6 animate-spin" />
+                                  <span className="text-xs font-bold">Đang nén ảnh & đóng dấu Watermark xác thực...</span>
+                                </div>
+                              ) : (
+                                <div className="space-y-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => finishScalePhotoInputRef.current?.click()}
+                                    className="w-full py-3.5 px-4 rounded-xl bg-white hover:bg-emerald-50 border-2 border-dashed border-emerald-500 text-emerald-700 font-bold text-sm flex items-center justify-center gap-2 shadow-sm transition-all"
+                                  >
+                                    <Camera className="w-5 h-5 text-emerald-600" />
+                                    <span>CHỤP ẢNH MẶT BÀN CÂN ĐIỆN TỬ (*)</span>
+                                  </button>
+                                  <p className="text-[11px] text-rose-600 font-medium bg-rose-50 p-2 rounded-lg border border-rose-200">
+                                    ⚠️ BẮT BUỘC chụp ảnh mặt bàn cân điện tử hiển thị rõ số kg thành phẩm để chống gian lận!
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
 
                         <button
                           onClick={handleFinishBatchSubmit}
-                          disabled={isFinishingBatch || finishOutputWeight <= 0}
-                          className="btn-touch w-full h-14 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white font-extrabold text-base flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition-all"
+                          disabled={isFinishingBatch || finishOutputWeight <= 0 || !finishScalePhoto}
+                          className="btn-touch w-full h-14 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-extrabold text-base flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition-all"
                         >
                           {isFinishingBatch ? (
                             <Loader2 className="h-5 w-5 animate-spin" />
@@ -1855,6 +1955,48 @@ export const KitchenModule: React.FC = () => {
                 )}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Lightbox Zoom Cận Cảnh Ảnh Bàn Cân (TASK-WH-04) */}
+      {previewScalePhoto && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in"
+          onClick={() => setPreviewScalePhoto(null)}
+        >
+          <div
+            className="relative max-w-2xl w-full bg-slate-900 rounded-3xl overflow-hidden shadow-2xl p-5 border border-slate-700 animate-in zoom-in-95"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-700 text-white">
+              <span className="font-bold text-sm flex items-center gap-2">
+                <Camera className="w-5 h-5 text-emerald-400" />
+                Ảnh Mặt Bàn Cân Điện Tử ({selectedFinishBatch?.batchCode})
+              </span>
+              <button
+                onClick={() => setPreviewScalePhoto(null)}
+                className="p-1.5 rounded-xl hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="mt-4 flex items-center justify-center bg-black rounded-2xl overflow-hidden max-h-[70vh]">
+              <img
+                src={previewScalePhoto}
+                alt="Mặt bàn cân điện tử"
+                className="max-h-[70vh] w-auto object-contain"
+              />
+            </div>
+            <div className="mt-3 flex items-center justify-between text-xs text-slate-400">
+              <span>Định lượng ghi nhận: <strong className="text-emerald-400 font-mono text-sm">{finishOutputWeight} kg</strong></span>
+              <button
+                onClick={() => setPreviewScalePhoto(null)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold"
+              >
+                Đóng
+              </button>
+            </div>
           </div>
         </div>
       )}
