@@ -105,13 +105,29 @@ export const HRModule: React.FC<HRModuleProps> = ({ currentUser }) => {
   const [permissionModalType, setPermissionModalType] = useState<'CAMERA' | 'GEOLOCATION'>('GEOLOCATION');
   const selfieFileInputRef = useRef<HTMLInputElement>(null);
 
-  const isManagerOrAccountant = currentUser?.roles.some((r: RoleName) =>
-    ['ROLE_RESTAURANT_MANAGER', 'ROLE_BRANCH_ACCOUNTANT', 'ROLE_GENERAL_ACCOUNTANT'].includes(r)
-  );
+  const isManagerOrAccountant =
+    currentUser?.username === 'ketoan_tong' ||
+    currentUser?.roles.some((r: RoleName) =>
+      [
+        'ROLE_RESTAURANT_MANAGER',
+        'ROLE_BRANCH_ACCOUNTANT',
+        'ROLE_GENERAL_ACCOUNTANT',
+        'ROLE_KETOAN_TONG',
+        'ROLE_ACCOUNTANT',
+      ].includes(r)
+    );
 
-  const isGeneralAccountant = currentUser?.roles.some((r: RoleName) =>
-    ['ROLE_GENERAL_ACCOUNTANT', 'ROLE_ADMIN', 'ROLE_CHU_CHUOI'].includes(r)
-  );
+  const isGeneralAccountant =
+    currentUser?.username === 'ketoan_tong' ||
+    currentUser?.roles.some((r: RoleName) =>
+      [
+        'ROLE_GENERAL_ACCOUNTANT',
+        'ROLE_KETOAN_TONG',
+        'ROLE_ACCOUNTANT',
+        'ROLE_ADMIN',
+        'ROLE_CHU_CHUOI',
+      ].includes(r)
+    );
 
   // Haversine distance calculator for client preview
   const calcDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {

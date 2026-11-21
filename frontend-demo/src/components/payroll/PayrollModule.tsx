@@ -86,13 +86,29 @@ export const PayrollModule: React.FC<PayrollModuleProps> = ({ currentUser }) => 
   const [showUnlockModal, setShowUnlockModal] = useState<boolean>(false);
   const [unlockReasonInput, setUnlockReasonInput] = useState<string>('');
 
-  const isManagerOrAccountant = currentUser?.roles.some((r: RoleName) =>
-    ['ROLE_RESTAURANT_MANAGER', 'ROLE_BRANCH_ACCOUNTANT', 'ROLE_GENERAL_ACCOUNTANT'].includes(r)
-  );
+  const isManagerOrAccountant =
+    currentUser?.username === 'ketoan_tong' ||
+    currentUser?.roles.some((r: RoleName) =>
+      [
+        'ROLE_RESTAURANT_MANAGER',
+        'ROLE_BRANCH_ACCOUNTANT',
+        'ROLE_GENERAL_ACCOUNTANT',
+        'ROLE_KETOAN_TONG',
+        'ROLE_ACCOUNTANT',
+      ].includes(r)
+    );
 
-  const isGeneralAccountant = currentUser?.roles.some((r: RoleName) =>
-    ['ROLE_GENERAL_ACCOUNTANT', 'ROLE_ADMIN', 'ROLE_CHU_CHUOI'].includes(r)
-  );
+  const isGeneralAccountant =
+    currentUser?.username === 'ketoan_tong' ||
+    currentUser?.roles.some((r: RoleName) =>
+      [
+        'ROLE_GENERAL_ACCOUNTANT',
+        'ROLE_KETOAN_TONG',
+        'ROLE_ACCOUNTANT',
+        'ROLE_ADMIN',
+        'ROLE_CHU_CHUOI',
+      ].includes(r)
+    );
 
   const maxAdvanceLimit = 5000000; // Hạn mức ứng tối đa (50% lương cơ bản)
 

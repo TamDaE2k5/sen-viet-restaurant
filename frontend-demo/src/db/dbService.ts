@@ -32,7 +32,7 @@ import {
 /**
  * Phiên bản dữ liệu mẫu (Cập nhật phiên bản sẽ kích hoạt tự động reset IndexedDB đồng bộ)
  */
-export const SEED_DATA_VERSION = 'v2026_11_20_t11_complete_v6';
+export const SEED_DATA_VERSION = 'v2026_11_21_t11_ketoan_tong_fixed_v8';
 
 let memorySeedVersion: string | null = null;
 
@@ -81,6 +81,33 @@ export async function initializeDatabaseIfEmpty(): Promise<boolean> {
       setStoredVersion(SEED_DATA_VERSION);
       console.log('[Dexie DB] Khởi tạo thành công 100% dữ liệu mẫu mới!');
       return true;
+    }
+
+    // Tự động kiểm tra và nâng cấp quyền hạn nếu ketoan_tong hoặc admin_chu bị thiếu vai trò trong IndexedDB cũ
+    try {
+      const ktUser = await db.users.where('username').equals('ketoan_tong').first();
+      if (ktUser && (!ktUser.roles.includes('ROLE_GENERAL_ACCOUNTANT') || !ktUser.roles.includes('ROLE_ACCOUNTANT'))) {
+        const updatedRoles = Array.from(new Set([
+          ...ktUser.roles,
+          'ROLE_GENERAL_ACCOUNTANT',
+          'ROLE_BRANCH_ACCOUNTANT',
+          'ROLE_ACCOUNTANT',
+          'ROLE_KETOAN_TONG',
+        ]));
+        await db.users.update(ktUser.id, { roles: updatedRoles });
+        console.log('[Dexie DB] Đã tự động cập nhật đầy đủ quyền hạn cho Kế Toán Tổng (ketoan_tong)');
+      }
+      const adminUser = await db.users.where('username').equals('admin_chu').first();
+      if (adminUser && !adminUser.roles.includes('ROLE_CHU_CHUOI')) {
+        const updatedAdminRoles = Array.from(new Set([
+          ...adminUser.roles,
+          'ROLE_CHU_CHUOI',
+          'ROLE_GENERAL_ACCOUNTANT',
+        ]));
+        await db.users.update(adminUser.id, { roles: updatedAdminRoles });
+      }
+    } catch (e) {
+      console.warn('[Dexie DB] Bỏ qua kiểm tra nâng cấp quyền người dùng:', e);
     }
 
     return false;
