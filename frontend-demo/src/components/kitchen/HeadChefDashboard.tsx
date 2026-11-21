@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
-import { db } from '../../db/schema';
+import { db, Batch } from '../../db/schema';
 import {
   ChefHat,
   Flame,
@@ -24,6 +24,12 @@ import {
   Filter,
   MessageSquare,
   Package,
+  Camera,
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
+  FileText,
+  ShieldAlert,
 } from 'lucide-react';
 
 export interface DamageReportItem {
@@ -49,23 +55,7 @@ export interface DamageReportItem {
   createdAt: string;
 }
 
-export interface BatchItem {
-  id: number;
-  batchCode: string;
-  branchId: number;
-  itemId: number;
-  itemName: string;
-  chefName?: string;
-  inputWeight: number;
-  outputWeight?: number;
-  standardLossRate: number;
-  lossRate?: number;
-  status: 'DANG_LAM' | 'HOAN_THANH';
-  overStandard?: boolean;
-  warningMessage?: string;
-  startedAt: string;
-  finishedAt?: string;
-}
+export type BatchItem = Batch;
 
 export interface RecipeItem {
   id: number;
@@ -126,6 +116,13 @@ export const HeadChefDashboard: React.FC = () => {
   const [selectedRecipeId, setSelectedRecipeId] = useState<number | ''>('');
   const [newStandardRate, setNewStandardRate] = useState<string>('');
   const [adjustNote, setAdjustNote] = useState<string>('');
+
+  // TASK-WH-05: Soi ảnh cân & Lightbox Zoom HD
+  const [selectedScalePhoto, setSelectedScalePhoto] = useState<{ photoUrl: string; batch: BatchItem } | null>(null);
+  const [zoomLevel, setZoomLevel] = useState<number>(1);
+  const [explanationBatch, setExplanationBatch] = useState<BatchItem | null>(null);
+  const [explanationNote, setExplanationNote] = useState<string>('');
+  const [isSubmittingApproval, setIsSubmittingApproval] = useState<boolean>(false);
 
   // --- TAB 3: ĐẶT HÀNG NCC (Sheet BAOHANG) ---
   const [orderSupplier, setOrderSupplier] = useState<string>(DEFAULT_SUPPLIERS[0].name);
@@ -313,6 +310,79 @@ export const HeadChefDashboard: React.FC = () => {
       setAdjustNote('');
     } catch (e) {
       showError('Có lỗi khi lưu định mức vào cơ sở dữ liệu');
+    }
+  };
+
+  // TASK-WH-05: Xác nhận mẻ hợp lệ
+  const handleApproveBatch = async (batch: BatchItem) => {
+    try {
+      setIsSubmittingApproval(true);
+      const approverName = user?.fullName || 'Trần Thị Bếp Trưởng';
+      const nowStr = new Date().toISOString().replace('T', ' ').slice(0, 19);
+      if (db.batches) {
+        await db.batches.update(batch.id, {
+          approvalStatus: 'HOP_LE',
+          approvedBy: approverName,
+          approvedAt: nowStr,
+          approvalNote: 'Xác nhận mẻ hợp lệ, số cân đạt chuẩn',
+        });
+      }
+      showSuccess(`✅ Đã xác nhận mẻ [${batch.batchCode}] hợp lệ thành công!`);
+      await loadData();
+      if (selectedScalePhoto && selectedScalePhoto.batch.id === batch.id) {
+        setSelectedScalePhoto(null);
+      }
+    } catch (err: any) {
+      showError('Lỗi khi xác nhận mẻ: ' + (err.message || ''));
+    } finally {
+      setIsSubmittingApproval(false);
+    }
+  };
+
+  // TASK-WH-05: Mở modal lập biên bản giải trình hao hụt
+  const handleOpenExplanationModal = (batch: BatchItem) => {
+    setExplanationBatch(batch);
+    const diff =
+      batch.lossRate !== undefined && batch.lossRate !== null
+        ? (batch.lossRate - batch.standardLossRate).toFixed(1)
+        : '0.0';
+    setExplanationNote(
+      batch.overStandard
+        ? `Mẻ [${batch.itemName}] hao hụt thực tế ${batch.lossRate}%, vượt chuẩn ${batch.standardLossRate}% (+${diff}%). Yêu cầu đầu bếp giải trình hao hụt sơ chế & xem lại thao tác cân!`
+        : `Giải trình điều chỉnh hao hụt cho mẻ [${batch.batchCode}] - ${batch.itemName}.`
+    );
+  };
+
+  // TASK-WH-05: Lưu biên bản giải trình hao hụt
+  const handleSaveExplanation = async () => {
+    if (!explanationBatch) return;
+    if (!explanationNote.trim()) {
+      showError('Vui lòng nhập nội dung biên bản giải trình hao hụt');
+      return;
+    }
+    try {
+      setIsSubmittingApproval(true);
+      const approverName = user?.fullName || 'Trần Thị Bếp Trưởng';
+      const nowStr = new Date().toISOString().replace('T', ' ').slice(0, 19);
+      if (db.batches) {
+        await db.batches.update(explanationBatch.id, {
+          approvalStatus: 'BIEN_BAN',
+          approvedBy: approverName,
+          approvedAt: nowStr,
+          approvalNote: explanationNote.trim(),
+        });
+      }
+      showSuccess(`⚠️ Đã lập biên bản giải trình hao hụt cho mẻ [${explanationBatch.batchCode}]!`);
+      setExplanationBatch(null);
+      setExplanationNote('');
+      await loadData();
+      if (selectedScalePhoto && selectedScalePhoto.batch.id === explanationBatch.id) {
+        setSelectedScalePhoto(null);
+      }
+    } catch (err: any) {
+      showError('Lỗi khi lập biên bản: ' + (err.message || ''));
+    } finally {
+      setIsSubmittingApproval(false);
     }
   };
 
@@ -676,65 +746,104 @@ export const HeadChefDashboard: React.FC = () => {
       )}
 
       {/* ─────────────────────────────────────────────────────────────
-          4. TAB 2: GIÁM SÁT MẺ CHẾ BIẾN & ĐIỀU CHỈNH ĐỊNH MỨC
+          4. TAB 2: GIÁM SÁT MẺ CHẾ BIẾN & ĐIỀU CHỈNH ĐỊNH MỨC (TASK-WH-05)
       ───────────────────────────────────────────────────────────── */}
       {activeTab === 'BATCH_MONITOR' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Lịch sử và Giám sát Mẻ - 8 cột */}
-          <div className="lg:col-span-8 bg-white rounded-3xl p-6 border border-slate-200 shadow-card space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+        <div className="space-y-6">
+          {/* Lịch sử và Giám sát Mẻ - Full width */}
+          <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-card space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
-                <div className="p-2 rounded-xl bg-orange-100 text-orange-700">
+                <div className="p-2.5 rounded-2xl bg-orange-100 text-orange-700">
                   <Flame className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-extrabold text-slate-900">
-                    Theo Dõi Tỷ Lệ Hao Hụt Mẻ Chế Biến
+                  <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+                    Bảng Đối Soát Mẻ & Soi Ảnh Cân Điện Tử
+                    <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 text-[11px] font-extrabold">
+                      Chống Gian Lận
+                    </span>
                   </h3>
-                  <p className="text-xs text-slate-500">Giám sát tay nghề nhân viên và đối soát hao hụt với định mức chuẩn</p>
+                  <p className="text-xs text-slate-500">
+                    Đối chiếu số kg thành phẩm, % hao hụt thực tế với chuẩn, và soi cận cảnh ảnh chụp mặt bàn cân điện tử
+                  </p>
                 </div>
               </div>
-              <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-xs font-bold">
-                {batches.length} Mẻ
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-700 text-xs font-bold">
+                  Tổng {batches.length} Mẻ
+                </span>
+                {overStandardBatchCount > 0 && (
+                  <span className="px-3 py-1 rounded-full bg-rose-600 text-white text-xs font-extrabold flex items-center gap-1 shadow-sm animate-pulse">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    {overStandardBatchCount} Mẻ Vượt Định Mức
+                  </span>
+                )}
+              </div>
             </div>
 
             {/* Batch Table */}
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
+              <table className="w-full text-left text-xs min-w-[980px]">
                 <thead>
-                  <tr className="border-b border-slate-200 text-slate-400 uppercase font-semibold text-[10px]">
-                    <th className="pb-2">Mã Mẻ</th>
-                    <th className="pb-2">Tên Món Chế Biến</th>
-                    <th className="pb-2 text-right">Đầu Vào (kg)</th>
-                    <th className="pb-2 text-right">Thành Phẩm (kg)</th>
-                    <th className="pb-2 text-right">Hao Hụt Thực Tế</th>
-                    <th className="pb-2 text-right">Chuẩn</th>
-                    <th className="pb-2 text-center">Đánh Giá</th>
+                  <tr className="border-b border-slate-200 text-slate-500 uppercase font-bold text-[10px] bg-slate-50/60">
+                    <th className="py-2.5 px-3">Mã Mẻ</th>
+                    <th className="py-2.5 px-2">Người Nấu</th>
+                    <th className="py-2.5 px-2">Món Chế Biến</th>
+                    <th className="py-2.5 px-2 text-right">Đầu Vào</th>
+                    <th className="py-2.5 px-2 text-right">Thành Phẩm</th>
+                    <th className="py-2.5 px-2 text-right">% Hụt Thực Tế</th>
+                    <th className="py-2.5 px-2 text-right">% Chuẩn</th>
+                    <th className="py-2.5 px-2 text-right">Chênh Lệch</th>
+                    <th className="py-2.5 px-2 text-center">Ảnh Bàn Cân</th>
+                    <th className="py-2.5 px-2">Trạng Thái & Đánh Giá</th>
+                    <th className="py-2.5 px-3 text-center">Thao Tác</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {batches.map((batch) => {
                     const isOver = batch.overStandard;
+                    const diff =
+                      batch.lossRate !== undefined && batch.lossRate !== null
+                        ? Number((batch.lossRate - batch.standardLossRate).toFixed(1))
+                        : null;
+
                     return (
-                      <tr key={batch.id} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="py-3 font-mono font-bold text-slate-700">
-                          {batch.batchCode}
+                      <tr
+                        key={batch.id}
+                        className={`transition-colors ${
+                          isOver
+                            ? 'bg-rose-50/80 hover:bg-rose-100/70 border-l-4 border-l-rose-600'
+                            : 'hover:bg-slate-50/80'
+                        }`}
+                      >
+                        <td className="py-3 px-3">
+                          <span className="font-mono font-bold text-slate-800 block">{batch.batchCode}</span>
+                          <span className="text-[10px] text-slate-400">{batch.startedAt?.slice(5, 16)}</span>
                         </td>
-                        <td className="py-3 font-bold text-slate-900">
+                        <td className="py-3 px-2 font-medium text-slate-800">
+                          {batch.chefName || batch.startedBy || 'Nguyễn Văn Bếp'}
+                        </td>
+                        <td className="py-3 px-2 font-bold text-slate-900">
                           {batch.itemName}
-                          <span className="text-[10px] text-slate-400 block font-normal">
-                            Đầu bếp: {batch.chefName || 'Nguyễn Văn Bếp'}
-                          </span>
+                          {batch.itemCode && (
+                            <span className="text-[10px] text-slate-400 block font-mono font-normal">
+                              {batch.itemCode}
+                            </span>
+                          )}
                         </td>
-                        <td className="py-3 text-right font-semibold text-slate-700">
+                        <td className="py-3 px-2 text-right font-semibold text-slate-700">
                           {batch.inputWeight} kg
                         </td>
-                        <td className="py-3 text-right font-bold text-slate-900">
-                          {batch.outputWeight ? `${batch.outputWeight} kg` : <span className="text-amber-600 italic">Đang nấu</span>}
+                        <td className="py-3 px-2 text-right font-bold text-slate-900">
+                          {batch.outputWeight ? (
+                            `${batch.outputWeight} kg`
+                          ) : (
+                            <span className="text-amber-600 italic">Đang nấu...</span>
+                          )}
                         </td>
-                        <td className="py-3 text-right">
-                          {batch.lossRate !== undefined ? (
+                        <td className="py-3 px-2 text-right">
+                          {batch.lossRate !== undefined && batch.lossRate !== null ? (
                             <span className={`font-black ${isOver ? 'text-rose-600' : 'text-emerald-700'}`}>
                               {batch.lossRate}%
                             </span>
@@ -742,22 +851,105 @@ export const HeadChefDashboard: React.FC = () => {
                             '—'
                           )}
                         </td>
-                        <td className="py-3 text-right font-semibold text-slate-500">
+                        <td className="py-3 px-2 text-right font-semibold text-slate-500">
                           {batch.standardLossRate}%
                         </td>
-                        <td className="py-3 text-center">
-                          {batch.status === 'DANG_LAM' ? (
-                            <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">
-                              Đang làm
-                            </span>
-                          ) : isOver ? (
-                            <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[10px] font-extrabold flex items-center justify-center gap-0.5">
-                              <AlertTriangle className="w-3 h-3" /> Vượt chuẩn
+                        <td className="py-3 px-2 text-right">
+                          {diff !== null ? (
+                            <span
+                              className={`font-black ${
+                                diff > 0 ? 'text-rose-600 font-extrabold' : 'text-emerald-600'
+                              }`}
+                            >
+                              {diff > 0 ? `+${diff}%` : `${diff}%`}
                             </span>
                           ) : (
-                            <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-extrabold flex items-center justify-center gap-0.5">
+                            '—'
+                          )}
+                        </td>
+                        <td className="py-3 px-2 text-center">
+                          {batch.scalePhotoUrl ? (
+                            <div className="flex flex-col items-center gap-1">
+                              <div
+                                onClick={() => {
+                                  setSelectedScalePhoto({ photoUrl: batch.scalePhotoUrl!, batch });
+                                  setZoomLevel(1);
+                                }}
+                                className="relative w-14 h-10 rounded-lg overflow-hidden border border-slate-300 shadow-xs cursor-pointer hover:ring-2 hover:ring-amber-500 group transition-all shrink-0 bg-slate-900"
+                              >
+                                <img
+                                  src={batch.scalePhotoUrl}
+                                  alt="Bàn cân"
+                                  className="w-full h-full object-cover group-hover:scale-110 transition-transform"
+                                />
+                                <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <ZoomIn className="w-4 h-4 text-white" />
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  setSelectedScalePhoto({ photoUrl: batch.scalePhotoUrl!, batch });
+                                  setZoomLevel(1);
+                                }}
+                                className="text-[10px] text-amber-700 hover:text-amber-900 font-bold underline flex items-center gap-0.5"
+                              >
+                                <Eye className="w-3 h-3" /> Soi cận cảnh
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 italic">Chưa có ảnh</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-2">
+                          {batch.status === 'DANG_LAM' ? (
+                            <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">
+                              🟡 Đang làm
+                            </span>
+                          ) : isOver ? (
+                            <div className="p-1.5 rounded-xl bg-rose-100 border border-rose-300 text-rose-800 text-[11px] font-extrabold flex items-center gap-1 shadow-xs">
+                              <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                              <span>Vượt định mức +{diff}% - Nguy cơ ăn bớt nguyên liệu!</span>
+                            </div>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-extrabold flex items-center gap-1 w-fit">
                               <Check className="w-3 h-3" /> Đạt chuẩn
                             </span>
+                          )}
+
+                          {/* Approval badge */}
+                          {batch.approvalStatus === 'HOP_LE' && (
+                            <span className="mt-1 block text-[10px] text-emerald-800 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 w-fit">
+                              ✅ Đã xác nhận hợp lệ ({batch.approvedBy || 'Bếp trưởng'})
+                            </span>
+                          )}
+                          {batch.approvalStatus === 'BIEN_BAN' && (
+                            <span className="mt-1 block text-[10px] text-amber-900 font-bold bg-amber-50 px-2 py-0.5 rounded border border-amber-200 w-fit">
+                              ⚠️ Đã lập biên bản: {batch.approvalNote || 'Giải trình hao hụt'}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 px-3 text-center">
+                          {batch.status === 'HOAN_THANH' ? (
+                            <div className="flex flex-col gap-1 items-center justify-center">
+                              <button
+                                onClick={() => handleApproveBatch(batch)}
+                                disabled={isSubmittingApproval || batch.approvalStatus === 'HOP_LE'}
+                                className="w-full py-1.5 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-bold text-[11px] flex items-center justify-center gap-1 shadow-xs transition-colors"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                <span>Xác nhận hợp lệ</span>
+                              </button>
+                              <button
+                                onClick={() => handleOpenExplanationModal(batch)}
+                                disabled={isSubmittingApproval}
+                                className="w-full py-1.5 px-2.5 rounded-lg bg-rose-600 hover:bg-rose-700 disabled:bg-slate-200 text-white font-bold text-[11px] flex items-center justify-center gap-1 shadow-xs transition-colors"
+                              >
+                                <FileText className="w-3.5 h-3.5" />
+                                <span>Lập biên bản giải trình</span>
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 italic">Đang chế biến</span>
                           )}
                         </td>
                       </tr>
@@ -768,8 +960,8 @@ export const HeadChefDashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Công cụ Chỉnh Định Mức Chuẩn - 4 cột */}
-          <div className="lg:col-span-4 bg-white rounded-3xl p-6 border border-slate-200 shadow-card space-y-4">
+          {/* Công cụ Chỉnh Định Mức Chuẩn */}
+          <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-card space-y-4">
             <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
               <div className="p-2 rounded-xl bg-indigo-100 text-indigo-700">
                 <Sliders className="w-5 h-5" />
@@ -1165,6 +1357,194 @@ export const HeadChefDashboard: React.FC = () => {
                 className="px-5 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl"
               >
                 Xác Nhận Từ Chối
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────
+          LIGHTBOX ZOOM HD SOI ẢNH BÀN CÂN ĐIỆN TỬ (TASK-WH-05)
+      ───────────────────────────────────────────────────────────── */}
+      {selectedScalePhoto && (
+        <div
+          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex flex-col p-4 animate-in fade-in"
+          onClick={() => setSelectedScalePhoto(null)}
+        >
+          {/* Header */}
+          <div
+            className="flex items-center justify-between pb-3 border-b border-slate-800 text-white shrink-0"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-amber-500 text-slate-950 font-black">
+                <Camera className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="font-extrabold text-sm sm:text-base text-white flex items-center gap-2">
+                  Soi Ảnh Cân Điện Tử: {selectedScalePhoto.batch.batchCode}
+                  {selectedScalePhoto.batch.overStandard && (
+                    <span className="px-2 py-0.5 rounded-full bg-rose-600 text-white text-[10px] font-black">
+                      VƯỢT ĐỊNH MỨC
+                    </span>
+                  )}
+                </h4>
+                <p className="text-xs text-slate-400">
+                  Món: <strong className="text-white">{selectedScalePhoto.batch.itemName}</strong> | Đầu vào: {selectedScalePhoto.batch.inputWeight} kg | Khai báo thành phẩm: <strong className="text-emerald-400 font-mono text-sm">{selectedScalePhoto.batch.outputWeight} kg</strong>
+                </p>
+              </div>
+            </div>
+
+            {/* Zoom controls & close */}
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 bg-slate-800 p-1 rounded-xl border border-slate-700">
+                <button
+                  type="button"
+                  onClick={() => setZoomLevel((z) => Math.max(0.5, Math.round((z - 0.25) * 100) / 100))}
+                  className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-300 hover:text-white"
+                  title="Thu nhỏ"
+                >
+                  <ZoomOut className="w-4 h-4" />
+                </button>
+                <span className="px-2 text-xs font-mono font-bold text-amber-400">{Math.round(zoomLevel * 100)}%</span>
+                <button
+                  type="button"
+                  onClick={() => setZoomLevel((z) => Math.min(3, Math.round((z + 0.25) * 100) / 100))}
+                  className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-300 hover:text-white"
+                  title="Phóng to"
+                >
+                  <ZoomIn className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setZoomLevel(1)}
+                  className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-300 hover:text-white text-[11px] font-bold"
+                  title="Đặt lại 100%"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <button
+                onClick={() => setSelectedScalePhoto(null)}
+                className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Body image */}
+          <div
+            className="flex-1 overflow-auto flex items-center justify-center p-4 my-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{ transform: `scale(${zoomLevel})`, transition: 'transform 0.15s ease-out' }}
+              className="origin-center shadow-2xl rounded-2xl overflow-hidden border border-slate-700 bg-black"
+            >
+              <img
+                src={selectedScalePhoto.photoUrl}
+                alt="Ảnh bàn cân điện tử HD"
+                className="max-h-[75vh] w-auto object-contain select-none"
+              />
+            </div>
+          </div>
+
+          {/* Footer actions */}
+          <div
+            className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-800 shrink-0"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-xs text-slate-400">
+              💡 <em>Dùng nút [+] [-] để soi cận cảnh từng con số hiển thị trên mặt cân điện tử và đối chiếu độ trung thực.</em>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleApproveBatch(selectedScalePhoto.batch)}
+                disabled={isSubmittingApproval || selectedScalePhoto.batch.approvalStatus === 'HOP_LE'}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-700 text-white font-bold text-xs flex items-center gap-1.5 shadow"
+              >
+                <Check className="w-4 h-4" />
+                <span>Xác Nhận Mẻ Hợp Lệ</span>
+              </button>
+              <button
+                onClick={() => handleOpenExplanationModal(selectedScalePhoto.batch)}
+                disabled={isSubmittingApproval}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs flex items-center gap-1.5 shadow"
+              >
+                <FileText className="w-4 h-4" />
+                <span>Lập Biên Bản Giải Trình</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────
+          MODAL LẬP BIÊN BẢN GIẢI TRÌNH HAO HỤT (TASK-WH-05)
+      ───────────────────────────────────────────────────────────── */}
+      {explanationBatch && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-rose-200">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2 text-rose-600 font-bold">
+                <FileText className="w-5 h-5" />
+                <h4 className="font-bold text-base text-slate-900">
+                  Biên Bản Giải Trình Hao Hụt Mẻ #{explanationBatch.batchCode}
+                </h4>
+              </div>
+              <button onClick={() => setExplanationBatch(null)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-1">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Món chế biến:</span>
+                <strong className="text-slate-900">{explanationBatch.itemName}</strong>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Đầu vào / Thành phẩm:</span>
+                <strong className="text-slate-900 font-mono">
+                  {explanationBatch.inputWeight} kg $\rightarrow$ {explanationBatch.outputWeight || '—'} kg
+                </strong>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Hao hụt thực tế vs Định mức chuẩn:</span>
+                <strong className="text-rose-600 font-bold">
+                  {explanationBatch.lossRate}% (Chuẩn: {explanationBatch.standardLossRate}%)
+                </strong>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-slate-700 block">
+                Nội dung giải trình hao hụt & Hình thức xử lý:
+              </label>
+              <textarea
+                rows={4}
+                value={explanationNote}
+                onChange={(e) => setExplanationNote(e.target.value)}
+                placeholder="Nhập nguyên nhân hao hụt vượt chuẩn (xương dày, tiêu hao nhiệt, tay nghề bếp...) và hướng xử lý..."
+                className="w-full p-3 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-rose-500"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => setExplanationBatch(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleSaveExplanation}
+                disabled={isSubmittingApproval || !explanationNote.trim()}
+                className="px-5 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 disabled:bg-slate-300 rounded-xl flex items-center gap-1 shadow-sm"
+              >
+                <Check className="w-4 h-4" />
+                <span>Lưu Biên Bản Giải Trình</span>
               </button>
             </div>
           </div>

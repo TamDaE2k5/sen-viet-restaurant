@@ -181,7 +181,7 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
       ];
     }
 
-    // 2. BẾP TRƯỞNG (ql_bep_tn): Chỉ huy bếp, duyệt báo hỏng, giám sát mẻ, đặt hàng NCC
+    // 2. BẾP TRƯỞNG (ql_bep_tn): Chỉ huy bếp, duyệt báo hỏng, giám sát mẻ, đặt hàng NCC, quản lý kho cơ sở
     if (isHeadChef) {
       return [
         {
@@ -196,6 +196,13 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
           label: 'Bếp 4 Nút & Cân Mẻ',
           shortLabel: 'Bếp 4 Nút',
           icon: Flame,
+          section: 'kitchen-ops',
+        },
+        {
+          id: 'warehouse',
+          label: 'Kho Cơ Sở & Lô Hàng',
+          shortLabel: 'Kho Hàng',
+          icon: Boxes,
           section: 'kitchen-ops',
         },
         {
@@ -215,7 +222,7 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
       ];
     }
 
-    // 3. QUẢN LÝ CHI NHÁNH (ql_chinhanh_tn): Kỷ luật ca, GPS, ra ngoài, ghi phạt, chấm thi tay nghề
+    // 3. QUẢN LÝ CHI NHÁNH (ql_chinhanh_tn): Kỷ luật ca, GPS, ra ngoài, ghi phạt, chấm thi tay nghề, quản lý kho cơ sở
     if (isBranchMgr) {
       return [
         {
@@ -230,6 +237,13 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
           label: 'Giám Sát Bếp Chi Nhánh',
           shortLabel: 'Bếp & Mẻ',
           icon: Flame,
+          section: 'kitchen-ops',
+        },
+        {
+          id: 'warehouse',
+          label: 'Kho Cơ Sở & Lô Hàng',
+          shortLabel: 'Kho Hàng',
+          icon: Boxes,
           section: 'kitchen-ops',
         },
         {

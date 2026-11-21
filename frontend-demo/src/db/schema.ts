@@ -17,12 +17,39 @@ export type WarehouseDocType =
   | 'KIEM_KE'
   | string;
 
+export interface Batch {
+  id: number;
+  batchCode: string;
+  branchId?: number;
+  itemId: number;
+  itemName: string;
+  itemCode: string;
+  chefName?: string;
+  inputWeight: number;
+  outputWeight: number | null;
+  lossRate: number | null;
+  standardLossRate: number;
+  overStandard: boolean;
+  secondBatch?: boolean;
+  status: 'DANG_LAM' | 'HOAN_THANH' | 'HUY' | string;
+  startedBy: string;
+  finishedBy: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  warningMessage: string | null;
+  scalePhotoUrl?: string;
+  approvalStatus?: 'CHO_DUYET' | 'HOP_LE' | 'BIEN_BAN' | string;
+  approvalNote?: string;
+  approvedBy?: string;
+  approvedAt?: string;
+}
+
 export class SenVietDemoDatabase extends Dexie {
   users!: Table<any, number>;
   branches!: Table<any, number>;
   items!: Table<any, number>;
   recipes!: Table<any, number>;
-  batches!: Table<any, number>;
+  batches!: Table<Batch, number>;
   damageReports!: Table<any, number>;
   lineLogs!: Table<any, number>;
   inventoryLots!: Table<any, number>;

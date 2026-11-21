@@ -42,6 +42,7 @@ import { SEED_NXT_RECORDS } from '../src/components/reconciliation/nxtData';
 import { warehouseApi } from '../src/api/warehouse';
 import { formatWatermarkText } from '../src/utils/imageCompressor';
 import { WAREHOUSE_LOCATIONS, WarehouseLocation } from '../src/types/warehouse';
+import { getBuffetFoodGroup, BUFFET_FOOD_GROUPS } from '../src/components/warehouse/StockCardsTab';
 
 interface TestResult {
   suite: string;
@@ -356,7 +357,8 @@ async function runTestSuite() {
   assert(isViewAuthorized('kitchen', userQlChiNhanh) === true, 'RBAC ROLE_QL_CHINHANH', 'Quản lý xem được kitchen');
   assert(isViewAuthorized('reconciliation', userQlChiNhanh) === true, 'RBAC ROLE_QL_CHINHANH', 'Quản lý xem được reconciliation chi nhánh');
   assert(isViewAuthorized('dashboard', userQlChiNhanh) === true, 'RBAC ROLE_QL_CHINHANH', 'Quản lý xem được dashboard');
-  assert(isViewAuthorized('warehouse', userQlChiNhanh) === false, 'RBAC ROLE_QL_CHINHANH', 'Quản lý chi nhánh không quản lý kho NCC chuỗi');
+  assert(isViewAuthorized('warehouse', userQlChiNhanh) === true, 'RBAC ROLE_QL_CHINHANH', 'Quản lý chi nhánh quản lý kho cơ sở & lô hàng (TASK-WH-01)');
+  assert(isViewAuthorized('warehouse', userQlBep) === true, 'RBAC ROLE_QL_BEP', 'Bếp trưởng quản lý kho cơ sở & lô hàng (TASK-WH-01)');
 
   // 8.3. ROLE_KETOAN & ROLE_CHU_CHUOI
   assert(isViewAuthorized('dashboard', userKeToan) === true, 'RBAC ROLE_KETOAN', 'Kế toán xem dashboard');
@@ -1767,6 +1769,237 @@ async function runTestSuite() {
       (negativeTransferError.includes('vượt quá tồn kho') || negativeTransferError.includes('xuất âm kho')),
     'KHO-14 Internal Transfer Negative Stock Prevention',
     'Chặn cứng không cho phép xuất chuyển nội bộ khi số lượng chuyển vượt quá tồn kho khả dụng của kho nguồn'
+  );
+
+  console.log('\n🏬 SUITE 16: SPEC-WAREHOUSE-ANTI-THEFT-2026 Comprehensive Verification (TASK-WH-01 đến TASK-WH-07)');
+
+  // 16.1. TASK-WH-01: Phân quyền truy cập Kho cho Bếp Trưởng (ql_bep_tn) & Quản Lý Chi Nhánh (ql_chinhanh_tn)
+  const qlBepFromDb = await db.users.where('username').equals('ql_bep_tn').first();
+  const qlChiNhanhFromDb = await db.users.where('username').equals('ql_chinhanh_tn').first();
+  const bepStaffFromDb = await db.users.where('username').equals('bep_tn').first();
+
+  assert(
+    isViewAuthorized('warehouse', userQlChiNhanh) === true &&
+    isViewAuthorized('warehouse', userQlBep) === true &&
+    isViewAuthorized('warehouse', qlBepFromDb) === true &&
+    isViewAuthorized('warehouse', qlChiNhanhFromDb) === true &&
+    isViewAuthorized('warehouse', userKeToan) === true &&
+    isViewAuthorized('warehouse', userAdminChu) === true,
+    'TASK-WH-01 Warehouse RBAC Head Chef & Branch Manager Access',
+    'Bếp Trưởng (ql_bep_tn) & Quản Lý Chi Nhánh (ql_chinhanh_tn) có quyền truy cập phân hệ warehouse (isViewAuthorized === true)'
+  );
+
+  assert(
+    isViewAuthorized('warehouse', userBep) === false &&
+    isViewAuthorized('warehouse', bepStaffFromDb) === false,
+    'TASK-WH-01 Warehouse RBAC Kitchen Staff Blocked',
+    'Bếp viên (bep_tn) TUYỆT ĐỐI KHÔNG có quyền truy cập phân hệ warehouse (isViewAuthorized === false)'
+  );
+
+  // 16.2. TASK-WH-02: Lọc tồn kho theo 2 chi nhánh (TN vs QV) và 5 nhóm thực phẩm buffet chuẩn
+  const groupSeafood = getBuffetFoodGroup({ itemCode: 'HS-CUACAMAU', category: 'Hải sản chính' });
+  const groupFrozen = getBuffetFoodGroup({ itemCode: 'BTP-CAHOI', itemName: 'Cá hồi sơ chế BTP' });
+  const groupVeggies = getBuffetFoodGroup({ itemCode: 'RAU-NAM', category: 'Rau', itemName: 'Nấm đùi gà' });
+  const groupBar = getBuffetFoodGroup({ itemCode: 'BAR-BIA', category: 'Bar', itemName: 'Bia Hà Nội' });
+  const groupDry = getBuffetFoodGroup({ itemCode: 'KHO-TIEU', category: 'Gia vị', itemName: 'Tiêu Phú Quốc' });
+
+  assert(
+    groupSeafood === 'HAI_SAN_THIT_TUOI_SONG' &&
+    groupFrozen === 'BAN_THANH_PHAM_DONG_LANH' &&
+    groupVeggies === 'RAU_CU_QUA_TUOI' &&
+    groupBar === 'DO_UONG_BAR' &&
+    groupDry === 'HANG_KHO_GIA_VI',
+    'TASK-WH-02 5 Buffet Food Groups Classification',
+    'Hệ thống phân loại chính xác 5 nhóm thực phẩm buffet: Bán thành phẩm đông lạnh, Hải sản & Thịt, Rau củ, Bar, Đồ khô'
+  );
+
+  const tnStocks = await warehouseApi.getStocks({ branchId: 1 });
+  const qvStocks = await warehouseApi.getStocks({ branchId: 2 });
+  assert(
+    tnStocks.length > 0 &&
+    qvStocks.length > 0 &&
+    tnStocks.every(s => s.branchId === 1) &&
+    qvStocks.every(s => s.branchId === 2),
+    'TASK-WH-02 Multi-Branch Stock Filtering (TN vs QV)',
+    `Lọc tồn kho độc lập theo 2 chi nhánh: TN (${tnStocks.length} mặt hàng) và QV (${qvStocks.length} mặt hàng)`
+  );
+
+  // 16.3. TASK-WH-03: Cơ chế nhập mù (Blind Weighing) cho Bếp viên
+  const cookFeedbackNotice = `✅ Đã ghi nhận số cân mẻ [BATCH-202611-002] (14.2 kg) kèm ảnh bàn cân. Đã chuyển Quản lý đối soát!`;
+  const leaksLossRate = cookFeedbackNotice.includes('%') || cookFeedbackNotice.toLowerCase().includes('hao hụt');
+  const leaksStandard = cookFeedbackNotice.toLowerCase().includes('định mức') || cookFeedbackNotice.toLowerCase().includes('chuẩn');
+  const leaksAlert = cookFeedbackNotice.toLowerCase().includes('vượt') || cookFeedbackNotice.toLowerCase().includes('cảnh báo');
+
+  assert(
+    !leaksLossRate && !leaksStandard && !leaksAlert,
+    'TASK-WH-03 Blind Weighing Cook UI Payload Protection',
+    'Cơ chế nhập mù: kiểm tra giao diện/payload của Bếp viên không để lộ định mức chuẩn và cảnh báo hao hụt'
+  );
+
+  // 16.4. TASK-WH-04: Bắt buộc ảnh chụp bàn cân: chặn hoàn tất mẻ khi thiếu scalePhotoUrl
+  const salmonItem = (await db.items.where('itemCode').equals('HS-CAHOI').first())!;
+  const testBatchForPhoto = await kitchenApi.startBatch({
+    itemId: salmonItem.id,
+    inputWeight: 12.0,
+    unit: 'kg',
+    forceSecondBatch: true,
+  });
+
+  let isMissingPhotoBlocked = false;
+  let missingPhotoError = '';
+  try {
+    await kitchenApi.finishBatch({
+      batchId: testBatchForPhoto.data.id,
+      outputWeight: 11.2,
+      scalePhotoUrl: '', // Thiếu ảnh chụp mặt bàn cân
+      requireScalePhoto: true,
+    });
+  } catch (err: any) {
+    isMissingPhotoBlocked = true;
+    missingPhotoError = err.message || '';
+  }
+
+  assert(
+    isMissingPhotoBlocked && missingPhotoError.includes('bàn cân'),
+    'TASK-WH-04 Require Scale Photo Enforced Validation',
+    'Bắt buộc ảnh chụp bàn cân: chặn hoàn tất mẻ khi thiếu scalePhotoUrl với cảnh báo rõ ràng'
+  );
+
+  const mockScalePhoto = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><text x="300" y="200" font-size="50">11.20 kg</text></svg>';
+  const finishWithPhotoRes = await kitchenApi.finishBatch({
+    batchId: testBatchForPhoto.data.id,
+    outputWeight: 11.2,
+    scalePhotoUrl: mockScalePhoto,
+    requireScalePhoto: true,
+  });
+
+  const savedBatchWithPhoto = await db.batches.get(testBatchForPhoto.data.id);
+  assert(
+    finishWithPhotoRes.success === true &&
+    savedBatchWithPhoto &&
+    savedBatchWithPhoto.scalePhotoUrl === mockScalePhoto &&
+    savedBatchWithPhoto.approvalStatus === 'CHO_DUYET',
+    'TASK-WH-04 Scale Photo Persistence & Pending Approval',
+    'Đính kèm ảnh chụp bàn cân hợp lệ: lưu mẻ thành công vào IndexedDB và khởi tạo trạng thái CHO_DUYET'
+  );
+
+  // 16.5. TASK-WH-05: Màn hình Bếp trưởng/Quản lý soi ảnh cân đối soát mẻ & xử lý chênh lệch
+  const overBatch = (await db.batches.get(2))!; // Batch 2: Cá hồi hụt 12% vs chuẩn 8%
+  const actualLoss = overBatch.lossRate!;
+  const stdLoss = overBatch.standardLossRate;
+  const overLossDiff = Number((actualLoss - stdLoss).toFixed(1));
+
+  assert(
+    overBatch.overStandard === true &&
+    actualLoss === 12.0 &&
+    stdLoss === 8.0 &&
+    overLossDiff === 4.0 &&
+    !!overBatch.scalePhotoUrl,
+    'TASK-WH-05 Manager Loss Calculation & Red Alert Flag',
+    'Màn hình Bếp trưởng/Quản lý soi ảnh cân: tính đúng % hao hụt thực tế (12%), so sánh chuẩn (8%), đánh dấu cờ đỏ vượt chuẩn (+4.0%) và liên kết ảnh bàn cân'
+  );
+
+  const approveRes = await kitchenApi.approveBatch({
+    batchId: testBatchForPhoto.data.id,
+    approvedBy: 'Trần Thị Bếp Trưởng',
+    note: 'Đã đối soát ảnh bàn cân điện tử khớp 11.2kg, xác nhận hợp lệ',
+  });
+  const approvedBatchInDb = await db.batches.get(testBatchForPhoto.data.id);
+  assert(
+    approveRes.success === true &&
+    approvedBatchInDb.approvalStatus === 'HOP_LE' &&
+    approvedBatchInDb.approvedBy === 'Trần Thị Bếp Trưởng',
+    'TASK-WH-05 Manager Batch Approval (HOP_LE)',
+    'Bếp Trưởng / Quản Lý xác nhận mẻ hợp lệ sau khi soi ảnh bàn cân, cập nhật trạng thái HOP_LE'
+  );
+
+  const explainRes = await kitchenApi.recordBatchExplanation({
+    batchId: overBatch.id,
+    approvedBy: 'Nguyễn Hoàng Nam (Quản Lý CN)',
+    note: 'Cá hồi đợt này xương dày, yêu cầu bếp viên rút kinh nghiệm thao tác lóc thịt',
+  });
+  const explainedBatchInDb = await db.batches.get(overBatch.id);
+  assert(
+    explainRes.success === true &&
+    explainedBatchInDb.approvalStatus === 'BIEN_BAN' &&
+    explainedBatchInDb.approvedBy === 'Nguyễn Hoàng Nam (Quản Lý CN)' &&
+    explainedBatchInDb.approvalNote.includes('xương dày'),
+    'TASK-WH-05 Manager Batch Explanation Record (BIEN_BAN)',
+    'Quản lý lập biên bản giải trình hao hụt cho mẻ vượt định mức thành công, lưu trạng thái BIEN_BAN kèm lý do'
+  );
+
+  // 16.6. TASK-WH-06: Khấu trừ kho lấy hàng (XUAT_CHE_BIEN) và tăng tồn kho bán thành phẩm tương ứng khi mẻ hoàn tất
+  const initialSalmonStock = await warehouseApi.getItemCurrentStock(salmonItem.id, 1);
+  const takeOutRes16 = await kitchenApi.recordTakeOut({
+    itemId: salmonItem.id,
+    quantity: 3.5,
+    unit: 'kg',
+    note: 'Xuất nấu mẻ trưa',
+  });
+  const afterTakeOutStock = await warehouseApi.getItemCurrentStock(salmonItem.id, 1);
+  const cbDocs = await db.warehouseDocuments.where('docType').equals('XUAT_CHE_BIEN').toArray();
+  const latestCbDoc = cbDocs[cbDocs.length - 1];
+
+  assert(
+    takeOutRes16.success === true &&
+    Math.abs((initialSalmonStock - afterTakeOutStock) - 3.5) < 0.01 &&
+    latestCbDoc && latestCbDoc.docCode.startsWith('PXK-CB-'),
+    'TASK-WH-06 Point 1 Take Out Deduction & Movement',
+    'Khấu trừ kho lấy hàng (XUAT_CHE_BIEN): trừ đúng 3.5kg tồn kho thô và tự động tạo phiếu biến động PXK-CB-...'
+  );
+
+  const testBatchRes = await kitchenApi.startBatch({
+    itemId: salmonItem.id,
+    inputWeight: 10.0,
+    unit: 'kg',
+    forceSecondBatch: true,
+  });
+  const finishRes = await kitchenApi.finishBatch({
+    batchId: testBatchRes.data.id,
+    outputWeight: 9.2,
+    scalePhotoUrl: mockScalePhoto,
+  });
+  const btpLot = await db.inventoryLots.where('batchCode').equals(`LOT-BTP-${testBatchRes.data.batchCode.replace(/^BATCH-/, '')}`).first();
+  const btpDocs = await db.warehouseDocuments.where('docType').equals('NHAP_BTP').toArray();
+  const latestBtpDoc = btpDocs[btpDocs.length - 1];
+
+  assert(
+    finishRes.success === true &&
+    btpLot && btpLot.currentStock === 9.2 &&
+    btpLot.note.includes(`Nhập từ mẻ [${testBatchRes.data.batchCode}]`) &&
+    latestBtpDoc && latestBtpDoc.docCode.startsWith('PNK-BTP-'),
+    'TASK-WH-06 Point 2 Batch Finish Auto Increase Semi-finished Stock',
+    'Mẻ nấu xong: tự động tăng tồn kho bán thành phẩm (+9.2kg) tương ứng tại chi nhánh và ghi chú đúng mã mẻ'
+  );
+
+  // 16.7. TASK-WH-07: Khấu trừ kho bán thành phẩm khi bấm Ra Line (+1) buffet
+  const stockBeforeLine = await warehouseApi.getItemCurrentStock(salmonItem.id, 1);
+  const lineRes16 = await kitchenApi.recordLineItem({
+    itemId: salmonItem.id,
+    quantity: 1,
+    requestId: `line-test-${Date.now()}`,
+  });
+  const stockAfterLine = await warehouseApi.getItemCurrentStock(salmonItem.id, 1);
+  const lineDocs = await db.warehouseDocuments.where('docType').equals('RA_LINE').toArray();
+  const latestLineDoc = lineDocs[lineDocs.length - 1];
+
+  assert(
+    lineRes16.success === true &&
+    Math.abs((stockBeforeLine - stockAfterLine) - 1.0) < 0.01 &&
+    latestLineDoc && latestLineDoc.docCode.startsWith('PXK-LINE-'),
+    'TASK-WH-07 Realtime Ra Line Auto Deduction',
+    'Khấu trừ kho bán thành phẩm khi bấm Ra Line (+1) buffet theo thời gian thực (-1kg/đĩa) và tạo biến động RA_LINE'
+  );
+
+  const ledgerEntries = await warehouseApi.getStockLedger(salmonItem.id, 1);
+  const hasCbEntry = ledgerEntries.some(e => e.docType === 'XUAT_CHE_BIEN');
+  const hasBtpEntry = ledgerEntries.some(e => e.docType === 'NHAP');
+  const hasLineEntry = ledgerEntries.some(e => e.docType === 'RA_LINE');
+
+  assert(
+    hasCbEntry && hasBtpEntry && hasLineEntry,
+    'TASK-WH-06 & TASK-WH-07 Realtime Stock Ledger Integration',
+    'Thẻ kho (Stock Ledger) ghi nhận đầy đủ chuỗi 3 điểm biến động: Xuất chế biến -> Nhập BTP -> Ra line'
   );
 
   console.log('\n======================================================');

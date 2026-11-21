@@ -1394,6 +1394,48 @@ export const warehouseApi = {
             partnerOrReason: it.reason || doc.note || 'Xuất hủy hao hụt',
             note: doc.note || 'Phiếu xuất hủy',
           });
+        } else if (doc.docType === 'XUAT_CHE_BIEN') {
+          rawEvents.push({
+            id: `DOC-${doc.id}-${it.id || 0}`,
+            docCode: doc.docCode || `PXK-CB-${doc.id}`,
+            docType: 'XUAT_CHE_BIEN',
+            docTypeName: 'Xuất chế biến',
+            date: doc.createdAt || '2026-11-17 09:00:00',
+            batchCode: it.batchCode,
+            inQty: 0,
+            outQty: qty,
+            changeQty: -qty,
+            partnerOrReason: it.reason || doc.note || 'Bếp lấy nguyên liệu chế biến',
+            note: doc.note || 'Xuất chế biến bếp',
+          });
+        } else if (doc.docType === 'NHAP_BTP') {
+          rawEvents.push({
+            id: `DOC-${doc.id}-${it.id || 0}`,
+            docCode: doc.docCode || `PNK-BTP-${doc.id}`,
+            docType: 'NHAP',
+            docTypeName: 'Nhập BTP từ mẻ nấu',
+            date: doc.createdAt || '2026-11-17 10:00:00',
+            batchCode: it.batchCode,
+            inQty: qty,
+            outQty: 0,
+            changeQty: qty,
+            partnerOrReason: it.reason || doc.note || 'Hoàn tất mẻ nấu',
+            note: doc.note || 'Tự động tăng tồn kho bán thành phẩm',
+          });
+        } else if (doc.docType === 'RA_LINE') {
+          rawEvents.push({
+            id: `DOC-${doc.id}-${it.id || 0}`,
+            docCode: doc.docCode || `PXK-LINE-${doc.id}`,
+            docType: 'RA_LINE',
+            docTypeName: 'Ra quầy line phục vụ',
+            date: doc.createdAt || '2026-11-17 11:00:00',
+            batchCode: it.batchCode,
+            inQty: 0,
+            outQty: qty,
+            changeQty: -qty,
+            partnerOrReason: 'Quầy line buffet',
+            note: doc.note || 'Xuất quầy line buffet',
+          });
         } else if (doc.docType === 'XUAT_CHUYEN' || doc.docType === 'XUAT_BEP') {
           rawEvents.push({
             id: `DOC-${doc.id}-${it.id || 0}`,
@@ -1426,15 +1468,17 @@ export const warehouseApi = {
       }
     }
 
-    // 2. Từ takeOutLogs (Bếp lấy nguyên liệu từ kho)
+    // 2. Từ takeOutLogs (Bếp lấy nguyên liệu từ kho nếu chưa có trong warehouseDocuments)
+    const existingDocCodes = new Set(rawEvents.map((e) => e.docCode));
     const takeOuts = await db.takeOutLogs.toArray();
     for (const log of takeOuts) {
       const logItemId = log.item?.id || log.itemId;
-      if (logItemId === itemId && !log.isCancelled) {
+      const expectedCode = `PXK-BEP-${log.id}`;
+      if (logItemId === itemId && !log.isCancelled && !existingDocCodes.has(expectedCode)) {
         rawEvents.push({
           id: `TO-${log.id}`,
-          docCode: `PXK-BEP-${log.id}`,
-          docType: 'XUAT_BEP',
+          docCode: expectedCode,
+          docType: 'XUAT_CHE_BIEN',
           docTypeName: 'Bếp lấy hàng chế biến',
           date: log.createdAt || '2026-11-18 11:30:00',
           inQty: 0,
