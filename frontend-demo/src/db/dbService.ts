@@ -32,7 +32,7 @@ import {
 /**
  * Phiên bản dữ liệu mẫu (Cập nhật phiên bản sẽ kích hoạt tự động reset IndexedDB đồng bộ)
  */
-export const SEED_DATA_VERSION = 'v2026_11_21_t11_ketoan_tong_fixed_v8';
+export const SEED_DATA_VERSION = 'v2026_11_21_sprint_kho_v1';
 
 let memorySeedVersion: string | null = null;
 
@@ -105,6 +105,73 @@ export async function initializeDatabaseIfEmpty(): Promise<boolean> {
           'ROLE_GENERAL_ACCOUNTANT',
         ]));
         await db.users.update(adminUser.id, { roles: updatedAdminRoles });
+      }
+
+      // Tự động kiểm tra và thêm tài khoản Kế toán Chi nhánh (ketoan_tn & ketoan_qv)
+      const ktBranchUser = await db.users.where('username').equals('ketoan_tn').first();
+      if (!ktBranchUser) {
+        await db.users.add({
+          id: 7,
+          username: 'ketoan_tn',
+          fullName: 'Nguyễn Thu Thủy',
+          email: 'ketoan_tn@senvietbuffet.vn',
+          phone: '0987778899',
+          branchId: 1,
+          branchCode: 'TN',
+          branchName: 'Sen Việt Buffet - Chi nhánh Thái Nguyên',
+          department: 'Kế toán',
+          position: 'Kế toán chi nhánh',
+          baseSalary: 9500000,
+          insuranceRate: 0.11,
+          insuranceAmount: 1045000,
+          bankAccount: '19034567891012',
+          bankName: 'Techcombank',
+          roles: [
+            'ROLE_KETOAN_CHINHANH',
+            'ROLE_BRANCH_ACCOUNTANT',
+            'ROLE_ACCOUNTANT',
+            'ROLE_EMPLOYEE',
+          ],
+          status: 'ACTIVE',
+        });
+        console.log('[Dexie DB] Đã tự động tạo tài khoản Kế Toán Chi Nhánh (ketoan_tn)');
+      } else if (!ktBranchUser.roles.includes('ROLE_KETOAN_CHINHANH')) {
+        await db.users.update(ktBranchUser.id, {
+          roles: Array.from(new Set([...ktBranchUser.roles, 'ROLE_KETOAN_CHINHANH', 'ROLE_BRANCH_ACCOUNTANT'])),
+        });
+      }
+
+      const ktQVUser = await db.users.where('username').equals('ketoan_qv').first();
+      if (!ktQVUser) {
+        await db.users.add({
+          id: 8,
+          username: 'ketoan_qv',
+          fullName: 'Trần Thị Lan',
+          email: 'ketoan_qv@senvietbuffet.vn',
+          phone: '0988889900',
+          branchId: 2,
+          branchCode: 'QV',
+          branchName: 'Sen Việt Buffet - Chi nhánh Quế Võ',
+          department: 'Kế toán',
+          position: 'Kế toán chi nhánh Quế Võ',
+          baseSalary: 9500000,
+          insuranceRate: 0.105,
+          insuranceAmount: 997500,
+          bankAccount: '0381000123456',
+          bankName: 'Vietcombank',
+          roles: [
+            'ROLE_KETOAN_CHINHANH',
+            'ROLE_BRANCH_ACCOUNTANT',
+            'ROLE_ACCOUNTANT',
+            'ROLE_EMPLOYEE',
+          ],
+          status: 'ACTIVE',
+        });
+        console.log('[Dexie DB] Đã tự động tạo tài khoản Kế Toán Chi Nhánh (ketoan_qv)');
+      } else if (!ktQVUser.roles.includes('ROLE_KETOAN_CHINHANH')) {
+        await db.users.update(ktQVUser.id, {
+          roles: Array.from(new Set([...ktQVUser.roles, 'ROLE_KETOAN_CHINHANH', 'ROLE_BRANCH_ACCOUNTANT'])),
+        });
       }
     } catch (e) {
       console.warn('[Dexie DB] Bỏ qua kiểm tra nâng cấp quyền người dùng:', e);

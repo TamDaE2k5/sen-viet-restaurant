@@ -61,6 +61,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const isManager = hasRole('ROLE_RESTAURANT_MANAGER') || hasRole('ROLE_QL_CHINHANH');
   const isAccountant =
     user?.username === 'ketoan_tong' ||
+    user?.username === 'ketoan_tn' ||
+    hasRole('ROLE_KETOAN_CHINHANH') ||
     hasRole('ROLE_BRANCH_ACCOUNTANT') ||
     hasRole('ROLE_GENERAL_ACCOUNTANT') ||
     hasRole('ROLE_KETOAN_TONG') ||

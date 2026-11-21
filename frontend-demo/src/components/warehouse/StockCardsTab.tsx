@@ -23,7 +23,14 @@ import {
   Printer,
   ChevronDown,
 } from 'lucide-react';
-import { InventoryStock, ImportBatch, WarehouseDocument } from '../../api/warehouse';
+import {
+  InventoryStock,
+  ImportBatch,
+  WarehouseDocument,
+  WAREHOUSE_LOCATIONS,
+  getItemWarehouseLocation,
+  PhysicalWarehouseLocation,
+} from '../../api/warehouse';
 import { Item } from '../../api/kitchen';
 
 export interface StockCardTransaction {
@@ -61,6 +68,7 @@ export const StockCardsTab: React.FC<StockCardsTabProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
+  const [warehouseFilter, setWarehouseFilter] = useState<string>('ALL');
   const [alertFilter, setAlertFilter] = useState<'ALL' | 'CRITICAL' | 'WARNING' | 'SAFE' | 'OVERSTOCK'>('ALL');
   const [branchFilter, setBranchFilter] = useState<string>('ALL');
 
@@ -118,12 +126,14 @@ export const StockCardsTab: React.FC<StockCardsTabProps> = ({
       unitPrice: number;
       storage: string;
       branchId: number;
+      warehouseLocation: PhysicalWarehouseLocation;
       lastImportDate?: string;
     }>();
 
     // Seed from buffet items first
     for (const bi of buffetItems) {
       const { minStock, maxStock, storage } = getMinMaxStock(bi.itemCode, bi.category);
+      const loc = getItemWarehouseLocation(bi.itemCode, bi.category);
       map.set(bi.id, {
         itemId: bi.id,
         itemCode: bi.itemCode,
@@ -137,6 +147,7 @@ export const StockCardsTab: React.FC<StockCardsTabProps> = ({
         unitPrice: bi.costPrice || 180000,
         storage,
         branchId: bi.branchId || 1,
+        warehouseLocation: loc,
       });
     }
 
@@ -151,8 +162,12 @@ export const StockCardsTab: React.FC<StockCardsTabProps> = ({
           existing.lastImportDate = b.importDate;
         }
         if (b.unitPrice > 0) existing.unitPrice = b.unitPrice;
+        if (b.warehouseLocation) {
+          existing.warehouseLocation = b.warehouseLocation as PhysicalWarehouseLocation;
+        }
       } else {
         const { minStock, maxStock, storage } = getMinMaxStock(b.itemCode || '', '');
+        const loc = (b.warehouseLocation as PhysicalWarehouseLocation) || getItemWarehouseLocation(b.itemCode, '');
         map.set(b.itemId, {
           itemId: b.itemId,
           itemCode: b.itemCode || `M-${b.itemId}`,
@@ -166,6 +181,7 @@ export const StockCardsTab: React.FC<StockCardsTabProps> = ({
           unitPrice: b.unitPrice || 200000,
           storage,
           branchId: b.branchId || 1,
+          warehouseLocation: loc,
           lastImportDate: b.importDate,
         });
       }
@@ -219,9 +235,13 @@ export const StockCardsTab: React.FC<StockCardsTabProps> = ({
         matchAlert = s.currentStock > s.maxStock;
       }
 
-      return matchSearch && matchCat && matchBranch && matchAlert;
+      // KHO-11: Lọc Phân Vùng 5 Kho Vật Lý
+      const matchWarehouse =
+        warehouseFilter === 'ALL' || s.warehouseLocation === warehouseFilter;
+
+      return matchSearch && matchCat && matchBranch && matchAlert && matchWarehouse;
     });
-  }, [consolidatedStocks, searchTerm, categoryFilter, branchFilter, alertFilter]);
+  }, [consolidatedStocks, searchTerm, categoryFilter, branchFilter, alertFilter, warehouseFilter]);
 
   // Thống kê nhanh KPI Tồn kho
   const totalStockValue = useMemo(() => {
@@ -477,6 +497,22 @@ export const StockCardsTab: React.FC<StockCardsTabProps> = ({
             />
           </div>
 
+          {/* KHO-11: Lọc Phân Vùng 5 Kho Vật Lý */}
+          <div className="flex items-center gap-1 text-xs">
+            <Boxes className="h-3.5 w-3.5 text-indigo-600" />
+            <select
+              value={warehouseFilter}
+              onChange={(e) => setWarehouseFilter(e.target.value)}
+              className="px-2.5 py-2 rounded-xl border border-indigo-300 text-xs font-bold text-indigo-900 bg-indigo-50/70"
+            >
+              {WAREHOUSE_LOCATIONS.map((loc) => (
+                <option key={loc.id} value={loc.id}>
+                  {loc.icon} {loc.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
           {/* Lọc Nhóm Mặt Hàng */}
           <div className="flex items-center gap-1 text-xs">
             <Filter className="h-3.5 w-3.5 text-slate-400" />
@@ -588,9 +624,21 @@ export const StockCardsTab: React.FC<StockCardsTabProps> = ({
                         </div>
                       </td>
                       <td className="p-3.5">
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
-                          {item.category}
-                        </span>
+                        <div className="flex flex-col gap-1 items-start">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
+                            {item.category}
+                          </span>
+                          {(() => {
+                            const locMeta = WAREHOUSE_LOCATIONS.find(
+                              (l) => l.code === item.warehouseLocation
+                            );
+                            return (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                {locMeta?.icon || '🏢'} {locMeta?.name || item.warehouseLocation}
+                              </span>
+                            );
+                          })()}
+                        </div>
                       </td>
                       <td className="p-3.5 text-center font-medium">{item.unit}</td>
                       <td className="p-3.5 text-right font-mono font-black text-slate-900 text-sm">

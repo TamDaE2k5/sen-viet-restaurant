@@ -36,9 +36,12 @@ import {
   Printer,
   Sparkles,
   Package,
+  ArrowRightLeft,
+  Check,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
+import { userHasRole } from '../../utils/rbac';
 import {
   warehouseApi,
   Supplier,
@@ -51,6 +54,9 @@ import {
   CreateDocumentRequest,
   CreateSupplierRequest,
   CreateInventoryCheckRequest,
+  WAREHOUSE_LOCATIONS,
+  getItemWarehouseLocation,
+  PhysicalWarehouseLocation,
 } from '../../api/warehouse';
 import { kitchenApi, Item } from '../../api/kitchen';
 import { compressImage, CompressionResult } from '../../utils/imageCompressor';
@@ -244,8 +250,51 @@ export const WarehouseModule: React.FC = () => {
     }[]
   >([]);
   const [docImages, setDocImages] = useState<CompressionResult[]>([]);
+  const [selectedWarehouseLocation, setSelectedWarehouseLocation] = useState<string>('KHO_KHO');
   const [isSubmittingDoc, setIsSubmittingDoc] = useState<boolean>(false);
   const docFileInputRef = useRef<HTMLInputElement>(null);
+
+  // KHO-06: Quyền phê duyệt báo hỏng (Quản lý chi nhánh & Ban Giám đốc)
+  const canApproveWaste = useMemo(() => {
+    if (!user) return false;
+    return (
+      userHasRole(user, 'ROLE_QL_CHINHANH') ||
+      userHasRole(user, 'ROLE_CHU_CHUOI') ||
+      userHasRole(user, 'ROLE_KETOAN_TONG') ||
+      userHasRole(user, 'ROLE_RESTAURANT_MANAGER') ||
+      user.username === 'ql_chinhanh_tn' ||
+      user.username === 'admin_chu' ||
+      user.username === 'ketoan_tong'
+    );
+  }, [user]);
+
+  const handleApproveDoc = async (doc: WarehouseDocument) => {
+    try {
+      await warehouseApi.approveDocument(doc.id, user?.fullName || 'Lê Hoàng Quản Lý');
+      showNotice(
+        'success',
+        `✅ Đã duyệt xuất hủy phiếu ${doc.docCode}. Tồn kho đã được trừ chính thức!`
+      );
+      await loadAllData();
+    } catch (err: any) {
+      console.error('Lỗi khi duyệt phiếu:', err);
+      showNotice('error', 'Lỗi khi duyệt phiếu: ' + (err.message || 'Lỗi hệ thống'));
+    }
+  };
+
+  const handleRejectDoc = async (doc: WarehouseDocument) => {
+    try {
+      await warehouseApi.rejectDocument(doc.id, 'Quản lý từ chối duyệt xuất hủy');
+      showNotice(
+        'success',
+        `❌ Đã từ chối phiếu xuất hủy ${doc.docCode}.`
+      );
+      await loadAllData();
+    } catch (err: any) {
+      console.error('Lỗi khi từ chối phiếu:', err);
+      showNotice('error', 'Lỗi khi từ chối phiếu: ' + (err.message || 'Lỗi hệ thống'));
+    }
+  };
 
   // Modal Chi Tiết Phiếu Kho
   const [viewingDoc, setViewingDoc] = useState<WarehouseDocument | null>(null);
@@ -380,7 +429,12 @@ export const WarehouseModule: React.FC = () => {
   const handleOpenDocModal = (type: 'NHAP' | 'XUAT_CHUYEN' | 'HUY') => {
     setDocType(type);
     setSelectedSupplierId(suppliers.length > 0 ? suppliers[0].id : undefined);
-    setDocNote('');
+    setSelectedWarehouseLocation(type === 'XUAT_CHUYEN' ? 'KHO_BEP' : 'KHO_KHO');
+    setDocNote(
+      type === 'XUAT_CHUYEN'
+        ? 'Xuất gia vị, dầu ăn, đường từ Kho Khô sang Bếp chế biến trong ca'
+        : ''
+    );
     setDocImages([]);
 
     // Default 1 line item
@@ -520,12 +574,28 @@ export const WarehouseModule: React.FC = () => {
 
     try {
       const compressedList: CompressionResult[] = [];
+      const branchName =
+        user?.branchName || (user?.branchId === 2 ? 'Sen Việt - Quế Võ' : 'Sen Việt - Thái Nguyên');
+      const userName = user?.fullName || 'Bếp viên';
+      const docTitle =
+        docType === 'NHAP'
+          ? 'Phiếu Nhập Kho'
+          : docType === 'HUY'
+          ? 'Phiếu Xuất Hủy'
+          : 'Xuất Kho Sang Bếp';
+
       for (let i = 0; i < files.length; i++) {
-        const res = await compressImage(files[i], 1280, 720, 0.75);
+        // KHO-03: Áp dụng watermark tự động in đè thông tin chi nhánh, thời gian thực, người thực hiện
+        const res = await compressImage(files[i], 1280, 720, 0.75, {
+          branchName,
+          userName,
+          docType: docTitle,
+          docTypeName: docTitle,
+        });
         compressedList.push(res);
       }
       setDocImages([...docImages, ...compressedList]);
-      showNotice('success', `Đã nén và thêm ${files.length} ảnh chứng từ thành công`);
+      showNotice('success', `Đã nén và thêm ${files.length} ảnh chứng từ kèm Watermark thành công`);
     } catch (err) {
       console.error('Lỗi khi nén ảnh phiếu kho:', err);
       showNotice('error', 'Lỗi khi nén ảnh chứng từ');
@@ -573,6 +643,12 @@ export const WarehouseModule: React.FC = () => {
       return;
     }
 
+    // KHO-03: BẮT BUỘC CHỤP ẢNH BÀN CÂN / CHỨNG TỪ (*)
+    if (docImages.length === 0) {
+      showNotice('error', '⚠️ Vui lòng chụp ảnh bàn cân hoặc phiếu giao hàng trước khi lưu!');
+      return;
+    }
+
     // Kiểm tra mọi dòng phải có quantity/thực cân > 0
     const hasInvalidQty = docItems.some((item) => {
       const q = typeof item.quantity === 'string' ? parseFloat(item.quantity) : item.quantity;
@@ -587,6 +663,19 @@ export const WarehouseModule: React.FC = () => {
     if (hasInvalidQty) {
       showNotice('error', 'Vui lòng nhập số lượng/thực cân hợp lệ (> 0) cho tất cả các mặt hàng');
       return;
+    }
+
+    // KHO-04: Bắt buộc chọn NCC hoặc Lô nhập khi lý do là Cua/Hải sản chết để bắt đền
+    if (docType === 'HUY') {
+      for (const item of docItems) {
+        if (item.lossCategory === 'HAI_SAN_CHET_NCC' && !item.batchId && !selectedSupplierId) {
+          showNotice(
+            'error',
+            '⚠️ Với lý do Cua / Hải sản chết (Bắt đền NCC), bắt buộc phải chọn Lô nhập hoặc Nhà cung cấp để gắn trách nhiệm bồi hoàn!'
+          );
+          return;
+        }
+      }
     }
 
     // OBJECTIVE 1: Chặn cứng xuất âm kho khi xuất hủy
@@ -609,13 +698,31 @@ export const WarehouseModule: React.FC = () => {
       }
     }
 
+    // KHO-14: Chặn xuất âm kho khi xuất chuyển nội bộ Kho Khô sang Bếp
+    if (docType === 'XUAT_CHUYEN') {
+      for (const item of docItems) {
+        const q = typeof item.quantity === 'string' ? parseFloat(item.quantity) : item.quantity;
+        const avail = getAvailableStock(item.itemId, item.batchId).stock;
+        if (Number(q) > avail) {
+          const it = buffetItems.find((b) => b.id === item.itemId);
+          showNotice(
+            'error',
+            `❌ VI PHẠM XUẤT ÂM KHO: Mặt hàng '${it?.itemName || 'Hàng khô'}' có số lượng chuyển (${q} kg) vượt quá tồn kho khả dụng (${avail} kg)! Hệ thống chặn lưu phiếu.`
+          );
+          return;
+        }
+      }
+    }
+
     try {
       setIsSubmittingDoc(true);
       const payload: CreateDocumentRequest = {
         branchId: user?.branchId || 1,
         branchCode: (user?.branchId === 2 ? 'QV' : 'TN') as any,
         docType,
-        supplierId: docType === 'NHAP' ? selectedSupplierId : undefined,
+        supplierId: docType === 'NHAP' ? selectedSupplierId : (docType === 'HUY' ? selectedSupplierId : undefined),
+        status: docType === 'HUY' ? 'CHO_DUYET' : 'HOAN_THANH',
+        warehouseLocation: selectedWarehouseLocation,
         note: docNote || undefined,
         imageUrls: docImages.map((img) => img.dataUrl).join(';'),
         items: docItems.map((item) => {
@@ -650,6 +757,7 @@ export const WarehouseModule: React.FC = () => {
             batchId: item.batchId,
             lossCategory: item.lossCategory || (docType === 'HUY' ? 'HAI_SAN_CHET_NCC' : undefined),
             reason: item.reasonDetail || undefined,
+            warehouseLocation: selectedWarehouseLocation,
           };
         }),
       };
@@ -657,7 +765,11 @@ export const WarehouseModule: React.FC = () => {
       const res = await warehouseApi.createDocument(payload);
       showNotice(
         'success',
-        `✅ Đã tạo ${res.docCode || 'phiếu kho'} thành công! Tồn kho, Lô hàng & Công nợ NCC đã được cập nhật.`
+        docType === 'HUY'
+          ? `✅ Đã lập phiếu xuất hủy ${res.docCode}! Phiếu đang ở trạng thái 'Chờ Quản lý duyệt'.`
+          : docType === 'XUAT_CHUYEN'
+          ? `✅ Đã lập phiếu xuất chuyển ${res.docCode} sang Bếp thành công! Tồn kho hàng khô đã được trừ.`
+          : `✅ Đã tạo phiếu nhập kho ${res.docCode} thành công! Tồn kho & Công nợ NCC đã được cập nhật.`
       );
       setShowDocModal(false);
       loadAllData();
@@ -1219,6 +1331,14 @@ export const WarehouseModule: React.FC = () => {
                   <span>+ Lập Phiếu Nhập</span>
                 </button>
                 <button
+                  onClick={() => handleOpenDocModal('XUAT_CHUYEN')}
+                  className="btn-touch px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm"
+                  title="Xuất dầu ăn, đường, gia vị từ Kho Khô sang Bếp"
+                >
+                  <ArrowRightLeft className="h-4 w-4" />
+                  <span>+ Xuất Hàng Khô Sang Bếp</span>
+                </button>
+                <button
                   onClick={() => handleOpenDocModal('HUY')}
                   className="btn-touch px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm"
                 >
@@ -1348,9 +1468,51 @@ export const WarehouseModule: React.FC = () => {
                             )}
                           </td>
 
-                          {/* THAO TÁC: XEM CHI TIẾT & IN BIÊN BẢN A4 */}
+                          {/* THAO TÁC: PHÊ DUYỆT (KHO-06) / XEM CHI TIẾT & IN BIÊN BẢN A4 */}
                           <td className="p-3.5 text-right">
-                            <div className="flex items-center justify-end gap-1.5">
+                            <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                              {/* KHO-06: Phân quyền duyệt xuất hủy */}
+                              {doc.docType === 'HUY' && (
+                                <>
+                                  {doc.status === 'CHO_DUYET' ? (
+                                    canApproveWaste ? (
+                                      <div className="flex items-center gap-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleApproveDoc(doc)}
+                                          className="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold inline-flex items-center gap-0.5 shadow-sm transition-all"
+                                          title="Quản lý phê duyệt xuất hủy - trừ tồn kho chính thức"
+                                        >
+                                          <Check className="h-3 w-3" />
+                                          <span>Duyệt Hủy</span>
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRejectDoc(doc)}
+                                          className="px-2 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold inline-flex items-center gap-0.5 shadow-sm transition-all"
+                                          title="Từ chối yêu cầu xuất hủy"
+                                        >
+                                          <X className="h-3 w-3" />
+                                          <span>Từ Chối</span>
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                                        🟡 Đang chờ Quản lý duyệt
+                                      </span>
+                                    )
+                                  ) : doc.status === 'DA_DUYET' ? (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                      ✅ Đã duyệt
+                                    </span>
+                                  ) : doc.status === 'TU_CHOI' ? (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                                      ❌ Đã từ chối
+                                    </span>
+                                  ) : null}
+                                </>
+                              )}
+
                               {doc.docType === 'NHAP' && (
                                 <button
                                   type="button"
@@ -1939,10 +2101,15 @@ export const WarehouseModule: React.FC = () => {
                     <PackagePlus className="h-6 w-6" />
                     <span>LẬP PHIẾU NHẬP KHO & CÂN THỰC TẾ (2 CỘT SỐ LƯỢNG)</span>
                   </div>
+                ) : docType === 'XUAT_CHUYEN' ? (
+                  <div className="flex items-center gap-2 text-amber-700">
+                    <ArrowRightLeft className="h-6 w-6" />
+                    <span>LẬP PHIẾU XUẤT CHUYỂN NỘI BỘ (KHO KHÔ ➔ BẾP)</span>
+                  </div>
                 ) : (
                   <div className="flex items-center gap-2 text-rose-700">
                     <Trash2 className="h-6 w-6" />
-                    <span>LẬP PHIẾU XUẤT HUỶ KHO (3 NHÓM LÝ DO & CHỐNG XUẤT ÂM)</span>
+                    <span>LẬP PHIẾU BÁO HỎNG & XUẤT HỦY (4 NHÓM LÝ DO & BẮT ĐỀN NCC)</span>
                   </div>
                 )}
               </div>
@@ -1956,21 +2123,39 @@ export const WarehouseModule: React.FC = () => {
 
             <form onSubmit={handleSubmitDoc} className="space-y-4 mt-4 text-xs sm:text-sm">
               {docType === 'NHAP' && (
-                <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-1">
-                    CHỌN NHÀ CUNG CẤP GIAO HÀNG
-                  </label>
-                  <select
-                    value={selectedSupplierId || ''}
-                    onChange={(e) => setSelectedSupplierId(Number(e.target.value) || undefined)}
-                    className="w-full h-11 px-3 rounded-xl border border-slate-300 font-semibold text-slate-800 focus:ring-2 focus:ring-indigo-500 bg-white"
-                  >
-                    {suppliers.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.supplierName} ({s.supplierCode})
-                      </option>
-                    ))}
-                  </select>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-1">
+                      CHỌN NHÀ CUNG CẤP GIAO HÀNG
+                    </label>
+                    <select
+                      value={selectedSupplierId || ''}
+                      onChange={(e) => setSelectedSupplierId(Number(e.target.value) || undefined)}
+                      className="w-full h-11 px-3 rounded-xl border border-slate-300 font-semibold text-slate-800 focus:ring-2 focus:ring-indigo-500 bg-white"
+                    >
+                      {suppliers.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.supplierName} ({s.supplierCode})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-1">
+                      VỊ TRÍ KHO VẬT LÝ LƯU TRỮ (KHO-11)
+                    </label>
+                    <select
+                      value={selectedWarehouseLocation}
+                      onChange={(e) => setSelectedWarehouseLocation(e.target.value)}
+                      className="w-full h-11 px-3 rounded-xl border border-indigo-300 font-bold text-indigo-900 focus:ring-2 focus:ring-indigo-500 bg-indigo-50/70"
+                    >
+                      {WAREHOUSE_LOCATIONS.filter((l) => l.id !== 'ALL').map((loc) => (
+                        <option key={loc.id} value={loc.id}>
+                          {loc.icon} {loc.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               )}
 
@@ -2223,60 +2408,109 @@ export const WarehouseModule: React.FC = () => {
                               </div>
                             )}
 
-                            {/* 3 NHÓM LÝ DO XUẤT HỦY RÕ RÀNG (OBJECTIVE 1) */}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                              <div>
-                                <span className="text-[10px] font-bold text-slate-600 block mb-0.5">
-                                  Nhóm lý do hủy (3 nhóm quy chuẩn)
-                                </span>
-                                <select
-                                  value={item.lossCategory || 'HAI_SAN_CHET_NCC'}
-                                  onChange={(e) =>
-                                    handleDocItemChange(idx, 'lossCategory', e.target.value)
-                                  }
-                                  className="w-full h-9 px-2 rounded-lg border border-slate-300 font-bold text-xs bg-white"
-                                >
-                                  <option value="HAI_SAN_CHET_NCC">
-                                    1. Hải sản chết/ngộp/giao không đạt (Trách nhiệm NCC)
-                                  </option>
-                                  <option value="HONG_BAO_QUAN_KHO">
-                                    2. Hỏng bảo quản kho / Hết hạn sử dụng (Trách nhiệm Kho)
-                                  </option>
-                                  <option value="BEP_LAM_HONG">
-                                    3. Bếp làm hỏng / Chè hỏng / Cháy khét (Trách nhiệm Bếp)
-                                  </option>
-                                  <option value="DO_TUOI_CUOI_NGAY">
-                                    4. Món tươi thừa cuối ca (Hủy theo quy định)
-                                  </option>
-                                </select>
+                            {/* 4 NHÓM LÝ DO XUẤT HỦY CHUẨN KHO-04 */}
+                            <div className="space-y-2 pt-1">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <div>
+                                  <span className="text-[10px] font-bold text-slate-600 block mb-0.5">
+                                    Nhóm lý do hủy (4 nhóm quy chuẩn KHO-04)
+                                  </span>
+                                  <select
+                                    value={item.lossCategory || 'HAI_SAN_CHET_NCC'}
+                                    onChange={(e) =>
+                                      handleDocItemChange(idx, 'lossCategory', e.target.value)
+                                    }
+                                    className="w-full h-9 px-2 rounded-lg border border-slate-300 font-bold text-xs bg-white"
+                                  >
+                                    <option value="HAI_SAN_CHET_NCC">
+                                      1. Cua / Hải sản chết (Bắt đền NCC)
+                                    </option>
+                                    <option value="ME_CHE_BIEN_HONG">
+                                      2. Mẻ chế biến bị hỏng (Cháy cháo, hỏng chè, hỏng kim chi) — Trách nhiệm Bếp
+                                    </option>
+                                    <option value="DO_TUOI_CUOI_NGAY">
+                                      3. Đồ tươi thừa cuối ngày (Salad, đồ dùng trong ngày) — Hủy theo VSATTP
+                                    </option>
+                                    <option value="HAO_HUT_DAY_BUOC">
+                                      4. Hao hụt dây buộc cua & Tiêu hao bóc tách
+                                    </option>
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <span className="text-[10px] font-bold text-slate-600 block mb-0.5">
+                                    Ghi chú chi tiết lý do hủy
+                                  </span>
+                                  <input
+                                    type="text"
+                                    placeholder="Ví dụ: Cua chết ngộp 3 con khi rã đông, bắt đền NCC..."
+                                    value={item.reasonDetail || ''}
+                                    onChange={(e) =>
+                                      handleDocItemChange(idx, 'reasonDetail', e.target.value)
+                                    }
+                                    className="w-full h-9 px-2 rounded-lg border border-slate-300 text-xs"
+                                  />
+                                </div>
                               </div>
 
-                              <div>
-                                <span className="text-[10px] font-bold text-slate-600 block mb-0.5">
-                                  Ghi chú chi tiết lý do hủy
-                                </span>
-                                <input
-                                  type="text"
-                                  placeholder="Ví dụ: Cua chết ngộp 3 con khi rã đông, bắt đền NCC..."
-                                  value={item.reasonDetail || ''}
-                                  onChange={(e) =>
-                                    handleDocItemChange(idx, 'reasonDetail', e.target.value)
-                                  }
-                                  className="w-full h-9 px-2 rounded-lg border border-slate-300 text-xs"
-                                />
-                              </div>
+                              {/* BẮT BUỘC CHỌN NCC & LÔ NHẬP ĐỂ BẮT ĐỀN KHI CHỌN NHÓM CUA / HẢI SẢN CHẾT */}
+                              {item.lossCategory === 'HAI_SAN_CHET_NCC' && (
+                                <div className="p-2.5 rounded-xl bg-amber-50/80 border border-amber-300 space-y-2">
+                                  <div className="text-[11px] text-amber-900 font-bold flex items-center gap-1.5">
+                                    <AlertTriangle className="h-4 w-4 text-amber-600 flex-shrink-0" />
+                                    <span>
+                                      Truy xét trách nhiệm NCC: Khoản tổn thất này sẽ được liên kết Lô để bắt đền và cấn trừ vào công nợ NCC!
+                                    </span>
+                                  </div>
+
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <div>
+                                      <span className="text-[10px] font-bold text-amber-950 block mb-0.5">
+                                        Nhà cung cấp chịu trách nhiệm (*)
+                                      </span>
+                                      <select
+                                        value={selectedSupplierId || ''}
+                                        onChange={(e) =>
+                                          setSelectedSupplierId(Number(e.target.value) || undefined)
+                                        }
+                                        className="w-full h-8 px-2 rounded-lg border border-amber-300 font-bold text-xs bg-white text-slate-800"
+                                      >
+                                        <option value="">-- Chọn Nhà Cung Cấp Bắt Đền --</option>
+                                        {suppliers.map((s) => (
+                                          <option key={s.id} value={s.id}>
+                                            {s.supplierName} ({s.supplierCode})
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+
+                                    <div>
+                                      <span className="text-[10px] font-bold text-amber-950 block mb-0.5">
+                                        Lô nhập gốc để trừ tồn & truy vết
+                                      </span>
+                                      <select
+                                        value={item.batchId || ''}
+                                        onChange={(e) =>
+                                          handleDocItemChange(
+                                            idx,
+                                            'batchId',
+                                            e.target.value ? Number(e.target.value) : undefined
+                                          )
+                                        }
+                                        className="w-full h-8 px-2 rounded-lg border border-amber-300 font-mono text-[11px] bg-white text-slate-800"
+                                      >
+                                        <option value="">-- Tự động trừ lô gần nhất --</option>
+                                        {availableBatchesForItem.map((b) => (
+                                          <option key={b.id} value={b.id}>
+                                            {b.batchCode} ({b.supplierName || 'NCC'} • Tồn: {b.currentStock} {b.unit})
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
                             </div>
-
-                            {/* Thông báo bắt đền NCC khi chọn nhóm 1 */}
-                            {item.lossCategory === 'HAI_SAN_CHET_NCC' && (
-                              <div className="text-[11px] text-amber-800 bg-amber-50 p-1.5 rounded-lg border border-amber-200 font-semibold flex items-center gap-1.5">
-                                <AlertTriangle className="h-3.5 w-3.5 text-amber-600 flex-shrink-0" />
-                                <span>
-                                  ⚠️ Khoản tổn thất này sẽ được liên kết Lô để lập biên bản bắt đền & cấn
-                                  trừ vào kỳ đối soát công nợ NCC!
-                                </span>
-                              </div>
-                            )}
                           </div>
                         )}
 
@@ -2366,15 +2600,20 @@ export const WarehouseModule: React.FC = () => {
                 )}
               </div>
 
-              {/* UPLOAD ẢNH HÓA ĐƠN / CHỨNG TỪ */}
+              {/* UPLOAD ẢNH HÓA ĐƠN / CHỨNG TỪ (KHO-03) */}
               <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">
-                  ẢNH HÓA ĐƠN / CHỨNG TỪ BÀN CÂN (TỐI ĐA 5 ẢNH, NÉN TỰ ĐỘNG)
+                <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
+                  <span className="uppercase">ẢNH HÓA ĐƠN / CHỨNG TỪ GIAO HÀNG</span>
+                  <span className="text-rose-600 font-black text-sm">(*)</span>
+                  <span className="text-[10px] font-normal text-slate-500">
+                    (Bắt buộc chụp ảnh bàn cân hoặc phiếu giao hàng trước khi lưu)
+                  </span>
                 </label>
                 <input
                   type="file"
                   multiple
                   accept="image/*"
+                  capture="environment"
                   ref={docFileInputRef}
                   onChange={handleDocPhotoUpload}
                   className="hidden"
@@ -2425,6 +2664,8 @@ export const WarehouseModule: React.FC = () => {
                   className={`btn-touch h-12 rounded-xl font-extrabold text-sm shadow-lg flex items-center justify-center gap-2 ${
                     docType === 'HUY'
                       ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-600/30'
+                      : docType === 'XUAT_CHUYEN'
+                      ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-600/30'
                       : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-600/30'
                   }`}
                 >
@@ -2433,8 +2674,12 @@ export const WarehouseModule: React.FC = () => {
                       <Loader2 className="h-5 w-5 animate-spin" />
                       <span>ĐANG LƯU PHIẾU...</span>
                     </>
+                  ) : docType === 'HUY' ? (
+                    <span>XÁC NHẬN GỬI BÁO HỎNG (CHỜ DUYỆT)</span>
+                  ) : docType === 'XUAT_CHUYEN' ? (
+                    <span>XÁC NHẬN XUẤT HÀNG SANG BẾP</span>
                   ) : (
-                    <span>XÁC NHẬN LƯU PHIẾU</span>
+                    <span>XÁC NHẬN LƯU PHIẾU NHẬP</span>
                   )}
                 </button>
               </div>

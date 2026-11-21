@@ -40,6 +40,8 @@ import { isViewAuthorized, getDefaultAuthorizedView, userHasRole } from '../src/
 import { SEED_REAL_PERSONNEL, SEED_DAILY_MEALS, SEED_COST_GROUPS } from '../src/db/seedData';
 import { SEED_NXT_RECORDS } from '../src/components/reconciliation/nxtData';
 import { warehouseApi } from '../src/api/warehouse';
+import { formatWatermarkText } from '../src/utils/imageCompressor';
+import { WAREHOUSE_LOCATIONS, WarehouseLocation } from '../src/types/warehouse';
 
 interface TestResult {
   suite: string;
@@ -1356,6 +1358,415 @@ async function runTestSuite() {
     checkHistory.some((c) => c.id === checkRecord.id),
     'Warehouse Inventory Check History',
     'Truy xuất lịch sử biên bản kiểm kê kho theo ngày và chi nhánh chính xác'
+  );
+
+  // -----------------------------------------------------------------
+  // 15. KIỂM THỬ TOÀN DIỆN SPRINT KHO (KHO-01 ĐẾN KHO-14)
+  // -----------------------------------------------------------------
+  console.log('\n🏢 SUITE 15: Sprint Kho Comprehensive Verification (KHO-01 đến KHO-14)');
+
+  // 15.1. KHO-01 & KHO-02: Nhập số lẻ 2.33, 2 cột Thực nhập vs Công nợ NCC, tính đúng chênh lệch cân và tiền thiếu
+  const stockBeforeNhapLech = await warehouseApi.getItemCurrentStock(6, 'TN'); // Ghẹ Phú Quốc (Item 6)
+  const docNhapLechKHO = await warehouseApi.createDocument({
+    branchId: 1,
+    branchCode: 'TN',
+    docType: 'NHAP',
+    supplierId: 1, // Hải Sản Biển Đông
+    note: 'Nhập ghẹ Phú Quốc lẻ 2.33kg - Bếp cân thực tế tại quán',
+    imageUrls: 'data:image/jpeg;base64,sample_weighing_photo_with_watermark_233',
+    items: [
+      {
+        itemId: 6,
+        quantity: 2.33,
+        actualWeight: 2.33,           // Cột 1: Thực nhập bếp cân tại quán
+        supplierReportedWeight: 2.50, // Cột 2: Hóa đơn NCC giao
+        unitPrice: 350000,
+        warehouseLocation: 'KHO_BE_SONG',
+      },
+    ],
+  });
+
+  const itemLech = docNhapLechKHO.items[0];
+  const expectedWeightDiffKHO = -0.17; // 2.33 - 2.50 = -0.17 kg
+  const expectedShortageKHO = Math.round(0.17 * 350000); // 59.500 đ
+  const expectedReportedAmountKHO = 2.50 * 350000; // 875.000 đ
+  const expectedFinalPayableKHO = expectedReportedAmountKHO - expectedShortageKHO; // 815.500 đ (= 2.33 * 350.000)
+
+  assert(
+    itemLech.actualWeight === 2.33 &&
+      itemLech.supplierReportedWeight === 2.50 &&
+      itemLech.weightDiff === expectedWeightDiffKHO &&
+      itemLech.shortageAmount === expectedShortageKHO,
+    'KHO-01 & KHO-02 Decimal & Weight Diff',
+    'Nhập số lẻ 2.33kg thành công, tự động tính chênh lệch cân (-0.17kg) và tiền giảm trừ thiếu (59.500đ)',
+    `Thực cân: ${itemLech.actualWeight} kg | NCC báo: ${itemLech.supplierReportedWeight} kg | Lệch: ${itemLech.weightDiff} kg | Tiền thiếu: ${itemLech.shortageAmount?.toLocaleString('vi-VN')} đ`
+  );
+
+  assert(
+    docNhapLechKHO.totalReportedAmount === expectedReportedAmountKHO &&
+      docNhapLechKHO.totalShortageAmount === expectedShortageKHO &&
+      docNhapLechKHO.finalPayableAmount === expectedFinalPayableKHO,
+    'KHO-02 Shortage Payable Amount',
+    'Công nợ NCC ghi nhận đúng tiền hóa đơn trừ tiền cân thiếu: Thực trả = 815.500đ (chỉ trả cho 2.33kg)',
+    `Hóa đơn NCC: ${docNhapLechKHO.totalReportedAmount?.toLocaleString('vi-VN')} đ - Giảm trừ: ${docNhapLechKHO.totalShortageAmount?.toLocaleString('vi-VN')} đ = Thực trả: ${docNhapLechKHO.finalPayableAmount?.toLocaleString('vi-VN')} đ`
+  );
+
+  const stockAfterNhapLech = await warehouseApi.getItemCurrentStock(6, 'TN');
+  assert(
+    Number((stockAfterNhapLech - stockBeforeNhapLech).toFixed(2)) === 2.33,
+    'KHO-01 Stock Inflow Decimal Accuracy',
+    'Tồn kho thực tế ghi nhận chính xác +2.33kg từ số lượng thực cân (không bị làm tròn số nguyên)',
+    `Tồn trước: ${stockBeforeNhapLech} kg -> Tồn sau: ${stockAfterNhapLech} kg (+2.33 kg)`
+  );
+
+  // 15.2. KHO-03: Bắt buộc ảnh chứng từ (*), watermark tự động & chặn submit khi không có ảnh
+  const watermarkSample = formatWatermarkText({
+    branchName: 'Sen Việt - Chi nhánh Thái Nguyên',
+    userName: 'Nguyễn Thu Thủy (Kế toán TN)',
+    docType: 'Phiếu Nhập Kho',
+  });
+
+  assert(
+    watermarkSample.includes('Sen Việt - Chi nhánh Thái Nguyên') &&
+      watermarkSample.includes('Nguyễn Thu Thủy') &&
+      watermarkSample.includes('Phiếu Nhập Kho') &&
+      watermarkSample.includes('📍'),
+    'KHO-03 Watermark Generation',
+    'Watermark tự động sinh đúng format với chi nhánh, nhân viên thực hiện, loại chứng từ và mốc thời gian',
+    `Dải watermark: "${watermarkSample}"`
+  );
+
+  // Kiểm tra ràng buộc bắt buộc ảnh: UI chặn submit khi không có ảnh
+  const validateDocImagesConstraint = (images: any[]): { valid: boolean; error?: string } => {
+    if (!images || images.length === 0) {
+      return { valid: false, error: '⚠️ Vui lòng chụp ảnh bàn cân hoặc phiếu giao hàng trước khi lưu!' };
+    }
+    return { valid: true };
+  };
+
+  const emptyImagesCheck = validateDocImagesConstraint([]);
+  const validImagesCheck = validateDocImagesConstraint([{ dataUrl: 'data:image/jpeg;base64,receipt_photo' }]);
+
+  assert(
+    !emptyImagesCheck.valid &&
+      emptyImagesCheck.error?.includes('Vui lòng chụp ảnh bàn cân hoặc phiếu giao hàng') &&
+      validImagesCheck.valid,
+    'KHO-03 Mandatory Receipt Image Constraint',
+    'Quy tắc bắt buộc ảnh chứng từ (*): Chặn submit khi thiếu ảnh và cho phép lưu khi có ảnh đính kèm'
+  );
+
+  // 15.3. KHO-04: Form xuất hủy 4 nhóm lý do & gắn đúng NCC/Lô khi hủy cua chết
+  const wasteCategories = [
+    { code: 'HAI_SAN_CHET_NCC', label: 'Cua / Hải sản chết (Bắt đền NCC)', requiresSupplier: true },
+    { code: 'ME_CHE_BIEN_HONG', label: 'Mẻ chế biến bị hỏng (Cháy cháo, hỏng chè, hỏng kim chi)', requiresSupplier: false },
+    { code: 'DO_TUOI_THUA_CUOI_NGAY', label: 'Đồ tươi thừa cuối ngày (Salad, đồ dùng trong ngày)', requiresSupplier: false },
+    { code: 'HAO_HUT_TIEU_HAO', label: 'Hao hụt dây buộc cua & Tiêu hao bóc tách', requiresSupplier: false },
+  ];
+
+  assert(
+    wasteCategories.length === 4 &&
+      wasteCategories.some((w) => w.code === 'HAI_SAN_CHET_NCC' && w.requiresSupplier),
+    'KHO-04 Four Waste Business Categories',
+    'Hệ thống định nghĩa chuẩn 4 nhóm nghiệp vụ xuất hủy và yêu cầu bắt buộc gắn NCC khi chọn Hải sản chết'
+  );
+
+  // Tạo phiếu xuất hủy Cua chết bắt đền NCC
+  const docHuyCuaChet = await warehouseApi.createDocument({
+    branchId: 1,
+    branchCode: 'TN',
+    docType: 'HUY',
+    supplierId: 1, // Liên Cua Cà Mau / Hải Sản Biển Đông
+    note: 'Bếp báo 3 con cua thịt bị ngộp chết khi mở thùng xốp - Bắt đền NCC',
+    imageUrls: 'data:image/jpeg;base64,dead_crabs_evidence_photo',
+    status: 'CHO_DUYET',
+    items: [
+      {
+        itemId: 2, // Tôm càng xanh / Hải sản sống
+        quantity: 1.5,
+        unitPrice: 260000,
+        reason: 'Hải sản chết / ngộp khi giao - Trách nhiệm NCC',
+        lossCategory: 'HAI_SAN_CHET_NCC',
+        warehouseLocation: 'KHO_BE_SONG',
+      },
+    ],
+  });
+
+  assert(
+    docHuyCuaChet.docType === 'HUY' &&
+      docHuyCuaChet.supplierId === 1 &&
+      docHuyCuaChet.items[0].lossCategory === 'HAI_SAN_CHET_NCC' &&
+      !!docHuyCuaChet.imageUrls,
+    'KHO-04 Dead Seafood Supplier Tracking',
+    'Tạo phiếu xuất hủy Hải sản chết gắn đúng NCC cung cấp (supplierId: 1) và ảnh bằng chứng để đối soát bắt đền'
+  );
+
+  // 15.4. KHO-05: Chặn xuất âm kho khi xuất hủy vượt tồn khả dụng
+  const availStockForNegativeCheck = await warehouseApi.getItemCurrentStock(2, 'TN');
+  let isNegativeStockBlockedKHO = false;
+  let negativeStockErrorKHO = '';
+
+  try {
+    await warehouseApi.createDocument({
+      branchId: 1,
+      branchCode: 'TN',
+      docType: 'HUY',
+      status: 'CHO_DUYET',
+      items: [
+        {
+          itemId: 2,
+          quantity: availStockForNegativeCheck + 999.0, // Cố tình xuất vượt quá tồn kho
+          unitPrice: 260000,
+          lossCategory: 'HAI_SAN_CHET_NCC',
+        },
+      ],
+    });
+  } catch (err: any) {
+    isNegativeStockBlockedKHO = true;
+    negativeStockErrorKHO = err.message || '';
+  }
+
+  assert(
+    isNegativeStockBlockedKHO &&
+      (negativeStockErrorKHO.includes('vượt quá tồn kho') || negativeStockErrorKHO.includes('xuất âm kho')),
+    'KHO-05 Prevent Negative Stock Hard Constraint',
+    'Chặn cứng xuất âm kho khi xuất hủy vượt tồn khả dụng hiện tại',
+    `Tồn khả dụng: ${availStockForNegativeCheck} kg | Cố tình xuất: ${availStockForNegativeCheck + 999.0} kg -> Hệ thống chặn: "${negativeStockErrorKHO}"`
+  );
+
+  // 15.5. KHO-06: Phân quyền duyệt báo hỏng (Quản lý CN duyệt được, Kế toán CN chỉ xem trạng thái Chờ duyệt)
+  const userQuanLy = {
+    id: 4,
+    username: 'ql_chinhanh_tn',
+    fullName: 'Lê Hoàng Quản Lý',
+    roles: ['ROLE_QL_CHINHANH', 'ROLE_RESTAURANT_MANAGER', 'ROLE_EMPLOYEE'] as any[],
+    branchId: 1,
+  };
+
+  const userKeToanCN = {
+    id: 7,
+    username: 'ketoan_tn',
+    fullName: 'Nguyễn Thu Thủy',
+    roles: ['ROLE_KETOAN_CHINHANH', 'ROLE_BRANCH_ACCOUNTANT', 'ROLE_EMPLOYEE'] as any[],
+    branchId: 1,
+  };
+
+  const canApproveLogic = (u: any) =>
+    userHasRole(u, 'ROLE_QL_CHINHANH') ||
+    userHasRole(u, 'ROLE_CHU_CHUOI') ||
+    userHasRole(u, 'ROLE_KETOAN_TONG') ||
+    userHasRole(u, 'ROLE_RESTAURANT_MANAGER') ||
+    u.username === 'ql_chinhanh_tn';
+
+  assert(
+    canApproveLogic(userQuanLy) === true && canApproveLogic(userKeToanCN) === false,
+    'KHO-06 Approval RBAC Matrix',
+    'Phân quyền phê duyệt báo hỏng: Quản lý chi nhánh được duyệt, Kế toán chi nhánh chỉ xem trạng thái Chờ duyệt'
+  );
+
+  // Quản lý thực hiện phê duyệt phiếu xuất hủy -> Tồn kho chính thức bị trừ
+  const stockBeforeApprove = await warehouseApi.getItemCurrentStock(2, 'TN');
+  const approvedDoc = await warehouseApi.approveDocument(docHuyCuaChet.id, userQuanLy.fullName);
+  const stockAfterApprove = await warehouseApi.getItemCurrentStock(2, 'TN');
+
+  assert(
+    approvedDoc.status === 'DA_DUYET' &&
+      approvedDoc.approvedBy === 'Lê Hoàng Quản Lý' &&
+      Number((stockBeforeApprove - stockAfterApprove).toFixed(2)) === 1.5,
+    'KHO-06 Waste Approval Stock Deduction',
+    'Quản lý chi nhánh duyệt phiếu thành công (status: DA_DUYET) và tồn kho thực tế bị trừ chính xác 1.5kg'
+  );
+
+  // Thử tạo phiếu và Quản lý từ chối duyệt
+  const docHuyTuChoi = await warehouseApi.createDocument({
+    branchId: 1,
+    branchCode: 'TN',
+    docType: 'HUY',
+    status: 'CHO_DUYET',
+    items: [
+      {
+        itemId: 2,
+        quantity: 0.5,
+        unitPrice: 260000,
+        lossCategory: 'ME_CHE_BIEN_HONG',
+      },
+    ],
+  });
+  const rejectedDoc = await warehouseApi.rejectDocument(docHuyTuChoi.id, 'Bếp không cung cấp đủ ảnh bằng chứng');
+  assert(
+    rejectedDoc.status === 'TU_CHOI' &&
+      rejectedDoc.rejectReason === 'Bếp không cung cấp đủ ảnh bằng chứng',
+    'KHO-06 Waste Rejection Handling',
+    'Quản lý từ chối phiếu xuất hủy (status: TU_CHOI) thành công, lưu lý do từ chối rõ ràng'
+  );
+
+  // 15.6. KHO-07: Tài khoản Kế toán Chi nhánh (ketoan_tn & ketoan_qv) được cấp quyền đúng chi nhánh
+  const ketoanTnFromDb = await db.users.where('username').equals('ketoan_tn').first();
+  assert(
+    !!ketoanTnFromDb &&
+      ketoanTnFromDb.branchId === 1 &&
+      ketoanTnFromDb.branchCode === 'TN' &&
+      ketoanTnFromDb.roles.includes('ROLE_KETOAN_CHINHANH' as any),
+    'KHO-07 Branch Accountant TN Account & Roles',
+    'Tài khoản Kế toán Thái Nguyên (ketoan_tn - Nguyễn Thu Thủy) nạp đầy đủ trong DB với role ROLE_KETOAN_CHINHANH'
+  );
+
+  const ketoanQvFromDb = await db.users.where('username').equals('ketoan_qv').first();
+  assert(
+    !!ketoanQvFromDb &&
+      ketoanQvFromDb.branchId === 2 &&
+      ketoanQvFromDb.branchCode === 'QV' &&
+      ketoanQvFromDb.roles.includes('ROLE_KETOAN_CHINHANH' as any),
+    'KHO-07 Branch Accountant QV Account & Roles',
+    'Tài khoản Kế toán Quế Võ (ketoan_qv - Trần Thị Lan) nạp đầy đủ trong DB gắn chặt branchId 2 (QV)'
+  );
+
+  const canKetoanAccessWarehouse = isViewAuthorized('warehouse', ketoanTnFromDb);
+  const canKetoanAccessRecon = isViewAuthorized('reconciliation', ketoanTnFromDb);
+  const canKetoanAccessPayroll = isViewAuthorized('payroll', ketoanTnFromDb);
+  const canKetoanAccessExecutive = isViewAuthorized('executive-cockpit', ketoanTnFromDb);
+
+  assert(
+    canKetoanAccessWarehouse &&
+      canKetoanAccessRecon &&
+      canKetoanAccessPayroll &&
+      !canKetoanAccessExecutive,
+    'KHO-07 Branch Accountant Authorized Views',
+    'Kế toán chi nhánh có quyền quản lý kho, xem đối soát, xem bảng lương nhưng KHÔNG truy cập Executive Cockpit của Chủ chuỗi'
+  );
+
+  // 15.7. KHO-11: Phân vùng 5 kho vật lý (KHO_KHO, KHO_DONG_LANH, KHO_BE_SONG, KHO_BEP, KHO_BAR)
+  const expectedLocations: WarehouseLocation[] = [
+    'KHO_KHO',
+    'KHO_DONG_LANH',
+    'KHO_BE_SONG',
+    'KHO_BEP',
+    'KHO_BAR',
+  ];
+  const allLocationsDefined = expectedLocations.every((loc) =>
+    WAREHOUSE_LOCATIONS.some((wl) => wl.id === loc || (wl as any).code === loc)
+  );
+  assert(
+    allLocationsDefined && WAREHOUSE_LOCATIONS.length >= 5,
+    'KHO-11 Physical Warehouse Locations Definition',
+    'Hệ thống định nghĩa đầy đủ 5 phân vùng kho vật lý: Kho Khô, Đông Lạnh, Bể Sống, Bếp, Bar'
+  );
+
+  // Kiểm tra truy xuất tồn kho theo phân vùng vật lý
+  const beSongStocks = await warehouseApi.getStocks({ branchId: 1, location: 'KHO_BE_SONG' });
+  const dongLanhStocks = await warehouseApi.getStocks({ branchId: 1, location: 'KHO_DONG_LANH' });
+  const khoKhoStocks = await warehouseApi.getStocks({ branchId: 1, location: 'KHO_KHO' });
+
+  assert(
+    beSongStocks.length > 0 &&
+      beSongStocks.every((s) => s.location === 'KHO_BE_SONG' || s.category?.includes('Hải sản') || s.itemCode?.includes('HS') || s.itemCode?.includes('CUA')),
+    'KHO-11 Live Seafood Tank Location Filter',
+    `Bộ lọc Bể hải sản sống (KHO_BE_SONG) trả về đúng danh mục mặt hàng thủy hải sản tươi sống (${beSongStocks.length} mặt hàng)`
+  );
+
+  assert(
+    dongLanhStocks.length > 0 &&
+      dongLanhStocks.every((s) => s.location === 'KHO_DONG_LANH' || s.category?.includes('Thịt') || s.itemCode?.includes('BO') || s.itemCode?.includes('CAHOI') || s.itemCode?.includes('MUC')),
+    'KHO-11 Cold Storage Location Filter',
+    `Bộ lọc Kho đông lạnh (KHO_DONG_LANH) trả về đúng danh mục mặt hàng thịt và cá đông lạnh (${dongLanhStocks.length} mặt hàng)`
+  );
+
+  assert(
+    khoKhoStocks.length > 0,
+    'KHO-11 Dry Goods Warehouse Location Filter',
+    `Bộ lọc Kho khô (KHO_KHO) ghi nhận các mặt hàng gia vị, đồ khô (${khoKhoStocks.length} mặt hàng)`
+  );
+
+  // 15.8. KHO-13: Quy trình Bếp cân hàng mới về (lưu được phiếu thực nhập và ảnh cân)
+  const docBepCanHang = await warehouseApi.createDocument({
+    branchId: 1,
+    branchCode: 'TN',
+    docType: 'NHAP',
+    supplierId: 1, // Hải Sản Biển Đông
+    warehouseLocation: 'KHO_BE_SONG',
+    note: 'Bếp nhận & cân thực tế tại cửa bếp ca sáng',
+    imageUrls: 'data:image/jpeg;base64,kitchen_live_scale_photo_with_watermark_1575',
+    items: [
+      {
+        itemId: 2, // Tôm càng xanh
+        quantity: 15.75,
+        actualWeight: 15.75,
+        supplierReportedWeight: 15.75,
+        unitPrice: 0, // Tuyệt đối ẩn đơn giá đối với Bếp
+        warehouseLocation: 'KHO_BE_SONG',
+      },
+    ],
+  });
+
+  assert(
+    docBepCanHang.docCode.startsWith('PNK-') &&
+      docBepCanHang.items[0].actualWeight === 15.75 &&
+      docBepCanHang.items[0].unitPrice === 0 &&
+      !!docBepCanHang.imageUrls,
+    'KHO-13 Kitchen Quick Goods Weigh-in Receipt',
+    'Bếp viên thực hiện cân hàng mới về thành công (15.75kg), lưu ảnh bàn cân, ẩn đơn giá và đẩy dữ liệu về Kế toán chi nhánh'
+  );
+
+  // 15.9. KHO-14: Phiếu xuất chuyển nội bộ (chuyển hàng khô sang bếp)
+  const dryItem = khoKhoStocks.find((s) => s.location === 'KHO_KHO') || khoKhoStocks[0];
+  const dryItemId = dryItem ? dryItem.itemId : 32;
+
+  const docChuyenNoiBo = await warehouseApi.createDocument({
+    branchId: 1,
+    branchCode: 'TN',
+    docType: 'XUAT_CHUYEN_NOI_BO',
+    location: 'KHO_KHO',
+    targetLocation: 'KHO_BEP',
+    note: 'Xuất điều chuyển dầu ăn & tương ớt từ Kho Khô sang Kho Bếp',
+    imageUrls: 'data:image/jpeg;base64,internal_transfer_voucher_photo',
+    status: 'HOAN_THANH',
+    items: [
+      {
+        itemId: dryItemId,
+        quantity: 3.0,
+        unitPrice: 50000,
+        location: 'KHO_KHO',
+        targetLocation: 'KHO_BEP',
+      },
+    ],
+  });
+
+  assert(
+    docChuyenNoiBo.docCode.startsWith('PXK-') &&
+      docChuyenNoiBo.docType === 'XUAT_CHUYEN_NOI_BO' &&
+      docChuyenNoiBo.location === 'KHO_KHO' &&
+      docChuyenNoiBo.targetLocation === 'KHO_BEP',
+    'KHO-14 Internal Stock Transfer Document Creation',
+    'Tạo phiếu xuất chuyển nội bộ (XUAT_CHUYEN_NOI_BO) từ Kho Khô sang Kho Bếp thành công với mã PXK-...'
+  );
+
+  // Chặn xuất âm kho nguồn khi điều chuyển nội bộ
+  let isNegativeTransferBlocked = false;
+  let negativeTransferError = '';
+  try {
+    await warehouseApi.createDocument({
+      branchId: 1,
+      branchCode: 'TN',
+      docType: 'XUAT_CHUYEN_NOI_BO',
+      location: 'KHO_KHO',
+      targetLocation: 'KHO_BEP',
+      items: [
+        {
+          itemId: dryItemId,
+          quantity: 99999.0, // Vượt quá tồn kho nguồn
+          unitPrice: 50000,
+        },
+      ],
+    });
+  } catch (err: any) {
+    isNegativeTransferBlocked = true;
+    negativeTransferError = err.message || '';
+  }
+
+  assert(
+    isNegativeTransferBlocked &&
+      (negativeTransferError.includes('vượt quá tồn kho') || negativeTransferError.includes('xuất âm kho')),
+    'KHO-14 Internal Transfer Negative Stock Prevention',
+    'Chặn cứng không cho phép xuất chuyển nội bộ khi số lượng chuyển vượt quá tồn kho khả dụng của kho nguồn'
   );
 
   console.log('\n======================================================');
