@@ -11,6 +11,10 @@ export interface Item {
   costPrice: number;
   isBuffetLine: boolean;
   isDailyOnly?: boolean;
+  branchId?: number;
+  storage?: string;
+  minStock?: number;
+  maxStock?: number;
 }
 
 export interface Recipe {
@@ -27,6 +31,7 @@ export interface Recipe {
 export interface BatchResponse {
   id: number;
   batchCode: string;
+  branchId?: number;
   itemId: number;
   itemName: string;
   itemCode: string;
@@ -35,14 +40,21 @@ export interface BatchResponse {
   lossRate: number | null;
   standardLossRate: number;
   overStandard: boolean;
-  secondBatch: boolean;
-  status: 'DANG_LAM' | 'HOAN_THANH' | 'HUY';
+  secondBatch?: boolean;
+  status: 'DANG_LAM' | 'HOAN_THANH' | 'HUY' | string;
   startedBy: string;
   finishedBy: string | null;
   startedAt: string;
   finishedAt: string | null;
   warningMessage: string | null;
+  scalePhotoUrl?: string;
+  approvalStatus?: 'CHO_DUYET' | 'HOP_LE' | 'BIEN_BAN' | string;
+  approvalNote?: string;
+  approvedBy?: string;
+  approvedAt?: string;
 }
+
+export type Batch = BatchResponse;
 
 export interface TakeOutLog {
   id: number;
@@ -137,13 +149,20 @@ export const kitchenApi = {
     return await db.recipes.toArray();
   },
 
-  // Nút 1: Lấy hàng từ kho
-  recordTakeOut: async (data: { itemId: number; quantity: number; unit: string; note?: string }) => {
+  // Nút 1: Lấy hàng từ kho (TASK-WH-06: Trừ kho thô & Biến động thẻ kho XUẤT_CHẾ_BIẾN)
+  recordTakeOut: async (data: { itemId: number; quantity: number; unit: string; note?: string; branchId?: number }) => {
     await initializeDatabaseIfEmpty();
     await simulateLatency(120, 150);
 
     const item = await db.items.get(data.itemId);
     if (!item) throw new Error('Không tìm thấy nguyên liệu');
+
+    const branchId = data.branchId || item.branchId || 1;
+    const branchName =
+      branchId === 2
+        ? 'Sen Việt Buffet - Chi nhánh Quế Võ'
+        : 'Sen Việt Buffet - Chi nhánh Thái Nguyên';
+    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
 
     const newLog: TakeOutLog = {
       id: Date.now(),
@@ -151,21 +170,75 @@ export const kitchenApi = {
       quantity: data.quantity,
       unit: data.unit,
       note: data.note,
-      createdAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
+      createdAt: now,
     };
 
     await db.takeOutLogs.add(newLog);
 
-    // Trừ kho trong lô hàng gần nhất nếu có
-    const lot = await db.inventoryLots.where('itemId').equals(data.itemId).first();
-    if (lot && lot.currentStock !== undefined) {
-      const newStock = Math.max(0, lot.currentStock - data.quantity);
-      await db.inventoryLots.update(lot.id, { currentStock: newStock });
+    // 1. Trừ tồn kho thô trong các lô hàng khả dụng tại chi nhánh
+    let remainingToDeduct = data.quantity;
+    const lots = await db.inventoryLots.where('itemId').equals(data.itemId).toArray();
+    const branchLots = lots.filter((l) => !branchId || !l.branchId || l.branchId === branchId);
+    const targetLots = branchLots.length > 0 ? branchLots : lots;
+
+    for (const lot of targetLots) {
+      if (remainingToDeduct <= 0) break;
+      if (lot.currentStock && lot.currentStock > 0) {
+        const deduct = Math.min(lot.currentStock, remainingToDeduct);
+        const newStock = Number((lot.currentStock - deduct).toFixed(2));
+        await db.inventoryLots.update(lot.id, { currentStock: newStock });
+        remainingToDeduct -= deduct;
+      }
     }
+    if (remainingToDeduct > 0 && targetLots.length > 0) {
+      const firstLot = targetLots[0];
+      const newStock = Math.max(0, Number(((firstLot.currentStock || 0) - remainingToDeduct).toFixed(2)));
+      await db.inventoryLots.update(firstLot.id, { currentStock: newStock });
+    }
+
+    // 2. Tạo biến động thẻ kho XUẤT_CHẾ_BIẾN vào warehouseDocuments
+    const docCode = `PXK-CB-${Date.now().toString().slice(-6)}`;
+    const cost = item.costPrice || 100000;
+    const totalAmount = Math.round(data.quantity * cost);
+
+    const doc: any = {
+      id: Date.now(),
+      docCode,
+      docType: 'XUAT_CHE_BIEN',
+      branchId,
+      branchName,
+      createdBy: 'bep_tn',
+      createdByName: 'Bếp viên lấy hàng chế biến',
+      status: 'DA_DUYET',
+      location: 'KHO_BEP',
+      warehouseLocation: 'KHO_BEP',
+      note: data.note || `Xuất chế biến cho bếp (${item.itemName})`,
+      totalAmount,
+      totalReportedAmount: totalAmount,
+      totalShortageAmount: 0,
+      finalPayableAmount: totalAmount,
+      createdAt: now,
+      items: [
+        {
+          id: Date.now(),
+          itemId: item.id,
+          itemCode: item.itemCode,
+          itemName: item.itemName,
+          quantity: data.quantity,
+          actualWeight: data.quantity,
+          unitPrice: cost,
+          unit: data.unit || item.unit || 'kg',
+          reason: 'XUẤT_CHẾ_BIẾN',
+          location: 'KHO_BEP',
+          warehouseLocation: 'KHO_BEP',
+        },
+      ],
+    };
+    await db.warehouseDocuments.add(doc);
 
     return {
       success: true,
-      message: `Đã xuất kho ${data.quantity} ${data.unit} [${item.itemName}] thành công`,
+      message: `Đã xuất kho ${data.quantity} ${data.unit} [${item.itemName}] (Biến động XUẤT_CHẾ_BIẾN) thành công`,
       data: newLog,
     };
   },
@@ -279,13 +352,23 @@ export const kitchenApi = {
     };
   },
 
-  // Nút 2B: Hoàn thành cân mẻ thành phẩm
-  finishBatch: async (data: { batchId: number; outputWeight: number }) => {
+  // Nút 2B: Hoàn thành cân mẻ thành phẩm (Chống gian lận - kèm ảnh cân)
+  finishBatch: async (data: {
+    batchId: number;
+    outputWeight: number;
+    scalePhotoUrl?: string;
+    requireScalePhoto?: boolean;
+  }) => {
     await initializeDatabaseIfEmpty();
     await simulateLatency(120, 160);
 
     const batch = await db.batches.get(data.batchId);
     if (!batch) throw new Error('Không tìm thấy mẻ chế biến');
+
+    // TASK-WH-04: Bắt buộc ảnh chụp bàn cân: chặn hoàn tất mẻ khi thiếu scalePhotoUrl
+    if (data.requireScalePhoto && (!data.scalePhotoUrl || !data.scalePhotoUrl.trim())) {
+      throw new Error('⚠️ BẮT BUỘC chụp ảnh mặt bàn cân điện tử hiển thị rõ số kg thành phẩm để chống gian lận!');
+    }
 
     if (data.outputWeight > batch.inputWeight) {
       throw new Error('Khối lượng thành phẩm không thể vượt quá khối lượng nguyên liệu đầu vào');
@@ -303,11 +386,13 @@ export const kitchenApi = {
         ).toFixed(1)}%)`
       : null;
 
-    const updated = {
+    const updated: BatchResponse = {
       ...batch,
       outputWeight: data.outputWeight,
       lossRate,
       overStandard,
+      scalePhotoUrl: data.scalePhotoUrl || batch.scalePhotoUrl || undefined,
+      approvalStatus: batch.approvalStatus || 'CHO_DUYET',
       status: 'HOAN_THANH',
       finishedBy: 'bep_tn',
       finishedAt: now,
@@ -316,9 +401,135 @@ export const kitchenApi = {
 
     await db.batches.put(updated);
 
+    // TASK-WH-06: Tự động tăng tồn kho bán thành phẩm/sơ chế tại chi nhánh (ghi chú Nhập từ mẻ [mã mẻ])
+    const branchId = batch.branchId || 1;
+    const branchName =
+      branchId === 2
+        ? 'Sen Việt Buffet - Chi nhánh Quế Võ'
+        : 'Sen Việt Buffet - Chi nhánh Thái Nguyên';
+    const lotBtpCode = `LOT-BTP-${batch.batchCode.replace(/^BATCH-/, '')}`;
+    const item = await db.items.get(batch.itemId);
+    const unitPrice = item?.costPrice || 150000;
+
+    // 1. Tăng hoặc tạo lô tồn kho bán thành phẩm
+    const existingBtpLot = await db.inventoryLots
+      .filter((l: any) => l.branchId === branchId && l.batchCode === lotBtpCode)
+      .first();
+
+    if (existingBtpLot) {
+      const updatedStock = Number(
+        ((existingBtpLot.currentStock || 0) + data.outputWeight).toFixed(2)
+      );
+      await db.inventoryLots.update(existingBtpLot.id, { currentStock: updatedStock });
+    } else {
+      const newBtpLot = {
+        id: Date.now() + 1,
+        batchCode: lotBtpCode,
+        itemId: batch.itemId,
+        itemCode: batch.itemCode,
+        itemName: `${batch.itemName} (BTP sơ chế)`,
+        branchId,
+        branchName,
+        importDate: now.slice(0, 10),
+        expiryDate: new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10),
+        initialQuantity: data.outputWeight,
+        currentStock: data.outputWeight,
+        unitPrice,
+        unit: 'kg',
+        status: 'ACTIVE',
+        location: 'KHO_BEP',
+        warehouseLocation: 'KHO_BEP',
+        note: `Nhập từ mẻ [${batch.batchCode}]`,
+      };
+      await db.inventoryLots.add(newBtpLot);
+    }
+
+    // 2. Tạo chứng từ nhập bán thành phẩm vào warehouseDocuments
+    const pnkCode = `PNK-BTP-${Date.now().toString().slice(-6)}`;
+    const totalBtpAmount = Math.round(data.outputWeight * unitPrice);
+    const btpDoc: any = {
+      id: Date.now() + 2,
+      docCode: pnkCode,
+      docType: 'NHAP_BTP',
+      branchId,
+      branchName,
+      createdBy: 'bep_tn',
+      createdByName: 'Bếp hoàn tất cân mẻ',
+      status: 'DA_DUYET',
+      location: 'KHO_BEP',
+      warehouseLocation: 'KHO_BEP',
+      note: `Nhập từ mẻ [${batch.batchCode}]`,
+      totalAmount: totalBtpAmount,
+      totalReportedAmount: totalBtpAmount,
+      totalShortageAmount: 0,
+      finalPayableAmount: totalBtpAmount,
+      createdAt: now,
+      items: [
+        {
+          id: Date.now() + 3,
+          itemId: batch.itemId,
+          itemCode: batch.itemCode,
+          itemName: `${batch.itemName} (BTP sơ chế)`,
+          batchCode: lotBtpCode,
+          quantity: data.outputWeight,
+          actualWeight: data.outputWeight,
+          unitPrice,
+          unit: 'kg',
+          reason: `Nhập từ mẻ [${batch.batchCode}]`,
+          location: 'KHO_BEP',
+          warehouseLocation: 'KHO_BEP',
+        },
+      ],
+    };
+    await db.warehouseDocuments.add(btpDoc);
+
     return {
       success: true,
-      message: `Đã hoàn tất cân mẻ. Hao hụt thực tế: ${lossRate}%`,
+      message: `Đã hoàn tất cân mẻ. Hao hụt thực tế: ${lossRate}%. Tự động nhập kho bán thành phẩm: +${data.outputWeight} kg`,
+      data: updated,
+    };
+  },
+
+  // TASK-WH-05: Bếp Trưởng / Quản Lý Xác nhận mẻ hợp lệ
+  approveBatch: async (data: { batchId: number; approvedBy: string; note?: string }) => {
+    await initializeDatabaseIfEmpty();
+    await simulateLatency(80, 120);
+    const batch = await db.batches.get(data.batchId);
+    if (!batch) throw new Error('Không tìm thấy mẻ chế biến');
+    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    const updated: BatchResponse = {
+      ...batch,
+      approvalStatus: 'HOP_LE',
+      approvedBy: data.approvedBy,
+      approvedAt: now,
+      approvalNote: data.note || 'Xác nhận mẻ hợp lệ, số cân đạt chuẩn',
+    };
+    await db.batches.put(updated);
+    return {
+      success: true,
+      message: `Đã xác nhận mẻ [${batch.batchCode}] hợp lệ thành công`,
+      data: updated,
+    };
+  },
+
+  // TASK-WH-05: Bếp Trưởng / Quản Lý Lập biên bản giải trình hao hụt
+  recordBatchExplanation: async (data: { batchId: number; approvedBy: string; note: string }) => {
+    await initializeDatabaseIfEmpty();
+    await simulateLatency(80, 120);
+    const batch = await db.batches.get(data.batchId);
+    if (!batch) throw new Error('Không tìm thấy mẻ chế biến');
+    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    const updated: BatchResponse = {
+      ...batch,
+      approvalStatus: 'BIEN_BAN',
+      approvedBy: data.approvedBy,
+      approvedAt: now,
+      approvalNote: data.note,
+    };
+    await db.batches.put(updated);
+    return {
+      success: true,
+      message: `Đã lập biên bản giải trình hao hụt cho mẻ [${batch.batchCode}]`,
       data: updated,
     };
   },
@@ -338,17 +549,29 @@ export const kitchenApi = {
     return batches.reverse();
   },
 
-  // Nút 3: Ra line (+1)
-  recordLineItem: async (data: { itemId: number; quantity?: number; requestId?: string }) => {
+  // Nút 3: Ra line (+1) (TASK-WH-07: Trừ kho bán thành phẩm/sẵn sàng phục vụ của chi nhánh theo thời gian thực)
+  recordLineItem: async (data: {
+    itemId: number;
+    quantity?: number;
+    requestId?: string;
+    branchId?: number;
+  }) => {
     await initializeDatabaseIfEmpty();
     await simulateLatency(100, 140);
 
     const qty = data.quantity || 1;
     const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    const branchId = data.branchId || 1;
+    const branchName =
+      branchId === 2
+        ? 'Sen Việt Buffet - Chi nhánh Quế Võ'
+        : 'Sen Việt Buffet - Chi nhánh Thái Nguyên';
+
+    const item = await db.items.get(data.itemId);
 
     const log = {
       id: Date.now(),
-      branchId: 1,
+      branchId,
       itemId: data.itemId,
       quantity: qty,
       requestId: data.requestId,
@@ -357,9 +580,88 @@ export const kitchenApi = {
 
     await db.lineLogs.add(log);
 
+    // Trừ kho bán thành phẩm/sẵn sàng phục vụ của chi nhánh theo thời gian thực
+    let remainingToDeduct = qty;
+    const lots = await db.inventoryLots.where('itemId').equals(data.itemId).toArray();
+    const branchLots = lots.filter((l) => !branchId || !l.branchId || l.branchId === branchId);
+    const targetLots = branchLots.length > 0 ? branchLots : lots;
+
+    // Ưu tiên trừ các lô BTP / Kho Bếp trước, sau đó các lô khác
+    targetLots.sort((a, b) => {
+      const aIsBtp =
+        (a.batchCode && a.batchCode.includes('BTP')) ||
+        a.location === 'KHO_BEP' ||
+        a.warehouseLocation === 'KHO_BEP';
+      const bIsBtp =
+        (b.batchCode && b.batchCode.includes('BTP')) ||
+        b.location === 'KHO_BEP' ||
+        b.warehouseLocation === 'KHO_BEP';
+      if (aIsBtp && !bIsBtp) return -1;
+      if (!aIsBtp && bIsBtp) return 1;
+      return (b.currentStock || 0) - (a.currentStock || 0);
+    });
+
+    for (const lot of targetLots) {
+      if (remainingToDeduct <= 0) break;
+      if (lot.currentStock && lot.currentStock > 0) {
+        const deduct = Math.min(lot.currentStock, remainingToDeduct);
+        const newStock = Number((lot.currentStock - deduct).toFixed(2));
+        await db.inventoryLots.update(lot.id, { currentStock: newStock });
+        remainingToDeduct -= deduct;
+      }
+    }
+    if (remainingToDeduct > 0 && targetLots.length > 0) {
+      const firstLot = targetLots[0];
+      const newStock = Math.max(
+        0,
+        Number(((firstLot.currentStock || 0) - remainingToDeduct).toFixed(2))
+      );
+      await db.inventoryLots.update(firstLot.id, { currentStock: newStock });
+    }
+
+    // Tạo biến động chứng từ xuất ra line
+    const pxkLineCode = `PXK-LINE-${Date.now().toString().slice(-6)}`;
+    const cost = item?.costPrice || 50000;
+    const totalAmount = Math.round(qty * cost);
+
+    const lineDoc: any = {
+      id: Date.now() + 1,
+      docCode: pxkLineCode,
+      docType: 'RA_LINE',
+      branchId,
+      branchName,
+      createdBy: 'bep_tn',
+      createdByName: 'Bếp Ra Line',
+      status: 'DA_DUYET',
+      location: 'KHO_BEP',
+      warehouseLocation: 'KHO_BEP',
+      note: `Xuất quầy line phục vụ buffet (+${qty} ${item?.unit || 'đĩa/kg'})`,
+      totalAmount,
+      totalReportedAmount: totalAmount,
+      totalShortageAmount: 0,
+      finalPayableAmount: totalAmount,
+      createdAt: now,
+      items: [
+        {
+          id: Date.now() + 2,
+          itemId: data.itemId,
+          itemCode: item?.itemCode || 'M-01',
+          itemName: item?.itemName || 'Món quầy line',
+          quantity: qty,
+          actualWeight: qty,
+          unitPrice: cost,
+          unit: item?.unit || 'phần',
+          reason: 'Xuất quầy line buffet',
+          location: 'KHO_BEP',
+          warehouseLocation: 'KHO_BEP',
+        },
+      ],
+    };
+    await db.warehouseDocuments.add(lineDoc);
+
     return {
       success: true,
-      message: `Đã ra line +${qty}`,
+      message: `Đã ra line +${qty} và trừ tồn kho bán thành phẩm phục vụ`,
       data: log,
     };
   },

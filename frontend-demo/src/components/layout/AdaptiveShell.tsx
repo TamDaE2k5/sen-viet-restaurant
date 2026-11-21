@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { isViewAuthorized, userHasRole } from '../../utils/rbac';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
@@ -18,11 +18,15 @@ import {
   UserCheck,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   ShieldAlert,
   Crown,
   ChefHat,
   Briefcase,
   Building2,
+  PanelLeftClose,
+  PanelLeftOpen,
+  ChevronRightSquare,
 } from 'lucide-react';
 
 export interface AdaptiveShellProps {
@@ -36,7 +40,7 @@ interface NavItem {
   label: string;
   shortLabel?: string;
   icon: React.ElementType;
-  section: 'primary-mgmt' | 'kitchen-ops' | 'hr-mgmt';
+  section: 'primary-mgmt' | 'kitchen-ops' | 'hr-mgmt' | 'personal-portal';
   badge?: string;
 }
 
@@ -123,13 +127,45 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
   const { user, logout, activeContext, setActiveContext, availableContexts, isMultiRole } = useAuth();
   const { isMobile, isTablet, isDesktop } = useBreakpoint();
   const [isTabletRailExpanded, setIsTabletRailExpanded] = useState(false);
+  const [isDesktopCollapsed, setIsDesktopCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('senviet_desktop_sidebar_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const [selectedBranch, setSelectedBranch] = useState<string>(() => {
+    return localStorage.getItem('senviet_current_branch') || user?.branchName || 'Sen Việt Buffet - Chi nhánh Thái Nguyên';
+  });
+
+  const toggleDesktopSidebar = () => {
+    setIsDesktopCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('senviet_desktop_sidebar_collapsed', String(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const handleBranchSelect = (branch: string) => {
+    setSelectedBranch(branch);
+    try {
+      localStorage.setItem('senviet_current_branch', branch);
+    } catch {}
+  };
 
   if (!user) return null;
 
   const isChuChuoi = userHasRole(user, 'ROLE_CHU_CHUOI') || user.username === 'admin_chu';
   const isHeadChef = userHasRole(user, 'ROLE_QL_BEP') || user.username === 'ql_bep_tn';
   const isBranchMgr = userHasRole(user, 'ROLE_QL_CHINHANH') || user.username === 'ql_chinhanh_tn';
-  const isGenAcc = userHasRole(user, 'ROLE_GENERAL_ACCOUNTANT');
+  const isGenAcc =
+    user.username === 'ketoan_tong' ||
+    userHasRole(user, 'ROLE_GENERAL_ACCOUNTANT') ||
+    userHasRole(user, 'ROLE_KETOAN_TONG') ||
+    userHasRole(user, 'ROLE_ACCOUNTANT');
   const isMgr = userHasRole(user, 'ROLE_RESTAURANT_MANAGER');
   const isBrAcc = userHasRole(user, 'ROLE_BRANCH_ACCOUNTANT');
   const isKitchen = userHasRole(user, 'ROLE_KITCHEN_STAFF');
@@ -177,7 +213,7 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
       ];
     }
 
-    // 2. BẾP TRƯỞNG (ql_bep_tn): Chỉ huy bếp, duyệt báo hỏng, giám sát mẻ, đặt hàng NCC
+    // 2. BẾP TRƯỞNG (ql_bep_tn): Chỉ huy bếp, duyệt báo hỏng, giám sát mẻ, đặt hàng NCC, quản lý kho cơ sở
     if (isHeadChef) {
       return [
         {
@@ -192,6 +228,13 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
           label: 'Bếp 4 Nút & Cân Mẻ',
           shortLabel: 'Bếp 4 Nút',
           icon: Flame,
+          section: 'kitchen-ops',
+        },
+        {
+          id: 'warehouse',
+          label: 'Kho Cơ Sở & Lô Hàng',
+          shortLabel: 'Kho Hàng',
+          icon: Boxes,
           section: 'kitchen-ops',
         },
         {
@@ -211,7 +254,7 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
       ];
     }
 
-    // 3. QUẢN LÝ CHI NHÁNH (ql_chinhanh_tn): Kỷ luật ca, GPS, ra ngoài, ghi phạt, chấm thi tay nghề
+    // 3. QUẢN LÝ CHI NHÁNH (ql_chinhanh_tn): Kỷ luật ca, GPS, ra ngoài, ghi phạt, chấm thi tay nghề, quản lý kho cơ sở
     if (isBranchMgr) {
       return [
         {
@@ -226,6 +269,13 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
           label: 'Giám Sát Bếp Chi Nhánh',
           shortLabel: 'Bếp & Mẻ',
           icon: Flame,
+          section: 'kitchen-ops',
+        },
+        {
+          id: 'warehouse',
+          label: 'Kho Cơ Sở & Lô Hàng',
+          shortLabel: 'Kho Hàng',
+          icon: Boxes,
           section: 'kitchen-ops',
         },
         {
@@ -300,7 +350,48 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
       ];
     }
 
-    // 5. Fallback vai trò khác (Bếp viên, Nhân viên phục vụ, Kế toán chi nhánh)
+    // 5. BẾP VIÊN (bep_tn): Bếp 4 nút & cân mẻ, Kho vật lý (xem tồn & cân hàng), Chấm công cá nhân, Thi tay nghề
+    if (isKitchen) {
+      return [
+        {
+          id: 'kitchen',
+          label: 'Bếp 4 Nút & Cân Mẻ',
+          shortLabel: 'Bếp 4 Nút',
+          icon: Flame,
+          section: 'kitchen-ops',
+        },
+        {
+          id: 'warehouse',
+          label: 'Kho Cơ Sở & Cân Hàng',
+          shortLabel: 'Kho Hàng',
+          icon: Boxes,
+          section: 'kitchen-ops',
+        },
+        {
+          id: 'attendance',
+          label: 'Chấm Công Cá Nhân',
+          shortLabel: 'Chấm Công',
+          icon: Clock,
+          section: 'hr-mgmt',
+        },
+        {
+          id: 'exam',
+          label: 'Thi Tay Nghề Dao Thớt',
+          shortLabel: 'Thi Nghề',
+          icon: Award,
+          section: 'hr-mgmt',
+        },
+        {
+          id: 'profile',
+          label: 'Hồ Sơ Nhân Viên',
+          shortLabel: 'Cá Nhân',
+          icon: UserCheck,
+          section: 'hr-mgmt',
+        },
+      ];
+    }
+
+    // 6. Fallback vai trò khác (Nhân viên phục vụ, Kế toán chi nhánh)
     return ALL_NAV_ITEMS.filter((item) => isViewAuthorized(item.id, user));
   };
 
@@ -311,7 +402,12 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
     if (roles.includes('ROLE_CHU_CHUOI') || user.username === 'admin_chu') return 'Chủ Chuỗi / Ban Giám Đốc';
     if (roles.includes('ROLE_QL_BEP') || user.username === 'ql_bep_tn') return 'Bếp Trưởng Điều Hành';
     if (roles.includes('ROLE_QL_CHINHANH') || user.username === 'ql_chinhanh_tn') return 'Quản Lý Chi Nhánh';
-    if (roles.includes('ROLE_GENERAL_ACCOUNTANT')) return 'Kế Toán Tổng Chuỗi';
+    if (
+      roles.includes('ROLE_GENERAL_ACCOUNTANT') ||
+      roles.includes('ROLE_KETOAN_TONG') ||
+      roles.includes('ROLE_ACCOUNTANT') ||
+      user.username === 'ketoan_tong'
+    ) return 'Kế Toán Tổng Chuỗi';
     if (roles.includes('ROLE_BRANCH_ACCOUNTANT')) return 'Kế Toán Chi Nhánh';
     if (roles.includes('ROLE_KITCHEN_STAFF')) return 'Bếp / Bar 4 Nút';
     if (roles.includes('ROLE_RESTAURANT_MANAGER')) return 'Quản Lý Nhà Hàng';
@@ -344,8 +440,8 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
       return [
         { id: 'head-chef', label: 'Bếp Trưởng', icon: ChefHat },
         { id: 'kitchen', label: 'Bếp 4 Nút', icon: Flame },
+        { id: 'warehouse', label: 'Kho Hàng', icon: Boxes },
         { id: 'reconciliation', label: 'Đối Soát', icon: FileSpreadsheet },
-        { id: 'attendance', label: 'Chấm Công', icon: Clock },
         { id: 'profile', label: 'Cá Nhân', icon: UserCheck },
       ];
     }
@@ -355,8 +451,8 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
       return [
         { id: 'branch-manager', label: 'Điều Hành', icon: Briefcase },
         { id: 'kitchen', label: 'Bếp & Mẻ', icon: Flame },
+        { id: 'warehouse', label: 'Kho Cơ Sở', icon: Boxes },
         { id: 'reconciliation', label: 'Đối Soát', icon: FileSpreadsheet },
-        { id: 'attendance', label: 'Chấm Công', icon: Clock },
         { id: 'profile', label: 'Cá Nhân', icon: UserCheck },
       ];
     }
@@ -387,6 +483,7 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
     if (isKitchen) {
       return [
         { id: 'kitchen', label: 'Bếp 4 Nút', icon: Flame },
+        { id: 'warehouse', label: 'Kho Vật Lý', icon: Boxes },
         { id: 'attendance', label: 'Chấm Công', icon: Clock },
         { id: 'exam', label: 'Thi Nghề', icon: Award },
         { id: 'profile', label: 'Cá Nhân', icon: UserCheck },
@@ -427,7 +524,7 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
           TOP HEADER / NAVBAR (Cố định ở trên cho mọi màn hình)
       ───────────────────────────────────────────────────────── */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-card">
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2">
+        <div className="w-full max-w-[1920px] mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-3">
           {/* Brand Logo & Name */}
           <div className="flex items-center space-x-2.5 sm:space-x-3 flex-shrink-0">
             <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-brand-600 via-brand-500 to-amber-500 flex items-center justify-center text-white shadow-md shadow-brand-600/20 flex-shrink-0">
@@ -440,10 +537,71 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
               <span className="text-[11px] sm:text-xs text-slate-500 flex items-center gap-1 font-medium mt-0.5">
                 <MapPin className="h-3 w-3 text-brand-600 shrink-0" />
                 <span className="truncate max-w-[130px] sm:max-w-none">
-                  {user.branchName || 'Toàn hệ thống (Hội sở)'}
+                  {selectedBranch.replace('Sen Việt Buffet - ', '')}
                 </span>
               </span>
             </div>
+          </div>
+
+          {/* Breadcrumb Topbar & Dropdown Chi Nhánh Nổi Bật (TASK-PC-03) */}
+          <div className="hidden lg:flex items-center gap-2 text-xs text-slate-500 font-medium">
+            <span className="font-bold text-slate-700">Sen Việt Buffet</span>
+            <ChevronRight className="h-3.5 w-3.5 text-slate-400" />
+            
+            {/* Dropdown chuyển nhanh chi nhánh */}
+            <div className="relative group">
+              <button
+                type="button"
+                className="flex items-center gap-1 font-semibold text-brand-700 bg-brand-50 hover:bg-brand-100 border border-brand-200/80 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+              >
+                <MapPin className="h-3.5 w-3.5 text-brand-600" />
+                <span>{selectedBranch.replace('Sen Việt Buffet - ', '')}</span>
+                <ChevronDown className="h-3 w-3 text-brand-500 ml-0.5" />
+              </button>
+              <div className="absolute left-0 mt-1 w-64 bg-white rounded-xl shadow-xl border border-slate-200 p-1 hidden group-hover:block group-focus-within:block z-50 animate-in fade-in">
+                <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  Chuyển nhanh chi nhánh
+                </div>
+                <button
+                  onClick={() => handleBranchSelect('Sen Việt Buffet - Chi nhánh Thái Nguyên')}
+                  className={`w-full text-left px-3 py-2 text-xs rounded-lg flex items-center gap-2 font-medium transition-colors ${
+                    selectedBranch.includes('Thái Nguyên')
+                      ? 'bg-brand-50 text-brand-700 font-bold'
+                      : 'hover:bg-slate-100 text-slate-700'
+                  }`}
+                >
+                  <span>📍</span>
+                  <span>Chi nhánh Thái Nguyên (TN)</span>
+                </button>
+                <button
+                  onClick={() => handleBranchSelect('Sen Việt Buffet - Chi nhánh Quế Võ')}
+                  className={`w-full text-left px-3 py-2 text-xs rounded-lg flex items-center gap-2 font-medium transition-colors ${
+                    selectedBranch.includes('Quế Võ')
+                      ? 'bg-brand-50 text-brand-700 font-bold'
+                      : 'hover:bg-slate-100 text-slate-700'
+                  }`}
+                >
+                  <span>📍</span>
+                  <span>Chi nhánh Quế Võ (QV)</span>
+                </button>
+                <button
+                  onClick={() => handleBranchSelect('Sen Việt Buffet - Toàn hệ thống (Hội sở)')}
+                  className={`w-full text-left px-3 py-2 text-xs rounded-lg flex items-center gap-2 font-medium transition-colors ${
+                    selectedBranch.includes('Toàn hệ thống')
+                      ? 'bg-brand-50 text-brand-700 font-bold'
+                      : 'hover:bg-slate-100 text-slate-700'
+                  }`}
+                >
+                  <span>🏢</span>
+                  <span>Toàn hệ thống (Hội sở)</span>
+                </button>
+              </div>
+            </div>
+
+            <ChevronRight className="h-3.5 w-3.5 text-slate-400" />
+            <span className="font-extrabold text-slate-900 bg-slate-100 px-2.5 py-1 rounded-md text-xs border border-slate-200">
+              {authorizedNavItems.find((i) => i.id === activeView)?.label || activeView}
+            </span>
           </div>
 
           {/* MULTI-ROLE CONTEXT SWITCHER (Nút chuyển không gian làm việc) */}
@@ -506,7 +664,7 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
       {/* ─────────────────────────────────────────────────────────
           BODY CONTAINER (3 Chế độ: Mobile, Tablet Rail, Desktop Sidebar)
       ───────────────────────────────────────────────────────── */}
-      <div className="flex-1 flex w-full max-w-7xl mx-auto">
+      <div className="flex-1 flex w-full max-w-[1920px] mx-auto">
         {/* ──────── 1. TABLET SLIM RAIL (640px - 1024px) ──────── */}
         <aside
           className={`hidden sm:flex lg:hidden flex-col bg-white border-r border-slate-200 p-2 transition-all duration-200 flex-shrink-0 ${
@@ -561,32 +719,78 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
           </nav>
         </aside>
 
-        {/* ──────── 2. DESKTOP FULL ENTERPRISE SIDEBAR (> 1024px) ──────── */}
-        <aside className="hidden lg:block w-72 flex-shrink-0 py-6 pl-4 lg:pl-6">
-          <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-card sticky top-24 space-y-5">
+        {/* ──────── 2. DESKTOP ENTERPRISE SIDEBAR (> 1024px) (TASK-PC-03) ──────── */}
+        <aside
+          className={`hidden lg:block flex-shrink-0 py-6 pl-4 lg:pl-6 transition-all duration-300 ${
+            isDesktopCollapsed ? 'w-[72px]' : 'w-72'
+          }`}
+        >
+          <div
+            className={`bg-white rounded-2xl border border-slate-200 shadow-card sticky top-24 space-y-4 transition-all ${
+              isDesktopCollapsed ? 'p-2' : 'p-4'
+            }`}
+          >
+            {/* Nút thu gọn / mở rộng Sidebar Desktop (TASK-PC-03) */}
+            <div className={`flex items-center border-b border-slate-100 pb-2 ${
+              isDesktopCollapsed ? 'justify-center' : 'justify-between'
+            }`}>
+              {!isDesktopCollapsed && (
+                <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider truncate">
+                  {getSidebarHeaderTitle()}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={toggleDesktopSidebar}
+                title={
+                  isDesktopCollapsed
+                    ? 'Mở rộng sidebar (280px)'
+                    : 'Thu gọn sidebar rail (72px)'
+                }
+                className="p-1.5 text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition-colors cursor-pointer"
+              >
+                {isDesktopCollapsed ? (
+                  <ChevronRight className="w-4 h-4 text-brand-600" />
+                ) : (
+                  <ChevronLeft className="w-4 h-4 text-slate-500" />
+                )}
+              </button>
+            </div>
+
             {/* User Profile Card */}
-            <div className="p-3 bg-gradient-to-br from-slate-50 to-slate-100/70 rounded-xl border border-slate-200/80 flex items-center gap-3">
-              <div className="h-11 w-11 rounded-xl bg-gradient-to-tr from-brand-600 via-rose-600 to-amber-600 text-white font-extrabold text-sm flex items-center justify-center shadow-md shadow-brand-600/20 shrink-0">
+            <div
+              className={`bg-gradient-to-br from-slate-50 to-slate-100/70 rounded-xl border border-slate-200/80 flex items-center transition-all ${
+                isDesktopCollapsed ? 'p-1.5 justify-center' : 'p-3 gap-3'
+              }`}
+            >
+              <div
+                title={`${user.fullName} (${getRoleDisplayName(user.roles)})`}
+                className="h-10 w-10 rounded-xl bg-gradient-to-tr from-brand-600 via-rose-600 to-amber-600 text-white font-extrabold text-sm flex items-center justify-center shadow-md shadow-brand-600/20 shrink-0"
+              >
                 {getInitials(user.fullName)}
               </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-bold text-slate-900 truncate">{user.fullName}</div>
-                <div className="text-[11px] font-semibold text-brand-700 bg-brand-50 border border-brand-200/60 rounded-full px-2 py-0.5 inline-flex items-center gap-1 mt-0.5 max-w-full truncate">
-                  <ShieldCheck className="h-3 w-3 shrink-0" />
-                  <span className="truncate">{getRoleDisplayName(user.roles)}</span>
+              {!isDesktopCollapsed && (
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-bold text-slate-900 truncate">{user.fullName}</div>
+                  <div className="text-[11px] font-semibold text-brand-700 bg-brand-50 border border-brand-200/60 rounded-full px-2 py-0.5 inline-flex items-center gap-1 mt-0.5 max-w-full truncate">
+                    <ShieldCheck className="h-3 w-3 shrink-0" />
+                    <span className="truncate">{getRoleDisplayName(user.roles)}</span>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
 
             {/* Navigation Groups */}
             <div className="space-y-4">
               <div>
-                <div className="flex items-center justify-between px-2.5 py-1 text-[11px] font-extrabold text-slate-400 uppercase tracking-wider">
-                  <span>{getSidebarHeaderTitle()}</span>
-                  <span className="text-[10px] font-bold text-brand-600 bg-brand-50 px-1.5 py-0.2 rounded">
-                    {authorizedNavItems.length}
-                  </span>
-                </div>
+                {!isDesktopCollapsed && (
+                  <div className="flex items-center justify-between px-2.5 py-1 text-[11px] font-extrabold text-slate-400 uppercase tracking-wider">
+                    <span>DANH MỤC</span>
+                    <span className="text-[10px] font-bold text-brand-600 bg-brand-50 px-1.5 py-0.2 rounded">
+                      {authorizedNavItems.length}
+                    </span>
+                  </div>
+                )}
                 <nav className="space-y-1 mt-1">
                   {authorizedNavItems.map((item) => {
                     const Icon = item.icon;
@@ -595,7 +799,12 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
                       <button
                         key={item.id}
                         onClick={() => onViewChange(item.id)}
-                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-all text-left ${
+                        title={item.label}
+                        className={`w-full flex items-center rounded-xl text-xs sm:text-sm font-semibold transition-all ${
+                          isDesktopCollapsed
+                            ? 'justify-center p-2.5'
+                            : 'gap-3 px-3 py-2.5 text-left'
+                        } ${
                           isActive
                             ? 'bg-brand-50 text-brand-700 font-extrabold border-l-4 border-brand-600 shadow-sm'
                             : 'text-slate-600 hover:bg-slate-100/80 hover:text-slate-900'
@@ -606,14 +815,14 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
                             isActive ? 'text-brand-600' : 'text-slate-400'
                           }`}
                         />
-                        <span className="truncate">{item.label}</span>
+                        {!isDesktopCollapsed && <span className="truncate">{item.label}</span>}
                       </button>
                     );
                   })}
                 </nav>
               </div>
 
-              {authorizedNavItems.length === 0 && (
+              {authorizedNavItems.length === 0 && !isDesktopCollapsed && (
                 <div className="p-3 text-xs text-amber-700 bg-amber-50 rounded-xl flex items-center gap-2">
                   <ShieldAlert className="h-4 w-4 shrink-0" />
                   <span>Không có quyền truy cập phân hệ nào</span>
@@ -622,20 +831,26 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
             </div>
 
             {/* Sidebar Footer: System Status */}
-            <div className="pt-3 border-t border-slate-100 text-[11px] text-slate-400 flex items-center justify-between">
-              <span className="flex items-center gap-1.5">
+            <div
+              className={`pt-2 border-t border-slate-100 text-[11px] text-slate-400 flex items-center ${
+                isDesktopCollapsed ? 'justify-center' : 'justify-between'
+              }`}
+            >
+              <span className="flex items-center gap-1.5" title="IndexedDB Online">
                 <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span>IndexedDB Online</span>
+                {!isDesktopCollapsed && <span>IndexedDB Online</span>}
               </span>
-              <span className="font-mono text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500">
-                Sprint 3 Ready
-              </span>
+              {!isDesktopCollapsed && (
+                <span className="font-mono text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500">
+                  PC 16:9 Ready
+                </span>
+              )}
             </div>
           </div>
         </aside>
 
         {/* ──────── 3. MAIN CONTENT AREA (Đa nền tảng) ──────── */}
-        <main className="flex-1 min-w-0 p-3 sm:p-6 lg:p-8 pb-24 sm:pb-8">
+        <main className="flex-1 min-w-0 p-3 sm:p-5 lg:p-6 pb-24 sm:pb-8">
           {children}
         </main>
       </div>

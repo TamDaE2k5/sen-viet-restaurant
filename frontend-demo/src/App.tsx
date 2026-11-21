@@ -24,6 +24,17 @@ export const App: React.FC = () => {
   const [activeView, setActiveView] = useState<string>('kitchen');
   const prevUserIdRef = useRef<number | undefined>(user?.id);
 
+  // Lắng nghe sự kiện chuyển view nội bộ (Quick Actions từ Dashboard & Center)
+  useEffect(() => {
+    const handleAppNavigate = (e: any) => {
+      if (e.detail && typeof e.detail === 'string') {
+        setActiveView(e.detail);
+      }
+    };
+    window.addEventListener('app-navigate', handleAppNavigate);
+    return () => window.removeEventListener('app-navigate', handleAppNavigate);
+  }, []);
+
   // Tự động kiểm tra và chuyển về view mặc định khi đăng nhập hoặc chuyển đổi tài khoản
   useEffect(() => {
     if (user) {
@@ -119,9 +130,9 @@ export const App: React.FC = () => {
         ) : activeView === 'executive-cockpit' ? (
           <ExecutiveCockpit />
         ) : activeView === 'head-chef' ? (
-          <HeadChefDashboard />
+          <HeadChefDashboard onNavigateToWarehouse={() => setActiveView('warehouse')} />
         ) : activeView === 'branch-manager' ? (
-          <BranchManagerCenter />
+          <BranchManagerCenter onNavigateToWarehouse={() => setActiveView('warehouse')} />
         ) : activeView === 'kitchen' ? (
           <KitchenModule />
         ) : activeView === 'warehouse' ? (

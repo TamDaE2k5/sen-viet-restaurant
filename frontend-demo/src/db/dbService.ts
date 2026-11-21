@@ -25,7 +25,36 @@ import {
   SEED_INCREASE_PROPOSALS,
   SEED_DAILY_REMAINING,
   SEED_DAILY_MEALS,
+  SEED_RECONCILIATION_PERIODS,
+  SEED_DEBT_ADJUSTMENTS,
 } from './seedData';
+
+/**
+ * Phiên bản dữ liệu mẫu (Cập nhật phiên bản sẽ kích hoạt tự động reset IndexedDB đồng bộ)
+ */
+export const SEED_DATA_VERSION = 'v2026_11_21_sprint_kho_v1';
+
+let memorySeedVersion: string | null = null;
+
+function getStoredVersion(): string | null {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      return localStorage.getItem('senviet_seed_data_version');
+    } catch {
+      return memorySeedVersion;
+    }
+  }
+  return memorySeedVersion;
+}
+
+function setStoredVersion(version: string): void {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      localStorage.setItem('senviet_seed_data_version', version);
+    } catch {}
+  }
+  memorySeedVersion = version;
+}
 
 /**
  * Giả lập độ trễ mạng thực tế (100 - 150ms) để giữ trọn vẹn trải nghiệm loading/spinner cho UI
@@ -36,19 +65,119 @@ export async function simulateLatency(min = 100, max = 150): Promise<void> {
 }
 
 /**
- * Nạp dữ liệu mẫu vào IndexedDB nếu database trống (chạy lần đầu mở app)
+ * Nạp dữ liệu mẫu vào IndexedDB nếu database trống hoặc có phiên bản seed data mới
  */
 export async function initializeDatabaseIfEmpty(): Promise<boolean> {
   try {
+    const storedVersion = getStoredVersion();
     const userCount = await db.users.count();
-    if (userCount > 0) {
-      return false; // Đã có dữ liệu
+
+    // Nếu database trống HOẶC phiên bản seed data cũ -> Tự động nạp lại dữ liệu mẫu mới
+    if (userCount === 0 || storedVersion !== SEED_DATA_VERSION) {
+      console.log(
+        `[Dexie DB] Phát hiện phiên bản seed mới (${SEED_DATA_VERSION}), khởi tạo lại dữ liệu mẫu...`
+      );
+      await resetToSeedData();
+      setStoredVersion(SEED_DATA_VERSION);
+      console.log('[Dexie DB] Khởi tạo thành công 100% dữ liệu mẫu mới!');
+      return true;
     }
 
-    console.log('[Dexie DB] Khởi tạo dữ liệu mẫu lần đầu vào IndexedDB...');
-    await populateAllSeedData();
-    console.log('[Dexie DB] Khởi tạo thành công 100% dữ liệu mẫu!');
-    return true;
+    // Tự động kiểm tra và nâng cấp quyền hạn nếu ketoan_tong hoặc admin_chu bị thiếu vai trò trong IndexedDB cũ
+    try {
+      const ktUser = await db.users.where('username').equals('ketoan_tong').first();
+      if (ktUser && (!ktUser.roles.includes('ROLE_GENERAL_ACCOUNTANT') || !ktUser.roles.includes('ROLE_ACCOUNTANT'))) {
+        const updatedRoles = Array.from(new Set([
+          ...ktUser.roles,
+          'ROLE_GENERAL_ACCOUNTANT',
+          'ROLE_BRANCH_ACCOUNTANT',
+          'ROLE_ACCOUNTANT',
+          'ROLE_KETOAN_TONG',
+        ]));
+        await db.users.update(ktUser.id, { roles: updatedRoles });
+        console.log('[Dexie DB] Đã tự động cập nhật đầy đủ quyền hạn cho Kế Toán Tổng (ketoan_tong)');
+      }
+      const adminUser = await db.users.where('username').equals('admin_chu').first();
+      if (adminUser && !adminUser.roles.includes('ROLE_CHU_CHUOI')) {
+        const updatedAdminRoles = Array.from(new Set([
+          ...adminUser.roles,
+          'ROLE_CHU_CHUOI',
+          'ROLE_GENERAL_ACCOUNTANT',
+        ]));
+        await db.users.update(adminUser.id, { roles: updatedAdminRoles });
+      }
+
+      // Tự động kiểm tra và thêm tài khoản Kế toán Chi nhánh (ketoan_tn & ketoan_qv)
+      const ktBranchUser = await db.users.where('username').equals('ketoan_tn').first();
+      if (!ktBranchUser) {
+        await db.users.add({
+          id: 7,
+          username: 'ketoan_tn',
+          fullName: 'Nguyễn Thu Thủy',
+          email: 'ketoan_tn@senvietbuffet.vn',
+          phone: '0987778899',
+          branchId: 1,
+          branchCode: 'TN',
+          branchName: 'Sen Việt Buffet - Chi nhánh Thái Nguyên',
+          department: 'Kế toán',
+          position: 'Kế toán chi nhánh',
+          baseSalary: 9500000,
+          insuranceRate: 0.11,
+          insuranceAmount: 1045000,
+          bankAccount: '19034567891012',
+          bankName: 'Techcombank',
+          roles: [
+            'ROLE_KETOAN_CHINHANH',
+            'ROLE_BRANCH_ACCOUNTANT',
+            'ROLE_ACCOUNTANT',
+            'ROLE_EMPLOYEE',
+          ],
+          status: 'ACTIVE',
+        });
+        console.log('[Dexie DB] Đã tự động tạo tài khoản Kế Toán Chi Nhánh (ketoan_tn)');
+      } else if (!ktBranchUser.roles.includes('ROLE_KETOAN_CHINHANH')) {
+        await db.users.update(ktBranchUser.id, {
+          roles: Array.from(new Set([...ktBranchUser.roles, 'ROLE_KETOAN_CHINHANH', 'ROLE_BRANCH_ACCOUNTANT'])),
+        });
+      }
+
+      const ktQVUser = await db.users.where('username').equals('ketoan_qv').first();
+      if (!ktQVUser) {
+        await db.users.add({
+          id: 8,
+          username: 'ketoan_qv',
+          fullName: 'Trần Thị Lan',
+          email: 'ketoan_qv@senvietbuffet.vn',
+          phone: '0988889900',
+          branchId: 2,
+          branchCode: 'QV',
+          branchName: 'Sen Việt Buffet - Chi nhánh Quế Võ',
+          department: 'Kế toán',
+          position: 'Kế toán chi nhánh Quế Võ',
+          baseSalary: 9500000,
+          insuranceRate: 0.105,
+          insuranceAmount: 997500,
+          bankAccount: '0381000123456',
+          bankName: 'Vietcombank',
+          roles: [
+            'ROLE_KETOAN_CHINHANH',
+            'ROLE_BRANCH_ACCOUNTANT',
+            'ROLE_ACCOUNTANT',
+            'ROLE_EMPLOYEE',
+          ],
+          status: 'ACTIVE',
+        });
+        console.log('[Dexie DB] Đã tự động tạo tài khoản Kế Toán Chi Nhánh (ketoan_qv)');
+      } else if (!ktQVUser.roles.includes('ROLE_KETOAN_CHINHANH')) {
+        await db.users.update(ktQVUser.id, {
+          roles: Array.from(new Set([...ktQVUser.roles, 'ROLE_KETOAN_CHINHANH', 'ROLE_BRANCH_ACCOUNTANT'])),
+        });
+      }
+    } catch (e) {
+      console.warn('[Dexie DB] Bỏ qua kiểm tra nâng cấp quyền người dùng:', e);
+    }
+
+    return false;
   } catch (error) {
     console.error('[Dexie DB] Lỗi khởi tạo database nhúng:', error);
     return false;
@@ -88,6 +217,8 @@ export async function resetToSeedData(): Promise<void> {
       db.salaryIncreaseProposals,
       db.dailyRemaining,
       db.dailyMeals,
+      db.debtAdjustments,
+      db.reconciliationPeriods,
     ],
     async () => {
       await db.branches.clear();
@@ -115,10 +246,13 @@ export async function resetToSeedData(): Promise<void> {
       await db.salaryIncreaseProposals.clear();
       await db.dailyRemaining.clear();
       await db.dailyMeals.clear();
+      await db.debtAdjustments.clear();
+      await db.reconciliationPeriods.clear();
 
       await populateAllSeedData();
     }
   );
+  setStoredVersion(SEED_DATA_VERSION);
   console.log('[Dexie DB] Đã Reset dữ liệu thành công!');
 }
 
@@ -148,4 +282,6 @@ async function populateAllSeedData(): Promise<void> {
   await db.salaryIncreaseProposals.bulkAdd(SEED_INCREASE_PROPOSALS);
   await db.dailyRemaining.bulkAdd(SEED_DAILY_REMAINING);
   await db.dailyMeals.bulkAdd(SEED_DAILY_MEALS);
+  await db.debtAdjustments.bulkAdd(SEED_DEBT_ADJUSTMENTS);
+  await db.reconciliationPeriods.bulkAdd(SEED_RECONCILIATION_PERIODS);
 }
