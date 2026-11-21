@@ -1,5 +1,22 @@
 import Dexie, { Table } from 'dexie';
 
+export type WarehouseLocation =
+  | 'KHO_KHO'
+  | 'KHO_DONG_LANH'
+  | 'KHO_BE_SONG'
+  | 'KHO_BEP'
+  | 'KHO_BAR';
+
+export type WarehouseDocType =
+  | 'NHAP'
+  | 'XUAT_CHUYEN'
+  | 'XUAT_CHUYEN_NOI_BO'
+  | 'HUY'
+  | 'XUAT_HUY'
+  | 'XUAT_BEP'
+  | 'KIEM_KE'
+  | string;
+
 export class SenVietDemoDatabase extends Dexie {
   users!: Table<any, number>;
   branches!: Table<any, number>;
@@ -39,9 +56,9 @@ export class SenVietDemoDatabase extends Dexie {
       batches: '++id, batchCode, branchId, itemId, status, startedAt',
       damageReports: '++id, branchId, itemId, approvalStatus, status, createdAt',
       lineLogs: '++id, branchId, itemId, createdAt',
-      inventoryLots: '++id, batchCode, branchId, itemId, supplierId, expiryDate',
+      inventoryLots: '++id, batchCode, branchId, itemId, supplierId, location, expiryDate',
       suppliers: '++id, supplierCode, supplierName, branchId',
-      warehouseDocuments: '++id, docCode, docType, branchId, createdAt',
+      warehouseDocuments: '++id, docCode, docType, branchId, location, createdAt',
       inventoryChecks: '++id, checkCode, branchId, checkDate',
       attendances: '++id, userId, branchId, attendanceDate, date, isValidLocation, warningLocation',
       examQuestions: '++id, position, type',

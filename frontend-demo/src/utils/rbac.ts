@@ -44,7 +44,11 @@ export function isViewAuthorized(viewId: string, user: User | null | undefined):
     userHasRole(user, 'ROLE_KETOAN_TONG') ||
     userHasRole(user, 'ROLE_ACCOUNTANT');
   const isMgr = userHasRole(user, 'ROLE_RESTAURANT_MANAGER');
-  const isBrAcc = userHasRole(user, 'ROLE_BRANCH_ACCOUNTANT');
+  const isBrAcc =
+    userHasRole(user, 'ROLE_BRANCH_ACCOUNTANT') ||
+    userHasRole(user, 'ROLE_KETOAN_CHINHANH') ||
+    user.username === 'ketoan_tn' ||
+    user.username === 'ketoan_qv';
   const isKitchen = userHasRole(user, 'ROLE_KITCHEN_STAFF');
   const isEmp = userHasRole(user, 'ROLE_EMPLOYEE');
   const isHeadChef = userHasRole(user, 'ROLE_QL_BEP') || user.username === 'ql_bep_tn';
@@ -131,7 +135,11 @@ export function getDefaultAuthorizedView(
     userHasRole(user, 'ROLE_KETOAN_TONG') ||
     userHasRole(user, 'ROLE_ACCOUNTANT');
   const isMgr = userHasRole(user, 'ROLE_RESTAURANT_MANAGER');
-  const isBrAcc = userHasRole(user, 'ROLE_BRANCH_ACCOUNTANT');
+  const isBrAcc =
+    userHasRole(user, 'ROLE_BRANCH_ACCOUNTANT') ||
+    userHasRole(user, 'ROLE_KETOAN_CHINHANH') ||
+    user.username === 'ketoan_tn' ||
+    user.username === 'ketoan_qv';
   const isKitchen = userHasRole(user, 'ROLE_KITCHEN_STAFF');
   const isEmp = userHasRole(user, 'ROLE_EMPLOYEE');
 
@@ -194,7 +202,12 @@ export function getRoleDisplayBadges(roles: RoleName[] = []): string[] {
   ) {
     badges.push('Kế Toán Tổng Chuỗi');
   }
-  if (roles.includes('ROLE_BRANCH_ACCOUNTANT') && !roles.includes('ROLE_CHU_CHUOI')) badges.push('Kế Toán Chi Nhánh');
+  if (
+    (roles.includes('ROLE_BRANCH_ACCOUNTANT') || roles.includes('ROLE_KETOAN_CHINHANH')) &&
+    !roles.includes('ROLE_CHU_CHUOI')
+  ) {
+    badges.push('Kế Toán Chi Nhánh');
+  }
   if (roles.includes('ROLE_KITCHEN_STAFF') && !roles.includes('ROLE_QL_BEP') && !roles.includes('ROLE_CHU_CHUOI')) {
     badges.push('Bếp / Bar 4 Nút');
   }

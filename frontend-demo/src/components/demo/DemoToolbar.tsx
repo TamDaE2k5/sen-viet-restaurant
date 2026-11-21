@@ -15,6 +15,7 @@ import {
   ChefHat,
   Briefcase,
   Calculator,
+  Receipt,
   Crown,
   Minimize2,
   Maximize2,
@@ -49,6 +50,13 @@ const DEMO_ROLES: RoleOption[] = [
     roleBadge: 'QL Chi nhánh',
     icon: <Briefcase className="w-4 h-4 text-blue-500" />,
     color: 'hover:bg-blue-50 text-blue-700',
+  },
+  {
+    username: 'ketoan_tn',
+    label: 'Nguyễn Thu Thủy',
+    roleBadge: 'KT Chi nhánh',
+    icon: <Receipt className="w-4 h-4 text-teal-600" />,
+    color: 'hover:bg-teal-50 text-teal-700',
   },
   {
     username: 'ketoan_tong',

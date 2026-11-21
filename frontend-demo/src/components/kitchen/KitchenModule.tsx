@@ -40,7 +40,7 @@ import {
   TakeOutLog,
   DamageReport,
 } from '../../api/kitchen';
-import { warehouseApi, ImportBatch } from '../../api/warehouse';
+import { warehouseApi, ImportBatch, Supplier, WAREHOUSE_LOCATIONS } from '../../api/warehouse';
 import { compressImage, CompressionResult } from '../../utils/imageCompressor';
 
 export type KitchenStation = 'ALL' | 'BEP_NONG' | 'BEP_LANH' | 'BAR' | 'RA_LINE';
@@ -329,26 +329,127 @@ export const KitchenModule: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
+  // --- KHO-13: Cân hàng mới về (Bếp nhận hàng NCC) state ---
+  const [showReceiveModal, setShowReceiveModal] = useState<boolean>(false);
+  const [suppliersList, setSuppliersList] = useState<Supplier[]>([]);
+  const [receiveSupplierId, setReceiveSupplierId] = useState<number | undefined>(undefined);
+  const [receiveItemId, setReceiveItemId] = useState<number | undefined>(undefined);
+  const [receiveWeight, setReceiveWeight] = useState<string>('');
+  const [receiveLocation, setReceiveLocation] = useState<string>('KHO_BE_SONG');
+  const [receiveNote, setReceiveNote] = useState<string>('');
+  const [receivePhoto, setReceivePhoto] = useState<CompressionResult | null>(null);
+  const [isSubmittingReceive, setIsSubmittingReceive] = useState<boolean>(false);
+  const receivePhotoInputRef = useRef<HTMLInputElement>(null);
+
+  const handleReceivePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const res = await compressImage(file, 1280, 720, 0.75, {
+        branchName:
+          user?.branchName || (user?.branchId === 2 ? 'Sen Việt - Quế Võ' : 'Sen Việt - Thái Nguyên'),
+        userName: user?.fullName || 'Bếp viên',
+        docType: 'Cân nhận hàng NCC',
+        docTypeName: 'Cân nhận hàng NCC',
+      });
+      setReceivePhoto(res);
+      showNotice('success', 'Đã chụp & nén ảnh bàn cân kèm Watermark thành công');
+    } catch (err) {
+      console.error('Lỗi khi nén ảnh bàn cân:', err);
+      showNotice('error', 'Lỗi khi chụp ảnh');
+    } finally {
+      if (receivePhotoInputRef.current) receivePhotoInputRef.current.value = '';
+    }
+  };
+
+  const handleSubmitReceiveWeight = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!receiveSupplierId) {
+      showNotice('error', 'Vui lòng chọn Nhà cung cấp giao hàng');
+      return;
+    }
+    if (!receiveItemId) {
+      showNotice('error', 'Vui lòng chọn Mặt hàng nhận');
+      return;
+    }
+    const w = parseFloat(receiveWeight.replace(',', '.'));
+    if (isNaN(w) || w <= 0) {
+      showNotice('error', 'Vui lòng nhập số cân thực tế hợp lệ (> 0)');
+      return;
+    }
+    if (!receivePhoto) {
+      showNotice('error', '⚠️ Vui lòng chụp ảnh bàn cân hoặc phiếu giao hàng trước khi lưu!');
+      return;
+    }
+
+    try {
+      setIsSubmittingReceive(true);
+      const selItem = items.find((i) => i.id === receiveItemId);
+      const selSup = suppliersList.find((s) => s.id === receiveSupplierId);
+
+      await warehouseApi.createDocument({
+        branchId: user?.branchId || 1,
+        branchCode: (user?.branchId === 2 ? 'QV' : 'TN') as any,
+        docType: 'NHAP',
+        supplierId: receiveSupplierId,
+        warehouseLocation: receiveLocation,
+        note: `Bếp nhận & cân thực tế: ${receiveNote || 'Giao nhận tại cửa bếp ca hôm nay'}`,
+        imageUrls: receivePhoto.dataUrl,
+        items: [
+          {
+            itemId: receiveItemId,
+            quantity: w,
+            actualWeight: w,
+            supplierReportedWeight: w,
+            unitPrice: 0, // Tuyệt đối ẩn giá với Bếp
+            warehouseLocation: receiveLocation,
+          },
+        ],
+      });
+
+      showNotice(
+        'success',
+        `✅ Bếp đã cân ${w} kg ${selItem?.itemName || 'hàng'} từ ${selSup?.supplierName || 'NCC'}. Phiếu đã chuyển về màn hình Kế toán chi nhánh!`
+      );
+      setShowReceiveModal(false);
+      setReceiveWeight('');
+      setReceiveNote('');
+      setReceivePhoto(null);
+    } catch (err: any) {
+      console.error('Lỗi lưu phiếu cân bếp:', err);
+      showNotice('error', 'Lỗi khi lưu phiếu cân: ' + (err.message || 'Lỗi hệ thống'));
+    } finally {
+      setIsSubmittingReceive(false);
+    }
+  };
+
   // Tải dữ liệu ban đầu
   const loadInitialData = async () => {
     try {
       setIsLoading(true);
-      const [itemList, recipeList, batchList, takeOutList, damageList] = await Promise.all([
-        kitchenApi.getBuffetItems(),
-        kitchenApi.getRecipes(),
-        kitchenApi.getActiveBatches(),
-        kitchenApi.getTakeOutLogs(),
-        kitchenApi.getDamageReports(),
-      ]);
+      const [itemList, recipeList, batchList, takeOutList, damageList, suppliers] =
+        await Promise.all([
+          kitchenApi.getBuffetItems(),
+          kitchenApi.getRecipes(),
+          kitchenApi.getActiveBatches(),
+          kitchenApi.getTakeOutLogs(),
+          kitchenApi.getDamageReports(),
+          warehouseApi.getSuppliers(),
+        ]);
       setItems(itemList);
       setRecipes(recipeList);
       setActiveBatches(batchList);
       setTakeOutLogs(takeOutList);
       setDamageReports(damageList);
+      setSuppliersList(suppliers);
+      if (suppliers.length > 0 && !receiveSupplierId) {
+        setReceiveSupplierId(suppliers[0].id);
+      }
       if (itemList.length > 0 && !selectedItemId) {
         setSelectedItemId(itemList[0].id);
         setBatchItemId(itemList[0].id);
         setDamageItemId(itemList[0].id);
+        setReceiveItemId(itemList[0].id);
       }
     } catch (err: any) {
       console.error('Lỗi khi tải dữ liệu bếp:', err);
@@ -959,6 +1060,35 @@ export const KitchenModule: React.FC = () => {
           </button>
         ))}
       </div>
+
+      {/* KHO-13: NÚT CÂN HÀNG MỚI VỀ (BẾP NHẬN HÀNG NCC TRỰC TIẾP) */}
+      <button
+        type="button"
+        onClick={() => setShowReceiveModal(true)}
+        className="w-full btn-touch p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-amber-500 via-orange-600 to-rose-600 hover:from-amber-600 hover:to-rose-700 text-white flex items-center justify-between shadow-xl shadow-orange-500/20 active:scale-[0.98] transition-all"
+      >
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 rounded-xl bg-white/20 backdrop-blur-sm">
+            <Scale className="h-6 w-6 text-white" />
+          </div>
+          <div className="text-left">
+            <div className="flex items-center gap-2">
+              <span className="font-black text-sm sm:text-base tracking-tight uppercase">
+                ⚖️ Cân Hàng Mới Về
+              </span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-white text-orange-800 uppercase shadow-sm">
+                Bếp Nhận Hàng
+              </span>
+            </div>
+            <p className="text-[11px] sm:text-xs text-orange-100 mt-0.5">
+              Chọn NCC + Gõ số cân thực tế + Chụp ảnh cân ➔ Chuyển thẳng Kế toán (Ẩn giá tiền)
+            </p>
+          </div>
+        </div>
+        <div className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20">
+          <ArrowRight className="h-5 w-5 text-white" />
+        </div>
+      </button>
 
       {/* 4 NÚT BẤM CỰC LỚN (MOBILE-FIRST BUTTONS: MIN 56PX - 64PX TOUCH TARGETS) */}
       <div className="grid grid-cols-2 gap-3.5 sm:gap-4">
@@ -2542,6 +2672,205 @@ export const KitchenModule: React.FC = () => {
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
                     <span>THÊM VÀO MENU LINE</span>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* KHO-13: MODAL CÂN HÀNG MỚI VỀ (BẾP NHẬN HÀNG NCC TRỰC TIẾP)   */}
+      {/* ============================================================== */}
+      {showReceiveModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in">
+          <div className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl max-h-[94vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-orange-100 text-orange-700">
+                  <Scale className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-base text-slate-900 uppercase">Cân Hàng Mới Về (Bếp Nhận)</h3>
+                  <p className="text-[11px] text-slate-500">
+                    Bếp cân thực tế & chụp ảnh bàn cân. Không hiển thị giá tiền.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowReceiveModal(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitReceiveWeight} className="space-y-3.5 mt-4 text-xs sm:text-sm">
+              {/* 1. Chọn Nhà Cung Cấp */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  1. NHÀ CUNG CẤP GIAO HÀNG (*)
+                </label>
+                <select
+                  value={receiveSupplierId || ''}
+                  onChange={(e) => setReceiveSupplierId(Number(e.target.value) || undefined)}
+                  className="w-full h-11 px-3 rounded-xl border border-slate-300 font-bold text-slate-800 bg-white focus:ring-2 focus:ring-orange-500"
+                >
+                  {suppliersList.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.supplierName} ({s.supplierCode})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 2. Chọn Mặt Hàng */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  2. MẶT HÀNG / NGUYÊN LIỆU NHẬN (*)
+                </label>
+                <select
+                  value={receiveItemId || ''}
+                  onChange={(e) => setReceiveItemId(Number(e.target.value) || undefined)}
+                  className="w-full h-11 px-3 rounded-xl border border-slate-300 font-bold text-slate-800 bg-white focus:ring-2 focus:ring-orange-500"
+                >
+                  {items.map((it) => (
+                    <option key={it.id} value={it.id}>
+                      {it.itemName} ({it.unit || 'kg'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 3. Phân vùng Kho Vật Lý */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  3. VỊ TRÍ KHO LƯU TRỮ VẬT LÝ
+                </label>
+                <select
+                  value={receiveLocation}
+                  onChange={(e) => setReceiveLocation(e.target.value)}
+                  className="w-full h-11 px-3 rounded-xl border border-slate-300 font-semibold text-slate-800 bg-white focus:ring-2 focus:ring-orange-500"
+                >
+                  <option value="KHO_BE_SONG">🦀 Bể hải sản sống (Cua, ghẹ, tôm...)</option>
+                  <option value="KHO_DONG_LANH">❄️ Kho đông lạnh (Thịt, cá phi lê...)</option>
+                  <option value="KHO_KHO">📦 Kho khô (Gia vị, gạo, đường...)</option>
+                  <option value="KHO_BEP">🍳 Kho bếp (Nguyên liệu chế biến tại bếp)</option>
+                  <option value="KHO_BAR">🍹 Kho bar (Hoa quả, nước ngọt...)</option>
+                </select>
+              </div>
+
+              {/* 4. Số Cân Thực Tế (kg) */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  4. SỐ CÂN THỰC TẾ TRÊN BÀN CÂN (KG) (*)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  placeholder="0.00"
+                  value={receiveWeight}
+                  onChange={(e) => setReceiveWeight(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === ',') {
+                      e.preventDefault();
+                      const cur = String(receiveWeight ?? '');
+                      if (!cur.includes('.')) {
+                        setReceiveWeight((cur ? cur : '0') + '.');
+                      }
+                    }
+                  }}
+                  className="w-full h-12 px-3 rounded-xl border-2 border-orange-400 font-mono font-black text-lg text-orange-950 bg-orange-50/50 focus:ring-2 focus:ring-orange-500"
+                />
+                <span className="text-[11px] text-slate-400 mt-1 block">
+                  Cho phép nhập số lẻ chính xác đến 2 chữ số (ví dụ: 2.33 kg, 15.75 kg)
+                </span>
+              </div>
+
+              {/* 5. Chụp Ảnh Bàn Cân / Phiếu Giao (*) */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
+                  <span>5. ẢNH BÀN CÂN / PHIẾU GIAO HÀNG</span>
+                  <span className="text-rose-600 font-black text-sm">(*)</span>
+                </label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  ref={receivePhotoInputRef}
+                  onChange={handleReceivePhotoUpload}
+                  className="hidden"
+                />
+
+                {receivePhoto ? (
+                  <div className="relative rounded-2xl border border-slate-300 overflow-hidden bg-black/5 p-2 flex items-center justify-between">
+                    <img
+                      src={receivePhoto.dataUrl}
+                      alt="Ảnh bàn cân"
+                      className="h-20 w-28 object-cover rounded-xl border border-slate-200"
+                    />
+                    <div className="flex-1 px-3">
+                      <p className="text-xs font-bold text-slate-800">Ảnh đã chụp thành công</p>
+                      <p className="text-[10px] text-slate-500">Dung lượng nén: {receivePhoto.compressedSizeKb} KB (kèm Watermark)</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setReceivePhoto(null)}
+                      className="p-1.5 rounded-full bg-slate-200 text-slate-600 hover:bg-rose-100 hover:text-rose-600"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => receivePhotoInputRef.current?.click()}
+                    className="w-full h-20 rounded-2xl border-2 border-dashed border-orange-300 hover:border-orange-500 bg-orange-50/40 hover:bg-orange-50 flex flex-col items-center justify-center gap-1.5 text-orange-700 font-bold text-xs transition-colors"
+                  >
+                    <Camera className="h-6 w-6 text-orange-600" />
+                    <span>Bấm để Mở Camera Chụp Ảnh Bàn Cân</span>
+                  </button>
+                )}
+              </div>
+
+              {/* 6. Ghi Chú (Tùy chọn) */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  6. GHI CHÚ BẾP (TÙY CHỌN)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ví dụ: Cua khỏe, đều con; tôm còn tươi nhảy sủi..."
+                  value={receiveNote}
+                  onChange={(e) => setReceiveNote(e.target.value)}
+                  className="w-full h-10 px-3 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-orange-500"
+                />
+              </div>
+
+              {/* Action Buttons */}
+              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowReceiveModal(false)}
+                  className="btn-touch h-12 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm"
+                >
+                  ĐÓNG
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingReceive}
+                  className="btn-touch h-12 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-orange-600/30"
+                >
+                  {isSubmittingReceive ? (
+                    <>
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                      <span>ĐANG LƯU...</span>
+                    </>
+                  ) : (
+                    <span>LƯU PHIẾU CÂN HÀNG</span>
                   )}
                 </button>
               </div>
