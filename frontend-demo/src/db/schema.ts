@@ -26,6 +26,8 @@ export class SenVietDemoDatabase extends Dexie {
   takeOutLogs!: Table<any, number>;
   dailyRemaining!: Table<any, number>;
   dailyMeals!: Table<any, number>;
+  debtAdjustments!: Table<any, number>;
+  reconciliationPeriods!: Table<any, number>;
 
   constructor() {
     super('SenVietBuffetDemoDB');
@@ -55,6 +57,8 @@ export class SenVietDemoDatabase extends Dexie {
       takeOutLogs: '++id, itemId, createdAt',
       dailyRemaining: '++id, itemId, branchId',
       dailyMeals: '++id, branchId, branchCode, date, day',
+      debtAdjustments: '++id, supplierId, branchCode, periodId, status, createdAt',
+      reconciliationPeriods: '++id, supplierId, branchCode, status, periodStartDate, periodEndDate',
     });
   }
 }
