@@ -357,9 +357,20 @@ async function runTestSuite() {
   assert(isViewAuthorized('warehouse', userQlChiNhanh) === false, 'RBAC ROLE_QL_CHINHANH', 'Quản lý chi nhánh không quản lý kho NCC chuỗi');
 
   // 8.3. ROLE_KETOAN & ROLE_CHU_CHUOI
+  assert(isViewAuthorized('dashboard', userKeToan) === true, 'RBAC ROLE_KETOAN', 'Kế toán xem dashboard');
   assert(isViewAuthorized('warehouse', userKeToan) === true, 'RBAC ROLE_KETOAN', 'Kế toán quản lý warehouse');
   assert(isViewAuthorized('reconciliation', userKeToan) === true, 'RBAC ROLE_KETOAN', 'Kế toán xem reconciliation');
   assert(isViewAuthorized('payroll', userKeToan) === true, 'RBAC ROLE_KETOAN', 'Kế toán quản lý payroll');
+  assert(isViewAuthorized('kitchen', userKeToan) === true, 'RBAC ROLE_KETOAN', 'Kế toán giám sát kitchen');
+  assert(getDefaultAuthorizedView(userKeToan) === 'dashboard', 'RBAC ROLE_KETOAN default', 'Màn hình mặc định của Kế toán là dashboard');
+
+  // Kiểm tra tài khoản ketoan_tong với đúng roles seed data gốc (ROLE_ACCOUNTANT, ROLE_EMPLOYEE, ROLE_KETOAN_TONG)
+  const userKeToanSeed = { id: 4, username: 'ketoan_tong', fullName: 'Phạm Thu Kế Toán', roles: ['ROLE_ACCOUNTANT', 'ROLE_EMPLOYEE', 'ROLE_KETOAN_TONG'] } as any;
+  assert(isViewAuthorized('dashboard', userKeToanSeed) === true, 'RBAC ketoan_tong seed', 'Kế toán tổng với roles seed xem được dashboard');
+  assert(isViewAuthorized('warehouse', userKeToanSeed) === true, 'RBAC ketoan_tong seed', 'Kế toán tổng với roles seed xem được warehouse');
+  assert(isViewAuthorized('reconciliation', userKeToanSeed) === true, 'RBAC ketoan_tong seed', 'Kế toán tổng với roles seed xem được reconciliation');
+  assert(isViewAuthorized('payroll', userKeToanSeed) === true, 'RBAC ketoan_tong seed', 'Kế toán tổng với roles seed xem được payroll');
+  assert(getDefaultAuthorizedView(userKeToanSeed) === 'dashboard', 'RBAC ketoan_tong seed default', 'Màn hình mặc định của ketoan_tong seed là dashboard');
 
   assert(isViewAuthorized('dashboard', userAdminChu) === true, 'RBAC ROLE_CHU_CHUOI', 'Chủ chuỗi toàn quyền dashboard');
   assert(isViewAuthorized('kitchen', userAdminChu) === true, 'RBAC ROLE_CHU_CHUOI', 'Chủ chuỗi toàn quyền kitchen');

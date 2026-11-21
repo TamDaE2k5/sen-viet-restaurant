@@ -128,9 +128,11 @@ export const SEED_USERS = [
     "bankAccount": "0372541098",
     "bankName": "Vietinbank",
     "roles": [
+      "ROLE_GENERAL_ACCOUNTANT",
+      "ROLE_BRANCH_ACCOUNTANT",
       "ROLE_ACCOUNTANT",
-      "ROLE_EMPLOYEE",
-      "ROLE_KETOAN_TONG"
+      "ROLE_KETOAN_TONG",
+      "ROLE_EMPLOYEE"
     ],
     "status": "ACTIVE"
   },
@@ -151,6 +153,8 @@ export const SEED_USERS = [
     "bankAccount": "0977678315",
     "bankName": "Vietinbank",
     "roles": [
+      "ROLE_CHU_CHUOI",
+      "ROLE_GENERAL_ACCOUNTANT",
       "ROLE_CHAIN_DIRECTOR",
       "ROLE_ADMIN_CHU",
       "ROLE_DIRECTOR",

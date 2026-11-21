@@ -129,7 +129,11 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
   const isChuChuoi = userHasRole(user, 'ROLE_CHU_CHUOI') || user.username === 'admin_chu';
   const isHeadChef = userHasRole(user, 'ROLE_QL_BEP') || user.username === 'ql_bep_tn';
   const isBranchMgr = userHasRole(user, 'ROLE_QL_CHINHANH') || user.username === 'ql_chinhanh_tn';
-  const isGenAcc = userHasRole(user, 'ROLE_GENERAL_ACCOUNTANT');
+  const isGenAcc =
+    user.username === 'ketoan_tong' ||
+    userHasRole(user, 'ROLE_GENERAL_ACCOUNTANT') ||
+    userHasRole(user, 'ROLE_KETOAN_TONG') ||
+    userHasRole(user, 'ROLE_ACCOUNTANT');
   const isMgr = userHasRole(user, 'ROLE_RESTAURANT_MANAGER');
   const isBrAcc = userHasRole(user, 'ROLE_BRANCH_ACCOUNTANT');
   const isKitchen = userHasRole(user, 'ROLE_KITCHEN_STAFF');
@@ -311,7 +315,12 @@ export const AdaptiveShell: React.FC<AdaptiveShellProps> = ({
     if (roles.includes('ROLE_CHU_CHUOI') || user.username === 'admin_chu') return 'Chủ Chuỗi / Ban Giám Đốc';
     if (roles.includes('ROLE_QL_BEP') || user.username === 'ql_bep_tn') return 'Bếp Trưởng Điều Hành';
     if (roles.includes('ROLE_QL_CHINHANH') || user.username === 'ql_chinhanh_tn') return 'Quản Lý Chi Nhánh';
-    if (roles.includes('ROLE_GENERAL_ACCOUNTANT')) return 'Kế Toán Tổng Chuỗi';
+    if (
+      roles.includes('ROLE_GENERAL_ACCOUNTANT') ||
+      roles.includes('ROLE_KETOAN_TONG') ||
+      roles.includes('ROLE_ACCOUNTANT') ||
+      user.username === 'ketoan_tong'
+    ) return 'Kế Toán Tổng Chuỗi';
     if (roles.includes('ROLE_BRANCH_ACCOUNTANT')) return 'Kế Toán Chi Nhánh';
     if (roles.includes('ROLE_KITCHEN_STAFF')) return 'Bếp / Bar 4 Nút';
     if (roles.includes('ROLE_RESTAURANT_MANAGER')) return 'Quản Lý Nhà Hàng';
