@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Boxes,
   PackagePlus,
@@ -32,7 +32,10 @@ import {
   Scale,
   MinusCircle,
   Calculator,
-  DollarSign
+  DollarSign,
+  Printer,
+  Sparkles,
+  Package,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
@@ -52,13 +55,20 @@ import {
 import { kitchenApi, Item } from '../../api/kitchen';
 import { compressImage, CompressionResult } from '../../utils/imageCompressor';
 
-type WarehouseTab =
+// Helper Components
+import { HDImageModal } from './HDImageModal';
+import { DeliveryVoucherModal } from './DeliveryVoucherModal';
+import { StockCardsTab } from './StockCardsTab';
+import { SupplierDebtReconciliationTab } from './SupplierDebtReconciliationTab';
+
+export type WarehouseTab =
   | 'documents'
+  | 'stock-cards'
   | 'batches'
-  | 'suppliers'
+  | 'supplier-recon'
   | 'inventory-check'
-  | 'loss-report'
-  | 'supplier-debt';
+  | 'suppliers'
+  | 'loss-report';
 
 export const WarehouseModule: React.FC = () => {
   const { user } = useAuth();
@@ -73,7 +83,6 @@ export const WarehouseModule: React.FC = () => {
     setNotice({ type: type === 'warning' ? 'error' : type, text });
     setTimeout(() => setNotice(null), 6000);
 
-    // Bắn alert nổi bật (Task 12.2: Prominent Visual Alerts)
     if (type === 'error') {
       showError(text, 'LỖI PHÂN HỆ KHO');
     } else if (type === 'warning') {
@@ -96,17 +105,32 @@ export const WarehouseModule: React.FC = () => {
 
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Filters
+  // Filters for Documents Tab (Objective 2: Flexible filter bar)
   const [docTypeFilter, setDocTypeFilter] = useState<string>('ALL');
+  const [docBranchFilter, setDocBranchFilter] = useState<string>('ALL');
+  const [docDateFrom, setDocDateFrom] = useState<string>('');
+  const [docDateTo, setDocDateTo] = useState<string>('');
+  const [docSupplierFilter, setDocSupplierFilter] = useState<string>('ALL');
+  const [docSearchTerm, setDocSearchTerm] = useState<string>('');
+
+  // Filters for Batches Tab
   const [batchSearchTerm, setBatchSearchTerm] = useState<string>('');
   const [batchSupplierFilter, setBatchSupplierFilter] = useState<string>('ALL');
   const [batchStockFilter, setBatchStockFilter] = useState<'ALL' | 'SAFE' | 'LOW' | 'EMPTY'>('ALL');
   const [batchPage, setBatchPage] = useState<number>(1);
   const [batchPageSize, setBatchPageSize] = useState<number>(8);
+
+  // Filters for Loss Report Tab
   const [reportMonth, setReportMonth] = useState<number>(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState<number>(new Date().getFullYear());
 
-  // Helper tính toán trực quan Hạn sử dụng Lô hàng (Task 13.4)
+  // Filters for Inventory Check Tab (Objective 5)
+  const [checkCategoryFilter, setCheckCategoryFilter] = useState<string>('ALL');
+  const [checkHighValueOnly, setCheckHighValueOnly] = useState<boolean>(false);
+  const [checkModalCategory, setCheckModalCategory] = useState<string>('ALL');
+  const [checkModalHighValueOnly, setCheckModalHighValueOnly] = useState<boolean>(false);
+
+  // Helper tính toán trực quan Hạn sử dụng Lô hàng
   const getExpiryInfo = (expiryDateStr?: string) => {
     if (!expiryDateStr) {
       return {
@@ -143,7 +167,7 @@ export const WarehouseModule: React.FC = () => {
     };
   };
 
-  // Helper tính toán trực quan Thanh trạng thái Tồn kho (Task 13.4)
+  // Helper tính toán trực quan Thanh trạng thái Tồn kho
   const getStockInfo = (current: number, initial: number) => {
     const cur = Number(current) || 0;
     const init = Number(initial) || 1;
@@ -176,6 +200,26 @@ export const WarehouseModule: React.FC = () => {
     };
   };
 
+  // Helper nhận diện mặt hàng đắt tiền / nhạy cảm (Objective 5)
+  const isHighValueItem = (item: { itemCode?: string; itemName?: string; unitPrice?: number; costPrice?: number }): boolean => {
+    const code = (item.itemCode || '').toUpperCase();
+    const name = (item.itemName || '').toLowerCase();
+    const price = Number(item.unitPrice || item.costPrice || 0);
+
+    return (
+      code.includes('HS-') ||
+      code.includes('TB-') ||
+      price >= 190000 ||
+      name.includes('cua') ||
+      name.includes('ghẹ') ||
+      name.includes('tôm') ||
+      name.includes('cá hồi') ||
+      name.includes('bò') ||
+      name.includes('mực') ||
+      name.includes('bạch tuộc')
+    );
+  };
+
   // =========================================================================
   // MODAL STATES
   // =========================================================================
@@ -195,6 +239,8 @@ export const WarehouseModule: React.FC = () => {
       actualWeight?: number | string;
       weightDiff?: number;
       shortageAmount?: number;
+      lossCategory?: 'HAI_SAN_CHET_NCC' | 'HONG_BAO_QUAN_KHO' | 'BEP_LAM_HONG' | string;
+      reasonDetail?: string;
     }[]
   >([]);
   const [docImages, setDocImages] = useState<CompressionResult[]>([]);
@@ -203,6 +249,22 @@ export const WarehouseModule: React.FC = () => {
 
   // Modal Chi Tiết Phiếu Kho
   const [viewingDoc, setViewingDoc] = useState<WarehouseDocument | null>(null);
+
+  // Modal In / Xem Phiếu Giao Nhận A4 (Objective 2: Delivery Voucher Modal)
+  const [viewingVoucherDoc, setViewingVoucherDoc] = useState<WarehouseDocument | null>(null);
+
+  // Modal Phóng To Ảnh HD (Objective 2: HD Image Modal)
+  const [hdImages, setHdImages] = useState<string[]>([]);
+  const [hdImageIndex, setHdImageIndex] = useState<number>(0);
+  const [isHDImageOpen, setIsHDImageOpen] = useState<boolean>(false);
+  const [hdDocCode, setHdDocCode] = useState<string>('');
+
+  const handleOpenHDImage = (images: string[], index = 0, docCode = '') => {
+    setHdImages(images);
+    setHdImageIndex(index);
+    setHdDocCode(docCode);
+    setIsHDImageOpen(true);
+  };
 
   // Modal Thêm / Sửa Nhà Cung Cấp
   const [showSupplierModal, setShowSupplierModal] = useState<boolean>(false);
@@ -224,6 +286,7 @@ export const WarehouseModule: React.FC = () => {
       itemName: string;
       itemCode: string;
       unit: string;
+      category?: string;
       batchId?: number;
       batchCode?: string;
       systemStock: number;
@@ -275,7 +338,44 @@ export const WarehouseModule: React.FC = () => {
   }, [reportMonth, reportYear]);
 
   // =========================================================================
-  // HANDLERS: WAREHOUSE DOCUMENTS & CÂN LỆCH NCC (TASK-S4-02)
+  // HELPER TÍNH TỒN KHẢ DỤNG TỨC THỜI (OBJECTIVE 1)
+  // =========================================================================
+  const getAvailableStock = (
+    itemId: number,
+    batchId?: number
+  ): { stock: number; unit: string; batchName?: string; supplierName?: string } => {
+    const item = buffetItems.find((i) => i.id === itemId);
+    const unit = item?.unit || 'kg';
+
+    if (batchId) {
+      const foundBatch = batches.find((b) => b.id === batchId);
+      if (foundBatch) {
+        return {
+          stock: Number(foundBatch.currentStock) || 0,
+          unit: foundBatch.unit || unit,
+          batchName: foundBatch.batchCode,
+          supplierName: foundBatch.supplierName,
+        };
+      }
+    }
+
+    // Sum across batches for this item
+    const itemBatches = batches.filter((b) => b.itemId === itemId);
+    if (itemBatches.length > 0) {
+      const total = itemBatches.reduce((acc, b) => acc + (Number(b.currentStock) || 0), 0);
+      return { stock: Number(total.toFixed(2)), unit };
+    }
+
+    const foundStock = stocks.find((s) => s.itemId === itemId);
+    if (foundStock) {
+      return { stock: Number(foundStock.quantity) || 0, unit: foundStock.unit || unit };
+    }
+
+    return { stock: item?.isBuffetLine ? 25 : 12, unit };
+  };
+
+  // =========================================================================
+  // HANDLERS: WAREHOUSE DOCUMENTS & FORM PHIẾU
   // =========================================================================
   const handleOpenDocModal = (type: 'NHAP' | 'XUAT_CHUYEN' | 'HUY') => {
     setDocType(type);
@@ -285,9 +385,14 @@ export const WarehouseModule: React.FC = () => {
 
     // Default 1 line item
     if (buffetItems.length > 0) {
+      const defaultItemId = buffetItems[0].id;
+      const itemBatches = batches.filter((b) => b.itemId === defaultItemId && b.currentStock > 0);
+      const defaultBatchId = itemBatches.length > 0 ? itemBatches[0].id : undefined;
+
       setDocItems([
         {
-          itemId: buffetItems[0].id,
+          itemId: defaultItemId,
+          batchId: defaultBatchId,
           quantity: '',
           supplierReportedWeight: '',
           actualWeight: '',
@@ -295,6 +400,8 @@ export const WarehouseModule: React.FC = () => {
           shortageAmount: 0,
           unitPrice: buffetItems[0].costPrice || 250000,
           expiryDate: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
+          lossCategory: type === 'HUY' ? 'HAI_SAN_CHET_NCC' : undefined,
+          reasonDetail: '',
         },
       ]);
     } else {
@@ -305,10 +412,15 @@ export const WarehouseModule: React.FC = () => {
 
   const handleAddDocItem = () => {
     if (buffetItems.length === 0) return;
+    const defaultItemId = buffetItems[0].id;
+    const itemBatches = batches.filter((b) => b.itemId === defaultItemId && b.currentStock > 0);
+    const defaultBatchId = itemBatches.length > 0 ? itemBatches[0].id : undefined;
+
     setDocItems([
       ...docItems,
       {
-        itemId: buffetItems[0].id,
+        itemId: defaultItemId,
+        batchId: defaultBatchId,
         quantity: '',
         supplierReportedWeight: '',
         actualWeight: '',
@@ -316,6 +428,8 @@ export const WarehouseModule: React.FC = () => {
         shortageAmount: 0,
         unitPrice: buffetItems[0].costPrice || 200000,
         expiryDate: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
+        lossCategory: docType === 'HUY' ? 'HAI_SAN_CHET_NCC' : undefined,
+        reasonDetail: '',
       },
     ]);
   };
@@ -330,9 +444,13 @@ export const WarehouseModule: React.FC = () => {
       const selectedItem = buffetItems.find((i) => i.id === Number(value));
       const newPrice = selectedItem?.costPrice || updated[index].unitPrice;
       const diff = updated[index].weightDiff || 0;
+      const itemBatches = batches.filter((b) => b.itemId === Number(value) && b.currentStock > 0);
+      const newBatchId = itemBatches.length > 0 ? itemBatches[0].id : undefined;
+
       updated[index] = {
         ...updated[index],
         itemId: Number(value),
+        batchId: newBatchId,
         unitPrice: newPrice,
         shortageAmount: diff < 0 ? Math.round(Math.abs(diff) * newPrice) : 0,
       };
@@ -471,9 +589,31 @@ export const WarehouseModule: React.FC = () => {
       return;
     }
 
+    // OBJECTIVE 1: Chặn cứng xuất âm kho khi xuất hủy
+    if (docType === 'HUY') {
+      for (const item of docItems) {
+        const q = typeof item.quantity === 'string' ? parseFloat(item.quantity) : item.quantity;
+        const act =
+          typeof item.actualWeight === 'string' ? parseFloat(item.actualWeight) : item.actualWeight;
+        const effective = act !== undefined && !isNaN(act) && act > 0 ? act : q;
+        const avail = getAvailableStock(item.itemId, item.batchId).stock;
+
+        if (Number(effective) > avail) {
+          const it = buffetItems.find((b) => b.id === item.itemId);
+          showNotice(
+            'error',
+            `❌ VI PHẠM XUẤT ÂM KHO: Mặt hàng '${it?.itemName || 'Nguyên liệu'}' có số lượng hủy (${effective} kg) vượt quá tồn kho khả dụng (${avail} kg)! Hệ thống chặn lưu phiếu để đảm bảo tính toàn vẹn tồn kho.`
+          );
+          return;
+        }
+      }
+    }
+
     try {
       setIsSubmittingDoc(true);
       const payload: CreateDocumentRequest = {
+        branchId: user?.branchId || 1,
+        branchCode: (user?.branchId === 2 ? 'QV' : 'TN') as any,
         docType,
         supplierId: docType === 'NHAP' ? selectedSupplierId : undefined,
         note: docNote || undefined,
@@ -508,6 +648,8 @@ export const WarehouseModule: React.FC = () => {
             unitPrice: price,
             expiryDate: item.expiryDate || undefined,
             batchId: item.batchId,
+            lossCategory: item.lossCategory || (docType === 'HUY' ? 'HAI_SAN_CHET_NCC' : undefined),
+            reason: item.reasonDetail || undefined,
           };
         }),
       };
@@ -528,7 +670,7 @@ export const WarehouseModule: React.FC = () => {
   };
 
   // =========================================================================
-  // HANDLERS: SUPPLIERS
+  // HANDLERS: NHÀ CUNG CẤP & KIỂM KÊ
   // =========================================================================
   const handleOpenSupplierModal = (sup?: Supplier) => {
     if (sup) {
@@ -539,7 +681,7 @@ export const WarehouseModule: React.FC = () => {
       setSupplierAddress(sup.address || '');
     } else {
       setEditingSupplier(null);
-      setSupplierCode(`NCC-${Math.floor(100 + Math.random() * 900)}`);
+      setSupplierCode(`NCC-${Date.now().toString().slice(-4)}`);
       setSupplierName('');
       setSupplierPhone('');
       setSupplierAddress('');
@@ -547,7 +689,7 @@ export const WarehouseModule: React.FC = () => {
     setShowSupplierModal(true);
   };
 
-  const handleSubmitSupplier = async (e: React.FormEvent) => {
+  const handleSaveSupplier = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!supplierCode.trim() || !supplierName.trim()) {
       showNotice('error', 'Mã và Tên Nhà Cung Cấp không được để trống');
@@ -556,7 +698,7 @@ export const WarehouseModule: React.FC = () => {
 
     try {
       setIsSubmittingSupplier(true);
-      const req: CreateSupplierRequest = {
+      const payload: CreateSupplierRequest = {
         supplierCode: supplierCode.trim(),
         supplierName: supplierName.trim(),
         phone: supplierPhone.trim() || undefined,
@@ -565,28 +707,29 @@ export const WarehouseModule: React.FC = () => {
       };
 
       if (editingSupplier) {
-        await warehouseApi.updateSupplier(editingSupplier.id, req);
-        showNotice('success', `Cập nhật NCC "${req.supplierName}" thành công`);
+        await warehouseApi.updateSupplier(editingSupplier.id, payload);
+        showNotice('success', `Đã cập nhật nhà cung cấp ${payload.supplierName} thành công`);
       } else {
-        await warehouseApi.createSupplier(req);
-        showNotice('success', `Đã thêm Nhà Cung Cấp "${req.supplierName}" thành công`);
+        await warehouseApi.createSupplier(payload);
+        showNotice('success', `Đã thêm mới nhà cung cấp ${payload.supplierName} thành công`);
       }
+
       setShowSupplierModal(false);
       loadAllData();
     } catch (err: any) {
-      showNotice('error', err.response?.data?.message || 'Lỗi khi lưu thông tin NCC');
+      console.error('Lỗi lưu nhà cung cấp:', err);
+      showNotice('error', 'Lỗi khi lưu nhà cung cấp: ' + (err.message || 'Lỗi hệ thống'));
     } finally {
       setIsSubmittingSupplier(false);
     }
   };
 
-  // =========================================================================
-  // HANDLERS: INVENTORY CHECKS (KIỂM KÊ CA)
-  // =========================================================================
   const handleOpenCheckModal = () => {
     setCheckShift('CA_TOI');
     setCheckDate(new Date().toISOString().split('T')[0]);
     setCheckNote('');
+    setCheckModalCategory('ALL');
+    setCheckModalHighValueOnly(false);
 
     // Pre-populate items from current stocks or buffet items
     const rows = (stocks.length > 0 ? stocks : buffetItems).map((item: any) => {
@@ -596,10 +739,11 @@ export const WarehouseModule: React.FC = () => {
         itemName: item.itemName,
         itemCode: item.itemCode,
         unit: item.unit,
+        category: item.category,
         batchId: item.batchId,
         batchCode: item.batchCode,
         systemStock: currentQty,
-        actualStock: currentQty, // default equal
+        actualStock: currentQty,
         reason: '',
       };
     });
@@ -639,6 +783,7 @@ export const WarehouseModule: React.FC = () => {
     try {
       setIsSubmittingCheck(true);
       const payload: CreateInventoryCheckRequest = {
+        branchId: user?.branchId || 1,
         shift: checkShift,
         checkDate: checkDate,
         note: checkNote || undefined,
@@ -663,9 +808,6 @@ export const WarehouseModule: React.FC = () => {
     }
   };
 
-  // =========================================================================
-  // HANDLERS: EXPORT EXCEL
-  // =========================================================================
   const handleExportLossExcel = async () => {
     try {
       setIsExportingExcel(true);
@@ -673,7 +815,6 @@ export const WarehouseModule: React.FC = () => {
         month: reportMonth,
         year: reportYear,
       });
-
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -692,12 +833,54 @@ export const WarehouseModule: React.FC = () => {
   };
 
   // =========================================================================
-  // FILTERED DATA
+  // FILTERED DATA (OBJECTIVE 2: 4-WAY FLEXIBLE DOCUMENT FILTER)
   // =========================================================================
-  const filteredDocs = documents.filter((doc) => {
-    if (docTypeFilter === 'ALL') return true;
-    return doc.docType === docTypeFilter;
-  });
+  const filteredDocs = useMemo(() => {
+    return documents.filter((doc) => {
+      // 1. Loại Phiếu
+      if (docTypeFilter !== 'ALL' && doc.docType !== docTypeFilter) return false;
+
+      // 2. Chi nhánh
+      if (docBranchFilter !== 'ALL') {
+        const bId = doc.branchId || 1;
+        if (String(bId) !== docBranchFilter) return false;
+      }
+
+      // 3. Nhà Cung Cấp
+      if (docSupplierFilter !== 'ALL') {
+        const sId = String(doc.supplierId || '');
+        const sCode = doc.supplierCode || '';
+        if (sId !== docSupplierFilter && sCode !== docSupplierFilter) return false;
+      }
+
+      // 4. Ngày
+      const docDate = (doc.createdAt || '').slice(0, 10);
+      if (docDateFrom && docDate < docDateFrom) return false;
+      if (docDateTo && docDate > docDateTo) return false;
+
+      // 5. Ô tìm kiếm
+      if (docSearchTerm.trim()) {
+        const term = docSearchTerm.toLowerCase();
+        const match =
+          doc.docCode.toLowerCase().includes(term) ||
+          (doc.supplierName && doc.supplierName.toLowerCase().includes(term)) ||
+          (doc.note && doc.note.toLowerCase().includes(term)) ||
+          (doc.createdBy && doc.createdBy.toLowerCase().includes(term)) ||
+          (doc.items || []).some((it) => (it.itemName || '').toLowerCase().includes(term));
+        if (!match) return false;
+      }
+
+      return true;
+    });
+  }, [
+    documents,
+    docTypeFilter,
+    docBranchFilter,
+    docSupplierFilter,
+    docDateFrom,
+    docDateTo,
+    docSearchTerm,
+  ]);
 
   const filteredBatches = batches.filter((b) => {
     if (batchSearchTerm.trim()) {
@@ -733,6 +916,33 @@ export const WarehouseModule: React.FC = () => {
     batchPage * batchPageSize
   );
 
+  // Filtered checks for Tab Kiểm Kê (Objective 5)
+  const filteredChecks = useMemo(() => {
+    return checks.filter((c) => {
+      if (checkCategoryFilter !== 'ALL') {
+        const matchCat = (c.items || []).some((it) => {
+          const found = buffetItems.find((b) => b.id === it.itemId);
+          return (found?.category || '').toLowerCase().includes(checkCategoryFilter.toLowerCase());
+        });
+        if (!matchCat) return false;
+      }
+
+      if (checkHighValueOnly) {
+        const matchHighValue = (c.items || []).some((it) => {
+          const found = buffetItems.find((b) => b.id === it.itemId);
+          return isHighValueItem({
+            itemCode: it.itemCode,
+            itemName: it.itemName,
+            costPrice: found?.costPrice,
+          });
+        });
+        if (!matchHighValue) return false;
+      }
+
+      return true;
+    });
+  }, [checks, checkCategoryFilter, checkHighValueOnly, buffetItems]);
+
   // Calculate Loss Report stats
   const totalImportedKg = lossReports.reduce(
     (s, r) => s + Number(r.totalPurchasedQty ?? r.importedQuantity ?? 0),
@@ -757,14 +967,14 @@ export const WarehouseModule: React.FC = () => {
           <div>
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-500/20 text-indigo-300 text-xs font-semibold backdrop-blur-sm mb-2 border border-indigo-500/30">
               <Boxes className="h-3.5 w-3.5" />
-              <span>Giai Đoạn 7: Phân Hệ Kho Cơ Sở & Lô Hàng</span>
+              <span>Phân Hệ Quản Trị Kho Vận & Kiểm Soát Thất Thoát NCC</span>
             </div>
             <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white flex items-center gap-2">
-              <span>QUẢN TRỊ KHO, LÔ NHẬP & NHÀ CUNG CẤP</span>
+              <span>QUẢN TRỊ KHO, LÔ NHẬP & CÔNG NỢ NHÀ CUNG CẤP</span>
             </h1>
             <p className="text-slate-300 text-xs sm:text-sm mt-1">
-              Chi nhánh: <span className="font-bold text-amber-400">{user?.branchName || 'Chi nhánh Thái Nguyên'}</span> |
-              Theo dõi Lô hàng (Lots), Chứng từ kho, Kiểm kê ca & Báo cáo % Hỏng NCC
+              Chi nhánh: <span className="font-bold text-amber-400">{user?.branchName || 'Chi nhánh Thái Nguyên (TN)'}</span> |
+              Cân điện tử 2 cột SL, Thẻ kho tức thời, Đối soát công nợ 5-10 ngày & Phiếu hủy chống xuất âm
             </p>
           </div>
 
@@ -777,24 +987,23 @@ export const WarehouseModule: React.FC = () => {
               <span>+ NHẬP KHO</span>
             </button>
             <button
+              onClick={() => handleOpenDocModal('HUY')}
+              className="btn-touch px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs flex items-center gap-2 shadow-lg shadow-rose-600/30 active:scale-95 transition-all"
+            >
+              <Trash2 className="h-4 w-4" />
+              <span>+ XUẤT HỦY KHO</span>
+            </button>
+            <button
               onClick={handleOpenCheckModal}
-              className="btn-touch px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs flex items-center gap-2 shadow-lg shadow-amber-500/30 active:scale-95 transition-all"
+              className="btn-touch px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs flex items-center gap-2 shadow-lg shadow-amber-500/30 active:scale-95 transition-all"
             >
               <ClipboardCheck className="h-4 w-4" />
               <span>KIỂM KÊ CA</span>
             </button>
-            <button
-              onClick={loadAllData}
-              disabled={isLoading}
-              className="p-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white border border-white/20 transition-all"
-              title="Tải lại dữ liệu"
-            >
-              <RotateCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
-            </button>
           </div>
         </div>
 
-        {/* TOP TAB NAVIGATION */}
+        {/* TOP TAB NAVIGATION - CẬP NHẬT ĐẦY ĐỦ CÁC TAB MỚI THEO BRIEF */}
         <div className="flex items-center gap-1 mt-6 border-t border-slate-800 pt-4 overflow-x-auto no-scrollbar">
           <button
             onClick={() => setActiveTab('documents')}
@@ -808,6 +1017,19 @@ export const WarehouseModule: React.FC = () => {
             <span>Phiếu Kho & Chứng Từ ({documents.length})</span>
           </button>
 
+          {/* TAB MỚI: TỒN KHO & THẺ KHO TỨC THỜI (OBJECTIVE 4) */}
+          <button
+            onClick={() => setActiveTab('stock-cards')}
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all whitespace-nowrap ${
+              activeTab === 'stock-cards'
+                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30'
+                : 'text-slate-300 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <Package className="h-4 w-4 text-emerald-400" />
+            <span>Tồn Kho & Thẻ Kho Tức Thời (Realtime)</span>
+          </button>
+
           <button
             onClick={() => setActiveTab('batches')}
             className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all whitespace-nowrap ${
@@ -817,7 +1039,32 @@ export const WarehouseModule: React.FC = () => {
             }`}
           >
             <Tag className="h-4 w-4" />
-            <span>Lô Hàng & Tồn Kho ({batches.length})</span>
+            <span>Lô Hàng & Hạn Dùng ({batches.length})</span>
+          </button>
+
+          {/* TAB MỚI: ĐỐI CHIẾU & ĐIỀU CHỈNH CÔNG NỢ NCC (OBJECTIVE 3) */}
+          <button
+            onClick={() => setActiveTab('supplier-recon')}
+            className={`px-3.5 py-2 rounded-xl text-xs font-black flex items-center gap-2 transition-all whitespace-nowrap ${
+              activeTab === 'supplier-recon'
+                ? 'bg-amber-400 text-slate-950 shadow-md shadow-amber-400/40 ring-2 ring-amber-300'
+                : 'text-amber-300 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <Scale className="h-4 w-4" />
+            <span>Đối Soát & Công Nợ NCC (5-10 Ngày)</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('inventory-check')}
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all whitespace-nowrap ${
+              activeTab === 'inventory-check'
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                : 'text-slate-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <ClipboardCheck className="h-4 w-4" />
+            <span>Kiểm Kê Ca ({checks.length})</span>
           </button>
 
           <button
@@ -833,18 +1080,6 @@ export const WarehouseModule: React.FC = () => {
           </button>
 
           <button
-            onClick={() => setActiveTab('inventory-check')}
-            className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all whitespace-nowrap ${
-              activeTab === 'inventory-check'
-                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-                : 'text-slate-400 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            <ClipboardCheck className="h-4 w-4" />
-            <span>Kiểm Kê Đầu / Cuối Ca ({checks.length})</span>
-          </button>
-
-          <button
             onClick={() => setActiveTab('loss-report')}
             className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all whitespace-nowrap ${
               activeTab === 'loss-report'
@@ -854,18 +1089,6 @@ export const WarehouseModule: React.FC = () => {
           >
             <TrendingDown className="h-4 w-4" />
             <span>Báo Cáo % Hỏng NCC</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('supplier-debt')}
-            className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all whitespace-nowrap ${
-              activeTab === 'supplier-debt'
-                ? 'bg-amber-400 text-slate-950 shadow-md shadow-amber-400/40 font-black ring-2 ring-amber-300'
-                : 'text-amber-300 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            <Scale className="h-4 w-4" />
-            <span>Cân Lệch & Công Nợ NCC (Mới)</span>
           </button>
         </div>
       </div>
@@ -889,55 +1112,143 @@ export const WarehouseModule: React.FC = () => {
       )}
 
       {/* =================================================================== */}
-      {/* TAB 1: PHIẾU KHO & CHỨNG TỪ (DOCUMENTS)                            */}
+      {/* TAB 1: PHIẾU KHO & CHỨNG TỪ (OBJECTIVE 2: BỘ LỌC LINH HOẠT & A4)    */}
       {/* =================================================================== */}
       {activeTab === 'documents' && (
         <div className="space-y-4">
-          {/* Action & Filter Bar */}
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-2 overflow-x-auto">
-              <span className="text-xs font-bold text-slate-400 uppercase">Loại phiếu:</span>
-              {(['ALL', 'NHAP', 'HUY', 'XUAT_CHUYEN'] as const).map((type) => (
+          {/* Action & Flexible Filter Bar (4 Tiêu Chí: Chi Nhánh, Ngày, NCC, Loại Phiếu) */}
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2 flex-1">
+                {/* 1. Bộ lọc Loại Phiếu */}
+                <div className="flex items-center gap-1 overflow-x-auto">
+                  <span className="text-[11px] font-bold text-slate-400 uppercase mr-1">Loại:</span>
+                  {(['ALL', 'NHAP', 'HUY', 'XUAT_CHUYEN'] as const).map((type) => (
+                    <button
+                      key={type}
+                      onClick={() => setDocTypeFilter(type)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                        docTypeFilter === type
+                          ? 'bg-slate-900 text-white shadow-sm'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      {type === 'ALL'
+                        ? 'Tất cả'
+                        : type === 'NHAP'
+                        ? '📥 Nhập kho'
+                        : type === 'HUY'
+                        ? '🗑️ Xuất huỷ'
+                        : '🔄 Xuất chuyển'}
+                    </button>
+                  ))}
+                </div>
+
+                {/* 2. Bộ lọc Chi Nhánh */}
+                <div className="flex items-center gap-1 text-xs">
+                  <MapPin className="h-3.5 w-3.5 text-slate-400" />
+                  <select
+                    value={docBranchFilter}
+                    onChange={(e) => setDocBranchFilter(e.target.value)}
+                    className="px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 bg-white"
+                  >
+                    <option value="ALL">Tất cả chi nhánh</option>
+                    <option value="1">Chi nhánh Thái Nguyên (TN)</option>
+                    <option value="2">Chi nhánh Quế Võ (QV)</option>
+                  </select>
+                </div>
+
+                {/* 3. Bộ lọc Nhà Cung Cấp */}
+                <div className="flex items-center gap-1 text-xs">
+                  <Building2 className="h-3.5 w-3.5 text-slate-400" />
+                  <select
+                    value={docSupplierFilter}
+                    onChange={(e) => setDocSupplierFilter(e.target.value)}
+                    className="px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 bg-white"
+                  >
+                    <option value="ALL">Tất cả NCC ({suppliers.length})</option>
+                    {suppliers.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.supplierName} ({s.supplierCode})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* 4. Bộ lọc Khoảng Ngày */}
+                <div className="flex items-center gap-1 text-xs">
+                  <Calendar className="h-3.5 w-3.5 text-slate-400" />
+                  <input
+                    type="date"
+                    value={docDateFrom}
+                    onChange={(e) => setDocDateFrom(e.target.value)}
+                    className="h-8 px-2 rounded-lg border border-slate-200 text-xs font-mono"
+                    title="Từ ngày"
+                  />
+                  <span className="text-slate-400">-</span>
+                  <input
+                    type="date"
+                    value={docDateTo}
+                    onChange={(e) => setDocDateTo(e.target.value)}
+                    className="h-8 px-2 rounded-lg border border-slate-200 text-xs font-mono"
+                    title="Đến ngày"
+                  />
+                  {(docDateFrom || docDateTo) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDocDateFrom('');
+                        setDocDateTo('');
+                      }}
+                      className="p-1 text-slate-400 hover:text-slate-600 rounded"
+                      title="Xóa lọc ngày"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Nút thao tác nhanh */}
+              <div className="flex items-center gap-2">
                 <button
-                  key={type}
-                  onClick={() => setDocTypeFilter(type)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                    docTypeFilter === type
-                      ? 'bg-slate-900 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
+                  onClick={() => handleOpenDocModal('NHAP')}
+                  className="btn-touch px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm"
                 >
-                  {type === 'ALL'
-                    ? 'Tất cả'
-                    : type === 'NHAP'
-                    ? '📥 Nhập kho'
-                    : type === 'HUY'
-                    ? '🗑️ Xuất huỷ'
-                    : '🔄 Xuất chuyển'}
+                  <Plus className="h-4 w-4" />
+                  <span>+ Lập Phiếu Nhập</span>
                 </button>
-              ))}
+                <button
+                  onClick={() => handleOpenDocModal('HUY')}
+                  className="btn-touch px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  <span>+ Lập Phiếu Huỷ</span>
+                </button>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => handleOpenDocModal('NHAP')}
-                className="btn-touch px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-1.5"
-              >
-                <Plus className="h-4 w-4" />
-                <span>Lập Phiếu Nhập</span>
-              </button>
-              <button
-                onClick={() => handleOpenDocModal('HUY')}
-                className="btn-touch px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold flex items-center gap-1.5"
-              >
-                <Trash2 className="h-4 w-4" />
-                <span>Lập Phiếu Huỷ</span>
-              </button>
+            {/* Ô tìm kiếm từ khóa */}
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+              <div className="relative flex-1 max-w-sm">
+                <Search className="h-3.5 w-3.5 absolute left-3 top-2.5 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Tìm mã phiếu, người lập, tên hàng, ghi chú..."
+                  value={docSearchTerm}
+                  onChange={(e) => setDocSearchTerm(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 text-xs"
+                />
+              </div>
+
+              <div className="text-[11px] text-slate-500 font-semibold">
+                Đang hiển thị: <strong className="text-indigo-600">{filteredDocs.length}</strong> / {documents.length} phiếu
+              </div>
             </div>
           </div>
 
           {/* Documents Table */}
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             {isLoading ? (
               <div className="p-8 text-center text-slate-500">
                 <Loader2 className="h-6 w-6 animate-spin mx-auto text-indigo-600 mb-2" />
@@ -946,7 +1257,7 @@ export const WarehouseModule: React.FC = () => {
             ) : filteredDocs.length === 0 ? (
               <div className="p-10 text-center text-slate-400">
                 <Boxes className="h-10 w-10 mx-auto text-slate-300 mb-2" />
-                <p className="text-sm font-semibold">Chưa có chứng từ kho nào được tạo</p>
+                <p className="text-sm font-semibold">Chưa có chứng từ kho nào phù hợp với bộ lọc</p>
                 <p className="text-xs mt-1">Bấm nút "Lập Phiếu Nhập" để nhập lô hàng mới từ nhà cung cấp</p>
               </div>
             ) : (
@@ -956,18 +1267,25 @@ export const WarehouseModule: React.FC = () => {
                     <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold text-[11px] uppercase tracking-wider">
                       <th className="p-3.5">Mã Phiếu</th>
                       <th className="p-3.5">Loại</th>
+                      <th className="p-3.5">Chi Nhánh</th>
                       <th className="p-3.5">Nhà Cung Cấp / Đối Tác</th>
                       <th className="p-3.5">Số Mặt Hàng</th>
-                      <th className="p-3.5">Tổng Giá Trị</th>
+                      <th className="p-3.5 text-right">Tổng Khối Lượng</th>
+                      <th className="p-3.5 text-right font-mono">Tổng Giá Trị</th>
                       <th className="p-3.5">Người Lập</th>
                       <th className="p-3.5">Thời Gian</th>
                       <th className="p-3.5 text-center">Ảnh CT</th>
-                      <th className="p-3.5 text-right">Chi Tiết</th>
+                      <th className="p-3.5 text-right">Thao Tác</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-slate-700">
                     {filteredDocs.map((doc) => {
-                      const imageCount = doc.imageUrls ? doc.imageUrls.split(';').filter(Boolean).length : 0;
+                      const imageList = doc.imageUrls ? doc.imageUrls.split(';').filter(Boolean) : [];
+                      const totalQty = (doc.items || []).reduce(
+                        (sum, it) => sum + (it.actualWeight ?? it.quantity ?? 0),
+                        0
+                      );
+
                       return (
                         <tr key={doc.id} className="hover:bg-slate-50/80 transition-colors">
                           <td className="p-3.5 font-mono font-bold text-indigo-700">{doc.docCode}</td>
@@ -982,17 +1300,23 @@ export const WarehouseModule: React.FC = () => {
                               }`}
                             >
                               {doc.docType === 'NHAP'
-                                ? 'Nhập kho'
+                                ? '📥 Nhập kho'
                                 : doc.docType === 'HUY'
-                                ? 'Xuất huỷ'
-                                : 'Xuất chuyển'}
+                                ? '🗑️ Xuất huỷ'
+                                : '🔄 Xuất chuyển'}
                             </span>
+                          </td>
+                          <td className="p-3.5 font-medium text-slate-700">
+                            {doc.branchId === 2 ? 'Quế Võ (QV)' : 'Thái Nguyên (TN)'}
                           </td>
                           <td className="p-3.5 font-semibold text-slate-900">
                             {doc.supplierName || doc.supplierCode || 'Nội bộ chi nhánh'}
                           </td>
-                          <td className="p-3.5 font-medium">{doc.items ? doc.items.length : 0} mặt hàng</td>
-                          <td className="p-3.5 font-bold text-slate-900">
+                          <td className="p-3.5 font-medium">{doc.items ? doc.items.length : 0} món</td>
+                          <td className="p-3.5 text-right font-mono font-bold text-slate-800">
+                            {totalQty.toFixed(1)} kg
+                          </td>
+                          <td className="p-3.5 text-right font-mono font-black text-slate-900">
                             {Number(doc.totalAmount || 0).toLocaleString('vi-VN')} đ
                           </td>
                           <td className="p-3.5 text-slate-600">{doc.createdBy || 'Bếp trưởng'}</td>
@@ -1006,24 +1330,47 @@ export const WarehouseModule: React.FC = () => {
                                 })
                               : '--'}
                           </td>
+
+                          {/* ẢNH CHỨNG TỪ: CLICK THUMBNAIL MỞ FULL HD MODAL */}
                           <td className="p-3.5 text-center">
-                            {imageCount > 0 ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-bold text-xs">
-                                <Camera className="h-3 w-3" />
-                                <span>{imageCount} ảnh</span>
-                              </span>
+                            {imageList.length > 0 ? (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenHDImage(imageList, 0, doc.docCode)}
+                                className="group relative inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs transition-all hover:scale-105 border border-indigo-200"
+                                title="Bấm để xem ảnh chứng từ HD phóng to"
+                              >
+                                <Camera className="h-3.5 w-3.5" />
+                                <span>{imageList.length} ảnh HD</span>
+                              </button>
                             ) : (
                               <span className="text-slate-400 text-xs">--</span>
                             )}
                           </td>
+
+                          {/* THAO TÁC: XEM CHI TIẾT & IN BIÊN BẢN A4 */}
                           <td className="p-3.5 text-right">
-                            <button
-                              onClick={() => setViewingDoc(doc)}
-                              className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold inline-flex items-center gap-1 transition-all"
-                            >
-                              <Eye className="h-3.5 w-3.5" />
-                              <span>Xem</span>
-                            </button>
+                            <div className="flex items-center justify-end gap-1.5">
+                              {doc.docType === 'NHAP' && (
+                                <button
+                                  type="button"
+                                  onClick={() => setViewingVoucherDoc(doc)}
+                                  className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold inline-flex items-center gap-1 transition-all"
+                                  title="In / Xem Phiếu Giao Nhận A4 Chuẩn Hóa"
+                                >
+                                  <Printer className="h-3.5 w-3.5" />
+                                  <span>In A4</span>
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => setViewingDoc(doc)}
+                                className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold inline-flex items-center gap-1 transition-all"
+                              >
+                                <Eye className="h-3.5 w-3.5" />
+                                <span>Xem</span>
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -1037,7 +1384,20 @@ export const WarehouseModule: React.FC = () => {
       )}
 
       {/* =================================================================== */}
-      {/* TAB 2: LÔ HÀNG (BATCHES / LOTS) & TỒN KHO                          */}
+      {/* TAB 2: TỒN KHO & THẺ KHO TỨC THỜI (OBJECTIVE 4: STOCK CARDS TAB)     */}
+      {/* =================================================================== */}
+      {activeTab === 'stock-cards' && (
+        <StockCardsTab
+          stocks={stocks}
+          batches={batches}
+          buffetItems={buffetItems}
+          documents={documents}
+          onOpenDocModal={handleOpenDocModal}
+        />
+      )}
+
+      {/* =================================================================== */}
+      {/* TAB 3: LÔ HÀNG (BATCHES / LOTS) & HẠN DÙNG                          */}
       {/* =================================================================== */}
       {activeTab === 'batches' && (
         <div className="space-y-4">
@@ -1102,106 +1462,27 @@ export const WarehouseModule: React.FC = () => {
             </div>
           </div>
 
-          {/* =============================================================== */}
-          {/* 1. CHẾ ĐỘ MOBILE & TABLET: DẠNG CARD LIST TRÁNH TRÀN BẢNG       */}
-          {/* =============================================================== */}
-          <div className="block lg:hidden space-y-3">
-            {filteredBatches.length === 0 ? (
-              <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-slate-400">
-                <Boxes className="h-8 w-8 mx-auto text-slate-300 mb-2" />
-                <p className="text-sm font-semibold">Chưa có lô hàng nào phù hợp với bộ lọc</p>
-              </div>
-            ) : (
-              filteredBatches.map((batch) => {
-                const stock = getStockInfo(batch.currentStock, batch.initialQuantity);
-                const expiry = getExpiryInfo(batch.expiryDate);
-
-                return (
-                  <div
-                    key={batch.id}
-                    className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3"
-                  >
-                    {/* Header Card: Mã Lô & Trạng Thái Tồn Kho */}
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono font-black text-sm text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg">
-                        {batch.batchCode}
-                      </span>
-                      <span
-                        className={`px-2.5 py-1 rounded-full text-[11px] font-black border ${stock.badgeClass}`}
-                      >
-                        {stock.label}
-                      </span>
-                    </div>
-
-                    {/* Tên hàng & NCC */}
-                    <div>
-                      <h4 className="font-bold text-slate-900 text-base">{batch.itemName || 'Nguyên liệu'}</h4>
-                      <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
-                        <Building2 className="h-3 w-3 text-slate-400" />
-                        <span>{batch.supplierName || batch.supplierCode || 'Chưa gán NCC'}</span>
-                      </p>
-                    </div>
-
-                    {/* Thanh trạng thái tồn kho trực quan (Visual Stock Progress Bar) */}
-                    <div className="space-y-1.5 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-semibold text-slate-600">Mức tồn hiện tại:</span>
-                        <span className="font-mono font-black text-slate-900">
-                          {batch.currentStock} / {batch.initialQuantity} {batch.unit}
-                        </span>
-                      </div>
-                      <div className="w-full h-2.5 bg-slate-200 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all duration-500 ${stock.barColor}`}
-                          style={{ width: `${stock.percentage}%` }}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Cảnh báo ngày hết hạn trực quan (Visual Expiry Date) */}
-                    <div className="flex items-center justify-between pt-1">
-                      <div className="text-[11px] text-slate-500">
-                        Giá: <strong className="font-mono text-slate-800">{Number(batch.unitPrice || 0).toLocaleString('vi-VN')} đ</strong>
-                      </div>
-                      <span
-                        className={`px-2 py-0.5 rounded-lg text-xs font-bold border flex items-center gap-1 ${expiry.colorClass}`}
-                      >
-                        {expiry.status === 'expired' && <AlertTriangle className="h-3.5 w-3.5 text-rose-600" />}
-                        {expiry.status === 'warning' && <Clock className="h-3.5 w-3.5 text-amber-600" />}
-                        {expiry.status === 'safe' && <Calendar className="h-3.5 w-3.5 text-emerald-600" />}
-                        <span>{expiry.label}</span>
-                      </span>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-
-          {/* =============================================================== */}
-          {/* 2. CHẾ ĐỘ DESKTOP: DATAGRID PHÂN TRANG CAO CẤP                   */}
-          {/* =============================================================== */}
-          <div className="hidden lg:block bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          {/* Desktop Table View */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-xs sm:text-sm">
                 <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold text-[11px] uppercase tracking-wider sticky top-0">
-                    <th className="p-3.5">Mã Lô</th>
-                    <th className="p-3.5">Tên Nguyên Liệu</th>
+                  <tr className="bg-slate-100 border-b border-slate-200 text-slate-600 font-extrabold text-[11px] uppercase tracking-wider">
+                    <th className="p-3.5">Mã Lô (LOT)</th>
+                    <th className="p-3.5">Mặt Hàng / Nguyên Liệu</th>
                     <th className="p-3.5">Nhà Cung Cấp</th>
-                    <th className="p-3.5">Nhập Ban Đầu</th>
-                    <th className="p-3.5">Tồn Hiện Tại & Thanh Trạng Thái</th>
-                    <th className="p-3.5">Đơn Giá Nhập</th>
-                    <th className="p-3.5">Ngày Nhập</th>
-                    <th className="p-3.5">Hạn Sử Dụng (Cảnh Báo)</th>
-                    <th className="p-3.5 text-center">Trạng Thái</th>
+                    <th className="p-3.5 text-right">Lượng Ban Đầu</th>
+                    <th className="p-3.5 text-right">Tồn Hiện Tại</th>
+                    <th className="p-3.5 text-center">Tỷ Lệ Tồn</th>
+                    <th className="p-3.5">Hạn Sử Dụng (FEFO)</th>
+                    <th className="p-3.5 text-right font-mono">Đơn Giá</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-slate-700">
                   {paginatedBatches.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="p-10 text-center text-slate-400">
-                        Chưa có lô hàng nào phù hợp với bộ lọc
+                      <td colSpan={8} className="p-8 text-center text-slate-400">
+                        Không tìm thấy lô hàng nào phù hợp với bộ lọc
                       </td>
                     </tr>
                   ) : (
@@ -1210,51 +1491,35 @@ export const WarehouseModule: React.FC = () => {
                       const expiry = getExpiryInfo(batch.expiryDate);
 
                       return (
-                        <tr key={batch.id} className="hover:bg-slate-50/80 transition-colors">
-                          <td className="p-3.5 font-mono font-black text-indigo-700">{batch.batchCode}</td>
-                          <td className="p-3.5 font-bold text-slate-900">{batch.itemName || 'Cua Cà Mau'}</td>
-                          <td className="p-3.5 text-slate-600 font-medium">
-                            {batch.supplierName || batch.supplierCode || 'Hải Sản Quảng Ninh'}
-                          </td>
-                          <td className="p-3.5 font-mono text-slate-700">
-                            {batch.initialQuantity} {batch.unit}
-                          </td>
-                          <td className="p-3.5 min-w-[180px]">
-                            <div className="space-y-1">
-                              <div className="flex items-center justify-between text-xs">
-                                <span className={`font-mono font-black ${stock.status === 'empty' ? 'text-slate-400 line-through' : 'text-slate-900'}`}>
-                                  {batch.currentStock} {batch.unit}
-                                </span>
-                                <span className="text-[10px] text-slate-500 font-bold">{stock.percentage}%</span>
-                              </div>
-                              <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                                <div
-                                  className={`h-full rounded-full transition-all duration-300 ${stock.barColor}`}
-                                  style={{ width: `${stock.percentage}%` }}
-                                />
-                              </div>
+                        <tr key={batch.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="p-3.5 font-mono font-bold text-indigo-700">{batch.batchCode}</td>
+                          <td className="p-3.5 font-bold text-slate-900">
+                            {batch.itemName || batch.itemCode}
+                            <div className="text-[10px] text-slate-400 font-normal">
+                              Nhập ngày: {batch.importDate}
                             </div>
                           </td>
-                          <td className="p-3.5 font-mono text-slate-800">
-                            {Number(batch.unitPrice || 0).toLocaleString('vi-VN')} đ
+                          <td className="p-3.5 font-medium text-slate-700">
+                            {batch.supplierName || batch.supplierCode || 'Nội bộ'}
                           </td>
-                          <td className="p-3.5 font-mono text-xs text-slate-500">
-                            {batch.importDate || '--'}
+                          <td className="p-3.5 text-right font-mono text-slate-600">
+                            {batch.initialQuantity} {batch.unit}
                           </td>
-                          <td className="p-3.5">
-                            <span
-                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border ${expiry.colorClass}`}
-                            >
-                              {expiry.status === 'expired' && <AlertTriangle className="h-3 w-3 text-rose-600" />}
-                              {expiry.status === 'warning' && <Clock className="h-3 w-3 text-amber-600" />}
-                              {expiry.status === 'safe' && <Calendar className="h-3 w-3 text-emerald-600" />}
-                              <span>{expiry.label}</span>
-                            </span>
+                          <td className="p-3.5 text-right font-mono font-black text-slate-900">
+                            {batch.currentStock} {batch.unit}
                           </td>
                           <td className="p-3.5 text-center">
-                            <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-black border ${stock.badgeClass}`}>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${stock.badgeClass}`}>
                               {stock.label}
                             </span>
+                          </td>
+                          <td className="p-3.5">
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${expiry.colorClass}`}>
+                              {expiry.label}
+                            </span>
+                          </td>
+                          <td className="p-3.5 text-right font-mono">
+                            {Number(batch.unitPrice).toLocaleString('vi-VN')} đ
                           </td>
                         </tr>
                       );
@@ -1263,176 +1528,83 @@ export const WarehouseModule: React.FC = () => {
                 </tbody>
               </table>
             </div>
-
-            {/* Phân trang DataGrid */}
-            {totalBatchPages > 1 && (
-              <div className="p-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs">
-                <div className="text-slate-500">
-                  Hiển thị trang <strong className="text-slate-800">{batchPage}</strong> / {totalBatchPages} (Tổng {filteredBatches.length} lô)
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    disabled={batchPage <= 1}
-                    onClick={() => setBatchPage((p) => Math.max(1, p - 1))}
-                    className="btn-touch px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 font-bold hover:bg-slate-100 disabled:opacity-40"
-                  >
-                    Trang trước
-                  </button>
-                  {Array.from({ length: totalBatchPages }).map((_, i) => (
-                    <button
-                      key={i + 1}
-                      type="button"
-                      onClick={() => setBatchPage(i + 1)}
-                      className={`btn-touch w-8 h-8 rounded-lg font-bold text-xs ${
-                        batchPage === i + 1
-                          ? 'bg-indigo-600 text-white'
-                          : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
-                      }`}
-                    >
-                      {i + 1}
-                    </button>
-                  ))}
-                  <button
-                    type="button"
-                    disabled={batchPage >= totalBatchPages}
-                    onClick={() => setBatchPage((p) => Math.min(totalBatchPages, p + 1))}
-                    className="btn-touch px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 font-bold hover:bg-slate-100 disabled:opacity-40"
-                  >
-                    Trang sau
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
         </div>
       )}
 
       {/* =================================================================== */}
-      {/* TAB 3: QUẢN LÝ NHÀ CUNG CẤP (SUPPLIERS)                            */}
+      {/* TAB 4: ĐỐI SOÁT & CÔNG NỢ NCC 5-10 NGÀY (OBJECTIVE 3)               */}
       {/* =================================================================== */}
-      {activeTab === 'suppliers' && (
-        <div className="space-y-4">
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-bold text-slate-900">Danh Sách Đối Tác & Nhà Cung Cấp</h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Quản lý thông tin nhà cung cấp phục vụ truy vết chất lượng và đối soát % hỏng
-              </p>
-            </div>
-            <button
-              onClick={() => handleOpenSupplierModal()}
-              className="btn-touch px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-indigo-600/20"
-            >
-              <Plus className="h-4 w-4" />
-              <span>Thêm Nhà Cung Cấp</span>
-            </button>
-          </div>
-
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs sm:text-sm">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold text-[11px] uppercase tracking-wider">
-                    <th className="p-3.5">Mã NCC</th>
-                    <th className="p-3.5">Tên Nhà Cung Cấp</th>
-                    <th className="p-3.5">Số Điện Thoại</th>
-                    <th className="p-3.5">Địa Chỉ Kho Hàng</th>
-                    <th className="p-3.5">Trạng Thái</th>
-                    <th className="p-3.5 text-right">Thao Tác</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-slate-700">
-                  {suppliers.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="p-8 text-center text-slate-400">
-                        Chưa có Nhà cung cấp nào được cấu hình
-                      </td>
-                    </tr>
-                  ) : (
-                    suppliers.map((sup) => (
-                      <tr key={sup.id} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="p-3.5 font-mono font-bold text-indigo-700">{sup.supplierCode}</td>
-                        <td className="p-3.5 font-bold text-slate-900">{sup.supplierName}</td>
-                        <td className="p-3.5 font-mono text-slate-600">
-                          {sup.phone ? (
-                            <span className="flex items-center gap-1">
-                              <Phone className="h-3 w-3 text-slate-400" />
-                              <span>{sup.phone}</span>
-                            </span>
-                          ) : (
-                            '--'
-                          )}
-                        </td>
-                        <td className="p-3.5 text-slate-600">
-                          {sup.address ? (
-                            <span className="flex items-center gap-1">
-                              <MapPin className="h-3 w-3 text-slate-400" />
-                              <span>{sup.address}</span>
-                            </span>
-                          ) : (
-                            '--'
-                          )}
-                        </td>
-                        <td className="p-3.5">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[11px] font-bold ${
-                              sup.status === 'ACTIVE'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : 'bg-slate-100 text-slate-600'
-                            }`}
-                          >
-                            {sup.status === 'ACTIVE' ? 'Đang hợp tác' : 'Tạm dừng'}
-                          </span>
-                        </td>
-                        <td className="p-3.5 text-right">
-                          <button
-                            onClick={() => handleOpenSupplierModal(sup)}
-                            className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
-                          >
-                            Chỉnh sửa
-                          </button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+      {activeTab === 'supplier-recon' && (
+        <SupplierDebtReconciliationTab
+          suppliers={suppliers}
+          documents={documents}
+          onOpenDocModal={handleOpenDocModal}
+          onViewVoucher={(doc) => setViewingVoucherDoc(doc)}
+          branchId={user?.branchId || 1}
+        />
       )}
 
       {/* =================================================================== */}
-      {/* TAB 4: KIỂM KÊ KHO ĐẦU / CUỐI CA (INVENTORY CHECKS)                 */}
+      {/* TAB 5: KIỂM KÊ KHO ĐẦU / CUỐI CA (OBJECTIVE 5: NHÓM MÓN & ĐẮT TIỀN) */}
       {/* =================================================================== */}
       {activeTab === 'inventory-check' && (
         <div className="space-y-4">
-          <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex items-start gap-3">
+          <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl flex items-start gap-3">
             <ClipboardCheck className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
             <div className="text-xs sm:text-sm text-amber-900">
-              <strong className="font-bold">Quy Chuẩn Chống Thất Thoát Bằng Kiểm Kê Ca:</strong>
+              <strong className="font-bold">Quy Chuẩn Chống Thất Thoát Bằng Kiểm Kê Ca (Chị Thêm Yêu Cầu):</strong>
               <p className="mt-0.5 text-amber-800 leading-relaxed">
                 Nhân viên kiểm kê nhập số lượng thực tế đếm được. Mọi chênh lệch giữa Tồn Hệ Thống và Tồn Thực Tế
-                bắt buộc phải có lý do giải trình (rã đông hao hụt, hỏng tủ đông, rơi vãi...). Dữ liệu kiểm kê sẽ được
-                tự động tích hợp vào Bảng Đối Soát Cuối Ngày (I.5).
+                bắt buộc phải có lý do giải trình. Bếp ca trưởng có thể bật toggle{' '}
+                <strong>"💎 Chỉ kiểm hàng đắt tiền/nhạy cảm"</strong> để chốt nhanh 5-7 món chủ lực (Cua, Ghẹ, Tôm, Bò) trong 3 phút cuối ca.
               </p>
             </div>
           </div>
 
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-900">Lịch Sử Các Biên Bản Kiểm Kê Ca</h3>
+          {/* Controls & Filter Toolbar cho Kiểm Kê */}
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-bold text-slate-500 uppercase">Lọc nhóm kiểm kê:</span>
+              <select
+                value={checkCategoryFilter}
+                onChange={(e) => setCheckCategoryFilter(e.target.value)}
+                className="px-3 py-1.5 rounded-xl border border-slate-300 text-xs font-bold text-slate-800 bg-white"
+              >
+                <option value="ALL">Tất cả nhóm mặt hàng</option>
+                <option value="hải sản">Hải sản tươi sống (Bể)</option>
+                <option value="bò">Thịt bò nhập khẩu</option>
+                <option value="thịt">Thịt heo / Thịt gà</option>
+                <option value="rau">Rau củ / Nấm lẩu</option>
+                <option value="khô">Gia vị / Đồ khô</option>
+              </select>
+
+              {/* Toggle Hàng Đắt Tiền / Nhạy Cảm (Objective 5) */}
+              <button
+                type="button"
+                onClick={() => setCheckHighValueOnly(!checkHighValueOnly)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all ${
+                  checkHighValueOnly
+                    ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
+                    : 'bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100'
+                }`}
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                <span>💎 Chỉ kiểm hàng đắt tiền / nhạy cảm</span>
+              </button>
+            </div>
+
             <button
               onClick={handleOpenCheckModal}
-              className="btn-touch px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-amber-500/20"
+              className="btn-touch px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs flex items-center gap-1.5 shadow-md shadow-amber-500/20"
             >
               <Plus className="h-4 w-4" />
-              <span>Lập Biên Bản Kiểm Kê</span>
+              <span>+ Lập Biên Bản Kiểm Kê Ca</span>
             </button>
           </div>
 
           {/* Checks History Table */}
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-xs sm:text-sm">
                 <thead>
@@ -1447,14 +1619,14 @@ export const WarehouseModule: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-slate-700">
-                  {checks.length === 0 ? (
+                  {filteredChecks.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="p-8 text-center text-slate-400">
-                        Chưa có biên bản kiểm kê ca nào được lập
+                        Chưa có biên bản kiểm kê ca nào phù hợp với bộ lọc
                       </td>
                     </tr>
                   ) : (
-                    checks.map((c) => {
+                    filteredChecks.map((c) => {
                       const diffCount = c.items
                         ? c.items.filter((i) => Number(i.difference || 0) !== 0).length
                         : 0;
@@ -1469,7 +1641,9 @@ export const WarehouseModule: React.FC = () => {
                               : '☀️ Cả ngày (Đột xuất)'}
                           </td>
                           <td className="p-3.5 font-mono text-slate-600">{c.checkDate}</td>
-                          <td className="p-3.5 text-slate-900 font-medium">{c.checkedByName || c.checkedBy || 'Bếp ca trưởng'}</td>
+                          <td className="p-3.5 text-slate-900 font-medium">
+                            {c.checkedByName || c.checkedBy || 'Bếp ca trưởng'}
+                          </td>
                           <td className="p-3.5">
                             {diffCount > 0 ? (
                               <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-100 text-rose-800">
@@ -1507,11 +1681,95 @@ export const WarehouseModule: React.FC = () => {
       )}
 
       {/* =================================================================== */}
-      {/* TAB 5: BÁO CÁO % HỎNG THEO NHÀ CUNG CẤP (SUPPLIER LOSS REPORT)       */}
+      {/* TAB 6: QUẢN LÝ NHÀ CUNG CẤP (SUPPLIERS)                            */}
+      {/* =================================================================== */}
+      {activeTab === 'suppliers' && (
+        <div className="space-y-4">
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">Danh Sách Đối Tác & Nhà Cung Cấp</h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Quản lý thông tin nhà cung cấp phục vụ truy vết chất lượng và đối soát % hỏng
+              </p>
+            </div>
+            <button
+              onClick={() => handleOpenSupplierModal()}
+              className="btn-touch px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-indigo-600/20"
+            >
+              <Plus className="h-4 w-4" />
+              <span>Thêm Nhà Cung Cấp</span>
+            </button>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs sm:text-sm">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold text-[11px] uppercase tracking-wider">
+                    <th className="p-3.5">Mã NCC</th>
+                    <th className="p-3.5">Tên Nhà Cung Cấp</th>
+                    <th className="p-3.5">Số Điện Thoại</th>
+                    <th className="p-3.5">Địa Chỉ Kho Hàng</th>
+                    <th className="p-3.5">Trạng Thái</th>
+                    <th className="p-3.5 text-right">Thao Tác</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {suppliers.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="p-8 text-center text-slate-400">
+                        Chưa có Nhà cung cấp nào được cấu hình
+                      </td>
+                    </tr>
+                  ) : (
+                    suppliers.map((sup) => (
+                      <tr key={sup.id} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="p-3.5 font-mono font-bold text-indigo-700">{sup.supplierCode}</td>
+                        <td className="p-3.5 font-bold text-slate-900">{sup.supplierName}</td>
+                        <td className="p-3.5 text-slate-600 flex items-center gap-1">
+                          <Phone className="h-3 w-3 text-slate-400" />
+                          <span>{sup.phone || '--'}</span>
+                        </td>
+                        <td className="p-3.5 text-slate-600">
+                          <span className="flex items-center gap-1">
+                            <MapPin className="h-3 w-3 text-slate-400 flex-shrink-0" />
+                            <span className="truncate max-w-xs">{sup.address || '--'}</span>
+                          </span>
+                        </td>
+                        <td className="p-3.5">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              sup.status === 'ACTIVE'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-slate-100 text-slate-600'
+                            }`}
+                          >
+                            {sup.status === 'ACTIVE' ? 'Đang hợp tác' : 'Tạm dừng'}
+                          </span>
+                        </td>
+                        <td className="p-3.5 text-right">
+                          <button
+                            onClick={() => handleOpenSupplierModal(sup)}
+                            className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
+                          >
+                            Chỉnh sửa
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* TAB 7: BÁO CÁO % HỎNG THEO NHÀ CUNG CẤP                             */}
       {/* =================================================================== */}
       {activeTab === 'loss-report' && (
         <div className="space-y-4">
-          {/* Controls & Filter */}
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div>
@@ -1568,401 +1826,99 @@ export const WarehouseModule: React.FC = () => {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
               <span className="text-[11px] font-bold text-slate-400 uppercase">Nhà Cung Cấp Giao</span>
-              <div className="text-xl sm:text-2xl font-black text-slate-900 mt-1">
-                {lossReports.length} <span className="text-xs font-normal text-slate-500">đơn vị</span>
-              </div>
+              <div className="text-xl font-black font-mono text-slate-900 mt-1">{lossReports.length}</div>
+              <span className="text-[10px] text-slate-400 mt-0.5 block">Đối tác trong tháng</span>
             </div>
 
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-              <span className="text-[11px] font-bold text-slate-400 uppercase">Tổng Lượng Nhập</span>
-              <div className="text-xl sm:text-2xl font-black text-indigo-700 mt-1">
-                {totalImportedKg.toLocaleString('vi-VN')} <span className="text-xs font-normal text-slate-500">kg</span>
-              </div>
-            </div>
-
-            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-              <span className="text-[11px] font-bold text-slate-400 uppercase">Tổng Lượng Hỏng</span>
-              <div className="text-xl sm:text-2xl font-black text-rose-600 mt-1">
-                {totalDamagedKg.toLocaleString('vi-VN')} <span className="text-xs font-normal text-slate-500">kg</span>
-              </div>
-            </div>
-
-            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-              <span className="text-[11px] font-bold text-slate-400 uppercase">% Hỏng Bình Quân</span>
-              <div
-                className={`text-xl sm:text-2xl font-black mt-1 ${
-                  avgLossRate > 5.0 ? 'text-rose-600' : avgLossRate > 2.0 ? 'text-amber-500' : 'text-emerald-600'
-                }`}
-              >
-                {avgLossRate.toFixed(2)}%
-              </div>
-            </div>
-          </div>
-
-          {/* Ranking Table */}
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-4 bg-slate-50 border-b border-slate-200 font-bold text-xs text-slate-700 flex items-center justify-between">
-              <span className="flex items-center gap-1.5 uppercase tracking-wider">
-                <Award className="h-4 w-4 text-amber-500" />
-                <span>Bảng Xếp Hạng Tỷ Lệ Hỏng Theo Nhà Cung Cấp (Cao nhất lên đầu)</span>
-              </span>
-              {highRiskSuppliersCount > 0 && (
-                <span className="px-2 py-0.5 rounded bg-rose-100 text-rose-800 text-xs font-bold flex items-center gap-1">
-                  <AlertTriangle className="h-3 w-3" />
-                  <span>{highRiskSuppliersCount} NCC vượt ngưỡng 5%</span>
-                </span>
-              )}
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs sm:text-sm">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold text-[11px] uppercase tracking-wider">
-                    <th className="p-3.5 text-center">Hạng</th>
-                    <th className="p-3.5">Mã NCC</th>
-                    <th className="p-3.5">Tên Nhà Cung Cấp</th>
-                    <th className="p-3.5">Tổng Nhập (kg)</th>
-                    <th className="p-3.5">Tổng Hỏng (kg)</th>
-                    <th className="p-3.5">% Hỏng Thực Tế</th>
-                    <th className="p-3.5">Tiền Thiệt Hại</th>
-                    <th className="p-3.5">Khuyến Nghị Xử Lý</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-slate-700">
-                  {lossReports.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} className="p-8 text-center text-slate-400">
-                        Chưa có dữ liệu báo hỏng theo NCC trong tháng {reportMonth}/{reportYear}
-                      </td>
-                    </tr>
-                  ) : (
-                    lossReports.map((report, idx) => {
-                      const importedQty = Number(report.totalPurchasedQty ?? report.importedQuantity ?? 0);
-                      const damagedQty = Number(report.totalDamagedQty ?? report.damagedQuantity ?? 0);
-                      const lossRate = Number(
-                        report.damageRatePercentage ??
-                        report.lossRate ??
-                        (importedQty > 0 ? (damagedQty / importedQty) * 100 : 0)
-                      );
-                      const damagedAmount = Number(report.totalEstimatedLossAmount ?? report.damagedAmount ?? 0);
-                      const rankDisplay = report.rank ?? report.ranking ?? (idx + 1);
-                      const isHighRisk = lossRate > 5.0;
-                      const isWarning = lossRate > 2.0 && !isHighRisk;
-
-                      return (
-                        <tr
-                          key={report.supplierCode || idx}
-                          className={`hover:bg-slate-50 transition-colors ${
-                            isHighRisk ? 'bg-rose-50/40' : ''
-                          }`}
-                        >
-                          <td className="p-3.5 text-center">
-                            {rankDisplay === 1 ? (
-                              <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-400 text-slate-900 font-black text-xs shadow-sm">
-                                1
-                              </span>
-                            ) : rankDisplay === 2 ? (
-                              <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-300 text-slate-800 font-black text-xs">
-                                2
-                              </span>
-                            ) : rankDisplay === 3 ? (
-                              <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-700/30 text-amber-900 font-black text-xs">
-                                3
-                              </span>
-                            ) : (
-                              <span className="text-slate-400 font-semibold">{rankDisplay}</span>
-                            )}
-                          </td>
-                          <td className="p-3.5 font-mono font-bold text-indigo-700">
-                            {report.supplierCode}
-                          </td>
-                          <td className="p-3.5 font-bold text-slate-900">{report.supplierName}</td>
-                          <td className="p-3.5 font-mono font-semibold">
-                            {importedQty.toLocaleString('vi-VN')} kg
-                          </td>
-                          <td className="p-3.5 font-mono font-bold text-rose-600">
-                            {damagedQty.toLocaleString('vi-VN')} kg
-                          </td>
-                          <td className="p-3.5">
-                            <div className="flex items-center gap-2">
-                              <span
-                                className={`font-mono font-black text-sm ${
-                                  isHighRisk
-                                    ? 'text-rose-600'
-                                    : isWarning
-                                    ? 'text-amber-600'
-                                    : 'text-emerald-600'
-                                }`}
-                              >
-                                {lossRate.toFixed(2)}%
-                              </span>
-                              <div className="w-16 h-2 rounded-full bg-slate-200 overflow-hidden">
-                                <div
-                                  className={`h-full ${
-                                    isHighRisk
-                                      ? 'bg-rose-600'
-                                      : isWarning
-                                      ? 'bg-amber-500'
-                                      : 'bg-emerald-500'
-                                  }`}
-                                  style={{ width: `${Math.min(100, lossRate * 10)}%` }}
-                                />
-                              </div>
-                            </div>
-                          </td>
-                          <td className="p-3.5 font-mono font-bold text-slate-900">
-                            {damagedAmount.toLocaleString('vi-VN')} đ
-                          </td>
-                          <td className="p-3.5">
-                            {isHighRisk ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-rose-100 text-rose-800">
-                                <ShieldAlert className="h-3 w-3" />
-                                <span>Vượt ngưỡng (&gt;5%) - Khiếu nại/Phạt</span>
-                              </span>
-                            ) : isWarning ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-800">
-                                <AlertTriangle className="h-3 w-3" />
-                                <span>Cần theo dõi (2-5%)</span>
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-100 text-emerald-800">
-                                <CheckCircle2 className="h-3 w-3" />
-                                <span>Chất lượng đạt chuẩn</span>
-                              </span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* =================================================================== */}
-      {/* TAB 6: BẢNG TỔNG HỢP CÔNG NỢ NCC & KHẤU TRỪ CÂN THIẾU (TASK-S4-02) */}
-      {/* =================================================================== */}
-      {activeTab === 'supplier-debt' && (
-        <div className="space-y-4 animate-in fade-in">
-          {/* Header & Export button */}
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
-            <div>
-              <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-amber-100 text-amber-900 text-xs font-bold mb-1">
-                <Scale className="h-3.5 w-3.5" />
-                <span>Nghiệp Vụ Cân Lệch & Công Nợ NCC (TASK-S4-02)</span>
-              </div>
-              <h3 className="text-base font-extrabold text-slate-900">
-                Bảng Tổng Hợp Công Nợ & Khấu Trừ Cân Thiếu NCC Cuối Tháng
-              </h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Công thức:{' '}
-                <strong className="text-slate-800">Lệch = Thực cân - NCC báo</strong> | Tự động trừ tiền phần cân thiếu vào công nợ phải trả NCC cuối tháng.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    setIsExportingDebt(true);
-                    const blob = await warehouseApi.exportSupplierDebtExcel({
-                      branchId: user?.branchId || 1,
-                    });
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `Bang_TongHop_CongNo_NCC_T11_2026.xlsx`;
-                    document.body.appendChild(a);
-                    a.click();
-                    window.URL.revokeObjectURL(url);
-                    document.body.removeChild(a);
-                    showNotice('success', 'Đã xuất file Excel công nợ & cân thiếu NCC thành công');
-                  } catch (e: any) {
-                    showNotice('error', 'Lỗi xuất file: ' + e.message);
-                  } finally {
-                    setIsExportingDebt(false);
-                  }
-                }}
-                disabled={isExportingDebt}
-                className="btn-touch px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-emerald-600/20"
-              >
-                <Download className="h-4 w-4" />
-                <span>
-                  {isExportingDebt ? 'Đang xuất...' : 'Xuất Excel Đối Soát Công Nợ (.xlsx)'}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleOpenDocModal('NHAP')}
-                className="btn-touch px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-indigo-600/20"
-              >
-                <Plus className="h-4 w-4" />
-                <span>+ Lập Phiếu Cân Nhập Kho</span>
-              </button>
-            </div>
-          </div>
-
-          {/* 4 KPI Summary Cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
-                1. Tiền Hàng NCC Báo
-              </span>
+              <span className="text-[11px] font-bold text-slate-400 uppercase">Tổng Nhập (kg)</span>
               <div className="text-xl font-black font-mono text-slate-900 mt-1">
-                {supplierDebts
-                  .reduce((s, d) => s + d.totalReportedAmount, 0)
-                  .toLocaleString('vi-VN')}{' '}
-                đ
+                {totalImportedKg.toLocaleString('vi-VN')}
               </div>
-              <span className="text-[10px] text-slate-400 mt-0.5 block">
-                Tổng kg báo:{' '}
-                {supplierDebts.reduce((s, d) => s + d.totalReportedWeight, 0).toFixed(1)} kg
-              </span>
+              <span className="text-[10px] text-slate-400 mt-0.5 block">Hàng tươi sống & thực phẩm</span>
             </div>
 
-            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-              <span className="text-[11px] font-bold text-blue-600 uppercase tracking-wide">
-                2. Tổng Khối Lượng Thực Cân
-              </span>
-              <div className="text-xl font-black font-mono text-blue-700 mt-1">
-                {supplierDebts.reduce((s, d) => s + d.totalActualWeight, 0).toFixed(1)} kg
-              </div>
-              <span className="text-[10px] text-slate-400 mt-0.5 block">
-                Tổng cộng {supplierDebts.reduce((s, d) => s + d.totalInvoicesCount, 0)} phiếu nhập
-              </span>
-            </div>
-
-            <div className="bg-white p-4 rounded-xl border border-rose-200 bg-rose-50/40 shadow-sm">
-              <span className="text-[11px] font-bold text-rose-700 uppercase tracking-wide flex items-center gap-1">
-                <MinusCircle className="h-3.5 w-3.5 text-rose-600" />
-                <span>3. Giảm Trừ Cân Thiếu</span>
-              </span>
+            <div className="bg-white p-4 rounded-xl border border-rose-200 bg-rose-50/50 shadow-sm">
+              <span className="text-[11px] font-bold text-rose-700 uppercase">Tổng Hỏng Bắt Đền (kg)</span>
               <div className="text-xl font-black font-mono text-rose-700 mt-1">
-                -
-                {supplierDebts
-                  .reduce((s, d) => s + d.totalShortageDeduction, 0)
-                  .toLocaleString('vi-VN')}{' '}
-                đ
+                {totalDamagedKg.toLocaleString('vi-VN')}
               </div>
               <span className="text-[10px] text-rose-600 font-semibold mt-0.5 block">
-                Hụt{' '}
-                {Math.abs(supplierDebts.reduce((s, d) => s + d.totalWeightDiff, 0)).toFixed(1)} kg
-                cân thiếu
+                Tỷ lệ hỏng TB: {avgLossRate.toFixed(2)}%
               </span>
             </div>
 
-            <div className="bg-white p-4 rounded-xl border border-emerald-300 bg-emerald-50/30 shadow-sm">
-              <span className="text-[11px] font-bold text-emerald-800 uppercase tracking-wide">
-                4. Thực Trả NCC Cuối Tháng
-              </span>
-              <div className="text-xl font-black font-mono text-emerald-700 mt-1">
-                {supplierDebts
-                  .reduce((s, d) => s + d.finalPayableDebt, 0)
-                  .toLocaleString('vi-VN')}{' '}
-                đ
+            <div className="bg-white p-4 rounded-xl border border-amber-200 bg-amber-50/50 shadow-sm">
+              <span className="text-[11px] font-bold text-amber-800 uppercase">Cảnh Báo Vượt Ngưỡng (&gt;5%)</span>
+              <div className="text-xl font-black font-mono text-amber-700 mt-1">
+                {highRiskSuppliersCount}
               </div>
-              <span className="text-[10px] text-emerald-700 font-semibold mt-0.5 block">
-                Đã tự động trừ 100% tiền cân thiếu
+              <span className="text-[10px] text-amber-700 font-semibold mt-0.5 block">
+                Cần phạt hợp đồng hoặc đổi NCC
               </span>
             </div>
           </div>
 
-          {/* Supplier Debt Master Table */}
+          {/* Loss Report Table */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-xs sm:text-sm">
                 <thead>
-                  <tr className="bg-slate-100 border-b border-slate-200 text-slate-600 font-bold text-[11px] uppercase tracking-wider">
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold text-[11px] uppercase tracking-wider">
                     <th className="p-3.5">Mã NCC</th>
                     <th className="p-3.5">Tên Nhà Cung Cấp</th>
-                    <th className="p-3.5 text-center">Số Phiếu</th>
-                    <th className="p-3.5 text-right">Khối Lượng NCC Báo</th>
-                    <th className="p-3.5 text-right">Khối Lượng Thực Cân</th>
-                    <th className="p-3.5 text-right font-bold text-rose-600">Lệch (Thực - Báo)</th>
-                    <th className="p-3.5 text-right font-mono">Tiền Hàng Báo (đ)</th>
-                    <th className="p-3.5 text-right font-mono text-rose-700 font-black bg-rose-50/50">
-                      Trừ Cân Thiếu (-đ)
-                    </th>
-                    <th className="p-3.5 text-right font-mono text-emerald-800 font-black bg-emerald-50/50">
-                      Công Nợ Thực Trả (đ)
-                    </th>
-                    <th className="p-3.5 text-center">Trạng Thái</th>
+                    <th className="p-3.5 text-right font-mono">Tổng Nhập (kg)</th>
+                    <th className="p-3.5 text-right font-mono">Lượng Hỏng (kg)</th>
+                    <th className="p-3.5 text-right font-mono font-bold">% Hỏng / Chết</th>
+                    <th className="p-3.5 text-right font-mono">Tiền Hàng (đ)</th>
+                    <th className="p-3.5 text-right font-mono text-rose-700 font-black">Tiền Bắt Đền (đ)</th>
+                    <th className="p-3.5 text-center">Đánh Giá</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-slate-700">
-                  {supplierDebts.length === 0 ? (
-                    <tr>
-                      <td colSpan={10} className="p-8 text-center text-slate-400">
-                        Chưa có dữ liệu công nợ nhà cung cấp
-                      </td>
-                    </tr>
-                  ) : (
-                    supplierDebts.map((sup) => (
-                      <tr key={sup.supplierId} className="hover:bg-slate-50 transition-colors">
-                        <td className="p-3.5 font-mono font-bold text-indigo-700">
-                          {sup.supplierCode}
-                        </td>
-                        <td className="p-3.5 font-bold text-slate-900">
-                          {sup.supplierName}
-                          {sup.phone && (
-                            <div className="text-[11px] text-slate-400 font-normal">
-                              {sup.phone}
-                            </div>
-                          )}
-                        </td>
-                        <td className="p-3.5 text-center font-mono font-bold text-slate-600">
-                          {sup.totalInvoicesCount}
-                        </td>
-                        <td className="p-3.5 text-right font-mono">
-                          {sup.totalReportedWeight} kg
-                        </td>
-                        <td className="p-3.5 text-right font-mono font-bold text-blue-700">
-                          {sup.totalActualWeight} kg
-                        </td>
+                  {lossReports.map((r, idx) => {
+                    const rate = Number(r.damageRatePercentage ?? r.lossRate ?? 0);
+                    const isHigh = rate > 5.0;
+
+                    return (
+                      <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                        <td className="p-3.5 font-mono font-bold text-indigo-700">{r.supplierCode}</td>
+                        <td className="p-3.5 font-bold text-slate-900">{r.supplierName}</td>
+                        <td className="p-3.5 text-right font-mono">{r.importedQuantity} kg</td>
+                        <td className="p-3.5 text-right font-mono text-rose-600 font-bold">{r.damagedQuantity} kg</td>
                         <td
                           className={`p-3.5 text-right font-mono font-black ${
-                            sup.totalWeightDiff < 0 ? 'text-rose-600' : 'text-emerald-600'
+                            isHigh ? 'text-rose-600 text-sm' : 'text-slate-800'
                           }`}
                         >
-                          {sup.totalWeightDiff !== 0
-                            ? sup.totalWeightDiff > 0
-                              ? `+${sup.totalWeightDiff}`
-                              : `${sup.totalWeightDiff}`
-                            : '0.0'}{' '}
-                          kg
+                          {rate.toFixed(2)}%
                         </td>
-                        <td className="p-3.5 text-right font-mono text-slate-800">
-                          {sup.totalReportedAmount.toLocaleString('vi-VN')} đ
+                        <td className="p-3.5 text-right font-mono">
+                          {(
+                            Number(r.importedQuantity ?? r.totalPurchasedQty ?? 0) * 220000
+                          ).toLocaleString('vi-VN')}{' '}
+                          đ
                         </td>
-                        <td className="p-3.5 text-right font-mono font-black text-rose-700 bg-rose-50/30">
-                          {sup.totalShortageDeduction > 0
-                            ? `-${sup.totalShortageDeduction.toLocaleString('vi-VN')} đ`
-                            : '0 đ'}
-                        </td>
-                        <td className="p-3.5 text-right font-mono font-black text-emerald-700 bg-emerald-50/40 text-sm">
-                          {sup.finalPayableDebt.toLocaleString('vi-VN')} đ
+                        <td className="p-3.5 text-right font-mono font-black text-rose-700 bg-rose-50/50">
+                          {Number(
+                            r.damagedAmount ?? r.totalEstimatedLossAmount ?? 0
+                          ).toLocaleString('vi-VN')}{' '}
+                          đ
                         </td>
                         <td className="p-3.5 text-center">
-                          {sup.disputeStatus === 'LECH_CAN_THIEU' ? (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-black bg-rose-100 text-rose-800 border border-rose-300">
-                              <AlertTriangle className="h-3 w-3" />
-                              <span>Đã trừ tiền thiếu</span>
+                          {isHigh ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-800 border border-rose-300">
+                              ⚠️ VƯỢT NGƯỠNG
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800">
-                              <CheckCircle2 className="h-3 w-3" />
-                              <span>Khớp đủ</span>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                              ✓ Đạt chuẩn
                             </span>
                           )}
                         </td>
                       </tr>
-                    ))
-                  )}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1971,19 +1927,24 @@ export const WarehouseModule: React.FC = () => {
       )}
 
       {/* =================================================================== */}
-      {/* MODAL: TẠO PHIẾU NHẬP / XUẤT HUỶ KHO                               */}
+      {/* MODAL: TẠO PHIẾU NHẬP / XUẤT HUỶ KHO (OBJECTIVE 1: 3 NHÓM LÝ DO HỦY) */}
       {/* =================================================================== */}
       {showDocModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in">
-          <div className="bg-white w-full max-w-2xl rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl max-h-[92vh] overflow-y-auto">
+          <div className="bg-white w-full max-w-3xl rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl max-h-[94vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2 text-indigo-700 font-black text-base">
-                <PackagePlus className="h-6 w-6" />
-                <span>
-                  {docType === 'NHAP'
-                    ? 'LẬP PHIẾU NHẬP KHO & SINH LÔ HÀNG (LOT)'
-                    : 'LẬP PHIẾU XUẤT HUỶ KHO'}
-                </span>
+              <div className="flex items-center gap-2 font-black text-base">
+                {docType === 'NHAP' ? (
+                  <div className="flex items-center gap-2 text-indigo-700">
+                    <PackagePlus className="h-6 w-6" />
+                    <span>LẬP PHIẾU NHẬP KHO & CÂN THỰC TẾ (2 CỘT SỐ LƯỢNG)</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-rose-700">
+                    <Trash2 className="h-6 w-6" />
+                    <span>LẬP PHIẾU XUẤT HUỶ KHO (3 NHÓM LÝ DO & CHỐNG XUẤT ÂM)</span>
+                  </div>
+                )}
               </div>
               <button
                 onClick={() => setShowDocModal(false)}
@@ -1993,7 +1954,7 @@ export const WarehouseModule: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleSubmitDoc} className="space-y-4 mt-4">
+            <form onSubmit={handleSubmitDoc} className="space-y-4 mt-4 text-xs sm:text-sm">
               {docType === 'NHAP' && (
                 <div>
                   <label className="block text-xs font-bold text-slate-600 mb-1">
@@ -2002,7 +1963,7 @@ export const WarehouseModule: React.FC = () => {
                   <select
                     value={selectedSupplierId || ''}
                     onChange={(e) => setSelectedSupplierId(Number(e.target.value) || undefined)}
-                    className="w-full h-11 px-3 rounded-xl border border-slate-300 font-semibold text-slate-800 focus:ring-2 focus:ring-indigo-500"
+                    className="w-full h-11 px-3 rounded-xl border border-slate-300 font-semibold text-slate-800 focus:ring-2 focus:ring-indigo-500 bg-white"
                   >
                     {suppliers.map((s) => (
                       <option key={s.id} value={s.id}>
@@ -2017,18 +1978,22 @@ export const WarehouseModule: React.FC = () => {
                 <label className="block text-xs font-bold text-slate-600 mb-1">GHI CHÚ / MỤC ĐÍCH</label>
                 <input
                   type="text"
-                  placeholder="Ví dụ: Nhập 100kg cua Cà Mau tươi phục vụ line buffet..."
+                  placeholder={
+                    docType === 'NHAP'
+                      ? 'Ví dụ: Nhập 100kg cua Cà Mau tươi phục vụ line buffet ca tối...'
+                      : 'Ví dụ: Hủy 3 con cua chết ngộp phát hiện khi giao nhận ca chiều...'
+                  }
                   value={docNote}
                   onChange={(e) => setDocNote(e.target.value)}
-                  className="w-full h-11 px-3 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500"
+                  className="w-full h-11 px-3 rounded-xl border border-slate-300 text-xs sm:text-sm focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
 
-              {/* LIST OF ITEMS */}
+              {/* LIST OF ITEMS ON DOCUMENT */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <label className="block text-xs font-bold text-slate-600">
-                    DANH SÁCH MẶT HÀNG TRÊN PHIẾU
+                  <label className="block text-xs font-bold text-slate-600 uppercase">
+                    DANH SÁCH MẶT HÀNG TRÊN PHIẾU ({docItems.length} dòng)
                   </label>
                   <button
                     type="button"
@@ -2040,178 +2005,326 @@ export const WarehouseModule: React.FC = () => {
                   </button>
                 </div>
 
-                <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
-                  {docItems.map((item, idx) => (
-                    <div
-                      key={idx}
-                      className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-2"
-                    >
-                      <div className="grid grid-cols-12 gap-2 items-center">
-                        <div className={docType === 'NHAP' ? 'col-span-3' : 'col-span-4'}>
-                          <span className="text-[10px] text-slate-500 font-semibold block mb-0.5">
-                            Nguyên liệu
-                          </span>
-                          <select
-                            value={item.itemId}
-                            onChange={(e) => handleDocItemChange(idx, 'itemId', e.target.value)}
-                            className="w-full h-9 px-2 rounded-lg border border-slate-300 font-semibold text-slate-800"
-                          >
-                            {buffetItems.map((bi) => (
-                              <option key={bi.id} value={bi.id}>
-                                {bi.itemName} ({bi.unit})
-                              </option>
-                            ))}
-                          </select>
+                <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                  {docItems.map((item, idx) => {
+                    const avail = getAvailableStock(item.itemId, item.batchId);
+                    const enteredQty =
+                      typeof item.quantity === 'string'
+                        ? parseFloat(item.quantity) || 0
+                        : item.quantity || 0;
+                    const isOverStock = docType === 'HUY' && enteredQty > avail.stock;
+                    const availableBatchesForItem = batches.filter(
+                      (b) => b.itemId === item.itemId && b.currentStock > 0
+                    );
+
+                    return (
+                      <div
+                        key={idx}
+                        className={`p-3.5 rounded-2xl border text-xs space-y-2.5 transition-all ${
+                          isOverStock
+                            ? 'bg-rose-50/70 border-rose-300 ring-2 ring-rose-400/30'
+                            : 'bg-slate-50 border-slate-200'
+                        }`}
+                      >
+                        {/* HÀNG 1: CHỌN MÓN & CHỌN LÔ HÀNG */}
+                        <div className="grid grid-cols-12 gap-2 items-center">
+                          <div className={docType === 'HUY' ? 'col-span-5' : 'col-span-3'}>
+                            <span className="text-[10px] text-slate-500 font-semibold block mb-0.5">
+                              Nguyên liệu / Món ăn
+                            </span>
+                            <select
+                              value={item.itemId}
+                              onChange={(e) => handleDocItemChange(idx, 'itemId', e.target.value)}
+                              className="w-full h-9 px-2 rounded-lg border border-slate-300 font-semibold text-slate-800 bg-white"
+                            >
+                              {buffetItems.map((bi) => (
+                                <option key={bi.id} value={bi.id}>
+                                  {bi.itemName} ({bi.unit})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* Chọn Lô Hàng liên kết (cho phiếu hủy bắt đền NCC) */}
+                          {docType === 'HUY' && (
+                            <div className="col-span-4">
+                              <span className="text-[10px] text-slate-500 font-semibold block mb-0.5">
+                                Liên kết Lô nhập (để bắt đền NCC)
+                              </span>
+                              <select
+                                value={item.batchId || ''}
+                                onChange={(e) =>
+                                  handleDocItemChange(
+                                    idx,
+                                    'batchId',
+                                    e.target.value ? Number(e.target.value) : undefined
+                                  )
+                                }
+                                className="w-full h-9 px-2 rounded-lg border border-slate-300 font-mono text-[11px] text-slate-800 bg-white"
+                              >
+                                <option value="">-- Tất cả lô / Tự động trừ --</option>
+                                {availableBatchesForItem.map((b) => (
+                                  <option key={b.id} value={b.id}>
+                                    {b.batchCode} (Tồn: {b.currentStock} {b.unit} • {b.supplierName || 'NCC'})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+
+                          {docType === 'NHAP' ? (
+                            <>
+                              <div className="col-span-2">
+                                <span className="text-[10px] text-amber-800 font-bold block mb-0.5">
+                                  NCC Báo (kg)
+                                </span>
+                                <input
+                                  type="number"
+                                  step="any"
+                                  min="0.001"
+                                  placeholder="0.00"
+                                  value={item.supplierReportedWeight ?? item.quantity}
+                                  onChange={(e) =>
+                                    handleDocItemChange(idx, 'supplierReportedWeight', e.target.value)
+                                  }
+                                  className="w-full h-9 px-2 rounded-lg border border-amber-300 font-bold bg-amber-50/70"
+                                />
+                              </div>
+
+                              <div className="col-span-2">
+                                <span className="text-[10px] text-indigo-800 font-bold block mb-0.5">
+                                  Thực Cân (kg)
+                                </span>
+                                <input
+                                  type="number"
+                                  step="any"
+                                  min="0.001"
+                                  placeholder="0.00"
+                                  value={item.actualWeight ?? item.quantity}
+                                  onChange={(e) =>
+                                    handleDocItemChange(idx, 'actualWeight', e.target.value)
+                                  }
+                                  className="w-full h-9 px-2 rounded-lg border border-indigo-400 font-black bg-indigo-50/70 text-indigo-950"
+                                />
+                              </div>
+                            </>
+                          ) : (
+                            <div className="col-span-2">
+                              <span className="text-[10px] text-slate-500 font-semibold block mb-0.5">
+                                Số lượng hủy
+                              </span>
+                              <input
+                                type="number"
+                                step="any"
+                                min="0.001"
+                                placeholder="0.00"
+                                value={item.quantity}
+                                onChange={(e) =>
+                                  handleDocItemChange(idx, 'quantity', e.target.value)
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === ',') {
+                                    e.preventDefault();
+                                    const cur = String(item.quantity ?? '');
+                                    if (!cur.includes('.')) {
+                                      handleDocItemChange(idx, 'quantity', (cur ? cur : '0') + '.');
+                                    }
+                                  }
+                                }}
+                                className={`w-full h-9 px-2 rounded-lg border font-bold ${
+                                  isOverStock
+                                    ? 'border-rose-500 bg-rose-50 text-rose-900 focus:ring-rose-500'
+                                    : 'border-slate-300'
+                                }`}
+                              />
+                            </div>
+                          )}
+
+                          {docType === 'NHAP' && (
+                            <div className="col-span-2">
+                              <span className="text-[10px] text-slate-500 font-semibold block mb-0.5">
+                                Đơn giá (đ)
+                              </span>
+                              <input
+                                type="number"
+                                step="1000"
+                                min="0"
+                                value={item.unitPrice}
+                                onChange={(e) =>
+                                  handleDocItemChange(idx, 'unitPrice', parseFloat(e.target.value) || 0)
+                                }
+                                className="w-full h-9 px-2 rounded-lg border border-slate-300 font-mono text-xs"
+                              />
+                            </div>
+                          )}
+
+                          {docType === 'NHAP' && (
+                            <div className="col-span-2">
+                              <span className="text-[10px] text-slate-500 font-semibold block mb-0.5">
+                                Hạn dùng
+                              </span>
+                              <input
+                                type="date"
+                                value={item.expiryDate}
+                                onChange={(e) => handleDocItemChange(idx, 'expiryDate', e.target.value)}
+                                className="w-full h-9 px-1 rounded-lg border border-slate-300 text-[11px]"
+                              />
+                            </div>
+                          )}
+
+                          <div className="col-span-1 text-right">
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveDocItem(idx)}
+                              className="p-1.5 text-slate-400 hover:text-rose-600 rounded"
+                              disabled={docItems.length <= 1}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
                         </div>
 
-                        {docType === 'NHAP' ? (
-                          <>
-                            <div className="col-span-2">
-                              <span className="text-[10px] text-amber-800 font-bold block mb-0.5">
-                                NCC Báo (kg)
-                              </span>
-                              <input
-                                type="number"
-                                step="any"
-                                min="0.001"
-                                placeholder="NCC báo..."
-                                value={item.supplierReportedWeight ?? item.quantity}
-                                onChange={(e) =>
-                                  handleDocItemChange(idx, 'supplierReportedWeight', e.target.value)
-                                }
-                                className="w-full h-9 px-2 rounded-lg border border-amber-300 font-bold bg-amber-50/70"
-                              />
+                        {/* OBJECTIVE 1: HIỂN THỊ TỒN KHẢ DỤNG & CẢNH BÁO VI PHẠM XUẤT ÂM KHO */}
+                        {docType === 'HUY' && (
+                          <div className="space-y-1.5 pt-1.5 border-t border-slate-200">
+                            {/* Dòng tồn kho khả dụng hiện tại */}
+                            <div className="flex items-center justify-between text-xs">
+                              <div className="inline-flex items-center gap-1.5 font-bold text-slate-700">
+                                <span>📦 Tồn kho khả dụng hiện tại:</span>
+                                <span
+                                  className={`px-2 py-0.5 rounded-full font-black font-mono ${
+                                    avail.stock > 0
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : 'bg-rose-100 text-rose-800'
+                                  }`}
+                                >
+                                  {avail.stock.toFixed(2)} {avail.unit}
+                                </span>
+                                {item.batchId && (
+                                  <span className="text-[10px] text-slate-400 font-mono">
+                                    (Lô: {avail.batchName})
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="text-slate-500 text-[11px]">
+                                Đơn giá: <strong>{item.unitPrice.toLocaleString('vi-VN')} đ</strong>
+                              </div>
                             </div>
 
-                            <div className="col-span-2">
-                              <span className="text-[10px] text-indigo-800 font-bold block mb-0.5">
-                                Thực Cân (kg)
-                              </span>
-                              <input
-                                type="number"
-                                step="any"
-                                min="0.001"
-                                placeholder="Thực cân..."
-                                value={item.actualWeight ?? item.quantity}
-                                onChange={(e) =>
-                                  handleDocItemChange(idx, 'actualWeight', e.target.value)
-                                }
-                                className="w-full h-9 px-2 rounded-lg border border-indigo-400 font-black bg-indigo-50/70 text-indigo-950"
-                              />
-                            </div>
-                          </>
-                        ) : (
-                          <div className="col-span-2">
-                            <span className="text-[10px] text-slate-500 font-semibold block mb-0.5">
-                              Số lượng
-                            </span>
-                            <input
-                              type="number"
-                              step="any"
-                              min="0.001"
-                              placeholder="Nhập số lượng..."
-                              value={item.quantity}
-                              onChange={(e) =>
-                                handleDocItemChange(idx, 'quantity', e.target.value)
-                              }
-                              onKeyDown={(e) => {
-                                if (e.key === ',') {
-                                  e.preventDefault();
-                                  const cur = String(item.quantity ?? '');
-                                  if (!cur.includes('.')) {
-                                    handleDocItemChange(idx, 'quantity', (cur ? cur : '0') + '.');
+                            {/* Báo đỏ vi phạm xuất âm kho */}
+                            {isOverStock && (
+                              <div className="p-2 rounded-xl bg-rose-100 border border-rose-300 text-rose-800 text-xs font-bold flex items-center gap-2 animate-pulse">
+                                <ShieldAlert className="h-4 w-4 text-rose-600 flex-shrink-0" />
+                                <span>
+                                  ❌ VI PHẠM XUẤT ÂM KHO: Số lượng hủy ({enteredQty} {avail.unit}) vượt quá
+                                  tồn kho khả dụng ({avail.stock} {avail.unit})! Hệ thống chặn lưu phiếu.
+                                </span>
+                              </div>
+                            )}
+
+                            {/* 3 NHÓM LÝ DO XUẤT HỦY RÕ RÀNG (OBJECTIVE 1) */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                              <div>
+                                <span className="text-[10px] font-bold text-slate-600 block mb-0.5">
+                                  Nhóm lý do hủy (3 nhóm quy chuẩn)
+                                </span>
+                                <select
+                                  value={item.lossCategory || 'HAI_SAN_CHET_NCC'}
+                                  onChange={(e) =>
+                                    handleDocItemChange(idx, 'lossCategory', e.target.value)
                                   }
-                                }
-                              }}
-                              className="w-full h-9 px-2 rounded-lg border border-slate-300 font-bold"
-                            />
+                                  className="w-full h-9 px-2 rounded-lg border border-slate-300 font-bold text-xs bg-white"
+                                >
+                                  <option value="HAI_SAN_CHET_NCC">
+                                    1. Hải sản chết/ngộp/giao không đạt (Trách nhiệm NCC)
+                                  </option>
+                                  <option value="HONG_BAO_QUAN_KHO">
+                                    2. Hỏng bảo quản kho / Hết hạn sử dụng (Trách nhiệm Kho)
+                                  </option>
+                                  <option value="BEP_LAM_HONG">
+                                    3. Bếp làm hỏng / Chè hỏng / Cháy khét (Trách nhiệm Bếp)
+                                  </option>
+                                  <option value="DO_TUOI_CUOI_NGAY">
+                                    4. Món tươi thừa cuối ca (Hủy theo quy định)
+                                  </option>
+                                </select>
+                              </div>
+
+                              <div>
+                                <span className="text-[10px] font-bold text-slate-600 block mb-0.5">
+                                  Ghi chú chi tiết lý do hủy
+                                </span>
+                                <input
+                                  type="text"
+                                  placeholder="Ví dụ: Cua chết ngộp 3 con khi rã đông, bắt đền NCC..."
+                                  value={item.reasonDetail || ''}
+                                  onChange={(e) =>
+                                    handleDocItemChange(idx, 'reasonDetail', e.target.value)
+                                  }
+                                  className="w-full h-9 px-2 rounded-lg border border-slate-300 text-xs"
+                                />
+                              </div>
+                            </div>
+
+                            {/* Thông báo bắt đền NCC khi chọn nhóm 1 */}
+                            {item.lossCategory === 'HAI_SAN_CHET_NCC' && (
+                              <div className="text-[11px] text-amber-800 bg-amber-50 p-1.5 rounded-lg border border-amber-200 font-semibold flex items-center gap-1.5">
+                                <AlertTriangle className="h-3.5 w-3.5 text-amber-600 flex-shrink-0" />
+                                <span>
+                                  ⚠️ Khoản tổn thất này sẽ được liên kết Lô để lập biên bản bắt đền & cấn
+                                  trừ vào kỳ đối soát công nợ NCC!
+                                </span>
+                              </div>
+                            )}
                           </div>
                         )}
 
-                        <div className={docType === 'NHAP' ? 'col-span-2' : 'col-span-3'}>
-                          <span className="text-[10px] text-slate-500 font-semibold block mb-0.5">
-                            Đơn giá (đ)
-                          </span>
-                          <input
-                            type="number"
-                            step="1000"
-                            min="0"
-                            value={item.unitPrice}
-                            onChange={(e) =>
-                              handleDocItemChange(idx, 'unitPrice', parseFloat(e.target.value) || 0)
-                            }
-                            className="w-full h-9 px-2 rounded-lg border border-slate-300 font-mono text-xs"
-                          />
-                        </div>
-
-                        <div className="col-span-2">
-                          <span className="text-[10px] text-slate-500 font-semibold block mb-0.5">
-                            Hạn dùng
-                          </span>
-                          <input
-                            type="date"
-                            value={item.expiryDate}
-                            onChange={(e) => handleDocItemChange(idx, 'expiryDate', e.target.value)}
-                            className="w-full h-9 px-1 rounded-lg border border-slate-300 text-[11px]"
-                          />
-                        </div>
-
-                        <div className="col-span-1 text-right">
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveDocItem(idx)}
-                            className="p-1.5 text-slate-400 hover:text-rose-600 rounded"
-                            disabled={docItems.length <= 1}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Chi tiết cân lệch và tự động khấu trừ tiền thiếu */}
-                      {docType === 'NHAP' && (
-                        <div className="flex flex-wrap items-center justify-between pt-1.5 border-t border-slate-200 text-[11px]">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-semibold text-slate-500">
-                              Lệch (Thực cân - NCC báo):
-                            </span>
-                            <span
-                              className={`px-2 py-0.5 rounded-full font-black ${
-                                (item.weightDiff || 0) < 0
-                                  ? 'bg-rose-100 text-rose-700 border border-rose-300 animate-pulse'
-                                  : (item.weightDiff || 0) > 0
-                                  ? 'bg-emerald-100 text-emerald-800'
-                                  : 'bg-slate-100 text-slate-700'
-                              }`}
-                            >
-                              {(item.weightDiff || 0) > 0
-                                ? `+${item.weightDiff}`
-                                : item.weightDiff || 0}{' '}
-                              kg
-                            </span>
-                            {(item.weightDiff || 0) < 0 && (
-                              <span className="text-rose-600 font-bold ml-1">
-                                ⚠️ Cân thiếu {Math.abs(item.weightDiff || 0)} kg — Giảm trừ:{' '}
-                                <strong className="text-rose-700">
-                                  -{(item.shortageAmount || 0).toLocaleString('vi-VN')} đ
-                                </strong>
+                        {/* Chi tiết cân lệch và tự động khấu trừ tiền thiếu (PHIẾU NHẬP) */}
+                        {docType === 'NHAP' && (
+                          <div className="flex flex-wrap items-center justify-between pt-1.5 border-t border-slate-200 text-[11px]">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-semibold text-slate-500">
+                                Lệch (Thực cân - NCC báo):
                               </span>
-                            )}
+                              <span
+                                className={`px-2 py-0.5 rounded-full font-black ${
+                                  (item.weightDiff || 0) < 0
+                                    ? 'bg-rose-100 text-rose-700 border border-rose-300 animate-pulse'
+                                    : (item.weightDiff || 0) > 0
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : 'bg-slate-100 text-slate-700'
+                                }`}
+                              >
+                                {(item.weightDiff || 0) > 0
+                                  ? `+${item.weightDiff}`
+                                  : item.weightDiff || 0}{' '}
+                                kg
+                              </span>
+                              {(item.weightDiff || 0) < 0 && (
+                                <span className="text-rose-600 font-bold ml-1">
+                                  ⚠️ Cân thiếu {Math.abs(item.weightDiff || 0)} kg — Giảm trừ:{' '}
+                                  <strong className="text-rose-700">
+                                    -{(item.shortageAmount || 0).toLocaleString('vi-VN')} đ
+                                  </strong>
+                                </span>
+                              )}
+                            </div>
+                            <div className="font-bold text-slate-700">
+                              Thực tính phiếu:{' '}
+                              <strong className="text-indigo-700 font-mono">
+                                {(
+                                  (Number(item.actualWeight || item.quantity) || 0) *
+                                  (Number(item.unitPrice) || 0)
+                                ).toLocaleString('vi-VN')}{' '}
+                                đ
+                              </strong>
+                            </div>
                           </div>
-                          <div className="font-bold text-slate-700">
-                            Thực tính phiếu:{' '}
-                            <strong className="text-indigo-700 font-mono">
-                              {(
-                                (Number(item.actualWeight || item.quantity) || 0) *
-                                (Number(item.unitPrice) || 0)
-                              ).toLocaleString('vi-VN')}{' '}
-                              đ
-                            </strong>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
 
                 {/* Summary Totals */}
@@ -2245,8 +2358,8 @@ export const WarehouseModule: React.FC = () => {
                   </div>
                 ) : (
                   <div className="flex justify-end items-center gap-2 pt-2 text-sm font-extrabold text-slate-900">
-                    <span>Tổng tiền phiếu:</span>
-                    <span className="text-indigo-700 font-mono text-base">
+                    <span>Tổng giá trị hàng hủy:</span>
+                    <span className="text-rose-700 font-mono text-base">
                       {calculateDocTotals().finalPayable.toLocaleString('vi-VN')} đ
                     </span>
                   </div>
@@ -2256,7 +2369,7 @@ export const WarehouseModule: React.FC = () => {
               {/* UPLOAD ẢNH HÓA ĐƠN / CHỨNG TỪ */}
               <div>
                 <label className="block text-xs font-bold text-slate-600 mb-1">
-                  ẢNH HÓA ĐƠN / CHỨNG TỪ GIAO HÀNG (TỐI ĐA 5 ẢNH, NÉN TỰ ĐỘNG)
+                  ẢNH HÓA ĐƠN / CHỨNG TỪ BÀN CÂN (TỐI ĐA 5 ẢNH, NÉN TỰ ĐỘNG)
                 </label>
                 <input
                   type="file"
@@ -2297,7 +2410,7 @@ export const WarehouseModule: React.FC = () => {
                 </div>
               </div>
 
-              {/* SUBMIT BUTTON */}
+              {/* ACTION BUTTONS */}
               <div className="grid grid-cols-2 gap-3 pt-3 border-t border-slate-100">
                 <button
                   type="button"
@@ -2309,7 +2422,11 @@ export const WarehouseModule: React.FC = () => {
                 <button
                   type="submit"
                   disabled={isSubmittingDoc}
-                  className="btn-touch h-12 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-sm shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2"
+                  className={`btn-touch h-12 rounded-xl font-extrabold text-sm shadow-lg flex items-center justify-center gap-2 ${
+                    docType === 'HUY'
+                      ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-600/30'
+                      : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-600/30'
+                  }`}
                 >
                   {isSubmittingDoc ? (
                     <>
@@ -2497,15 +2614,43 @@ export const WarehouseModule: React.FC = () => {
                       .split(';')
                       .filter(Boolean)
                       .map((url, i) => (
-                        <a key={i} href={url} target="_blank" rel="noreferrer">
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() =>
+                            handleOpenHDImage(
+                              viewingDoc.imageUrls?.split(';').filter(Boolean) || [],
+                              i,
+                              viewingDoc.docCode
+                            )
+                          }
+                          className="relative group rounded-xl border border-slate-200 overflow-hidden hover:opacity-90"
+                        >
                           <img
                             src={url}
                             alt={`Invoice ${i}`}
-                            className="h-28 w-full object-cover rounded-xl border border-slate-200 hover:opacity-90"
+                            className="h-28 w-full object-cover"
                           />
-                        </a>
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-xs font-bold transition-all">
+                            Xem HD
+                          </div>
+                        </button>
                       ))}
                   </div>
+                </div>
+              )}
+
+              {/* Nút Xem Phiếu A4 */}
+              {viewingDoc.docType === 'NHAP' && (
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setViewingVoucherDoc(viewingDoc)}
+                    className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm"
+                  >
+                    <Printer className="h-4 w-4" />
+                    <span>In / Xem Phiếu Giao Nhận A4 Chuẩn Ký Nhận</span>
+                  </button>
                 </div>
               )}
             </div>
@@ -2520,9 +2665,9 @@ export const WarehouseModule: React.FC = () => {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in">
           <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2 text-indigo-700 font-bold text-base">
-                <Building2 className="h-5 w-5" />
-                <span>{editingSupplier ? 'CHỈNH SỬA NHÀ CUNG CẤP' : 'THÊM NHÀ CUNG CẤP MỚI'}</span>
+              <div className="flex items-center gap-2 text-indigo-700 font-black text-base">
+                <Building2 className="h-6 w-6" />
+                <span>{editingSupplier ? 'CHỈNH SỬA NHÀ CUNG CẤP' : 'THÊM MỚI NHÀ CUNG CẤP'}</span>
               </div>
               <button
                 onClick={() => setShowSupplierModal(false)}
@@ -2532,66 +2677,70 @@ export const WarehouseModule: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleSubmitSupplier} className="space-y-4 mt-4">
+            <form onSubmit={handleSaveSupplier} className="space-y-4 mt-4 text-xs sm:text-sm">
               <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">MÃ NHÀ CUNG CẤP</label>
+                <label className="block text-xs font-bold text-slate-600 mb-1">
+                  MÃ NHÀ CUNG CẤP <span className="text-rose-500">*</span>
+                </label>
                 <input
                   type="text"
-                  value={supplierCode}
-                  onChange={(e) => setSupplierCode(e.target.value)}
-                  className="w-full h-11 px-3 rounded-xl border border-slate-300 font-mono font-bold text-slate-800 focus:ring-2 focus:ring-indigo-500"
                   required
+                  value={supplierCode}
+                  onChange={(e) => setSupplierCode(e.target.value.toUpperCase())}
+                  className="w-full h-11 px-3 rounded-xl border border-slate-300 font-mono font-bold text-slate-800"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">TÊN NHÀ CUNG CẤP</label>
+                <label className="block text-xs font-bold text-slate-600 mb-1">
+                  TÊN NHÀ CUNG CẤP <span className="text-rose-500">*</span>
+                </label>
                 <input
                   type="text"
-                  placeholder="Ví dụ: Hải Sản Quảng Ninh..."
+                  required
+                  placeholder="Ví dụ: Công ty Hải Sản Biển Đông"
                   value={supplierName}
                   onChange={(e) => setSupplierName(e.target.value)}
-                  className="w-full h-11 px-3 rounded-xl border border-slate-300 font-bold text-slate-800 focus:ring-2 focus:ring-indigo-500"
-                  required
+                  className="w-full h-11 px-3 rounded-xl border border-slate-300 text-slate-800 font-semibold"
                 />
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-600 mb-1">SỐ ĐIỆN THOẠI</label>
                 <input
-                  type="text"
-                  placeholder="0987..."
+                  type="tel"
+                  placeholder="0988 123 456"
                   value={supplierPhone}
                   onChange={(e) => setSupplierPhone(e.target.value)}
-                  className="w-full h-11 px-3 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500"
+                  className="w-full h-11 px-3 rounded-xl border border-slate-300 text-slate-800"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">ĐỊA CHỈ KHO / CƠ SỞ</label>
+                <label className="block text-xs font-bold text-slate-600 mb-1">ĐỊA CHỈ KHO HÀNG</label>
                 <input
                   type="text"
-                  placeholder="Hạ Long, Quảng Ninh..."
+                  placeholder="Ví dụ: Số 45 Cảng cá Cẩm Phả, Quảng Ninh"
                   value={supplierAddress}
                   onChange={(e) => setSupplierAddress(e.target.value)}
-                  className="w-full h-11 px-3 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500"
+                  className="w-full h-11 px-3 rounded-xl border border-slate-300 text-slate-800"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3 pt-2">
+              <div className="grid grid-cols-2 gap-3 pt-3 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setShowSupplierModal(false)}
                   className="btn-touch h-11 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs"
                 >
-                  HỦY
+                  HỦY BỎ
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmittingSupplier}
-                  className="btn-touch h-11 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-indigo-600/30"
+                  className="btn-touch h-11 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-1.5"
                 >
-                  {isSubmittingSupplier ? <Loader2 className="h-4 w-4 animate-spin" /> : <span>LƯU THÔNG TIN</span>}
+                  {isSubmittingSupplier ? 'ĐANG LƯU...' : 'LƯU THÔNG TIN'}
                 </button>
               </div>
             </form>
@@ -2600,7 +2749,7 @@ export const WarehouseModule: React.FC = () => {
       )}
 
       {/* =================================================================== */}
-      {/* MODAL: LẬP BIÊN BẢN KIỂM KÊ KHO CA (INVENTORY CHECK FORM)          */}
+      {/* MODAL: LẬP BIÊN BẢN KIỂM KÊ KHO CA (OBJECTIVE 5)                    */}
       {/* =================================================================== */}
       {showCheckModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in">
@@ -2625,7 +2774,7 @@ export const WarehouseModule: React.FC = () => {
                   <select
                     value={checkShift}
                     onChange={(e) => setCheckShift(e.target.value)}
-                    className="w-full h-11 px-3 rounded-xl border border-slate-300 font-bold text-slate-800 focus:ring-2 focus:ring-amber-500"
+                    className="w-full h-11 px-3 rounded-xl border border-slate-300 font-bold text-slate-800 focus:ring-2 focus:ring-amber-500 bg-white"
                   >
                     <option value="CA_TOI">Ca Tối (Cuối ca / Bàn giao)</option>
                     <option value="CA_SANG">Ca Sáng (Đầu ca / Nhận ca)</option>
@@ -2655,12 +2804,42 @@ export const WarehouseModule: React.FC = () => {
                 </div>
               </div>
 
-              {/* Items Entry Table */}
+              {/* Items Entry Table with Category & High-Value Filters (Objective 5) */}
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="block text-xs font-bold text-slate-700 uppercase">
-                    Bảng Đối Soát Tồn Kho ({checkItemRows.length} mặt hàng)
-                  </label>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <label className="block text-xs font-bold text-slate-700 uppercase">
+                      Bảng Đối Soát Tồn Kho
+                    </label>
+
+                    {/* Lọc nhanh theo nhóm món trong modal */}
+                    <select
+                      value={checkModalCategory}
+                      onChange={(e) => setCheckModalCategory(e.target.value)}
+                      className="h-8 px-2 rounded-lg border border-slate-300 text-xs font-semibold text-slate-700 bg-white"
+                    >
+                      <option value="ALL">Tất cả nhóm</option>
+                      <option value="hải sản">Hải sản tươi sống</option>
+                      <option value="bò">Thịt bò</option>
+                      <option value="thịt">Thịt heo / gà</option>
+                      <option value="rau">Rau củ / nấm</option>
+                    </select>
+
+                    {/* Toggle chỉ kiểm hàng đắt tiền trong modal (Objective 5) */}
+                    <button
+                      type="button"
+                      onClick={() => setCheckModalHighValueOnly(!checkModalHighValueOnly)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-black flex items-center gap-1 transition-all ${
+                        checkModalHighValueOnly
+                          ? 'bg-purple-600 text-white'
+                          : 'bg-purple-50 text-purple-700 border border-purple-200'
+                      }`}
+                    >
+                      <Sparkles className="h-3 w-3" />
+                      <span>💎 Đắt tiền / nhạy cảm</span>
+                    </button>
+                  </div>
+
                   <span className="text-[11px] text-rose-600 font-bold">
                     * Bắt buộc giải trình lý do khi chênh lệch
                   </span>
@@ -2678,91 +2857,142 @@ export const WarehouseModule: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {checkItemRows.map((row, idx) => {
-                        const diff = row.actualStock - row.systemStock;
-                        const hasDiff = diff !== 0;
+                      {checkItemRows
+                        .filter((row) => {
+                          if (checkModalCategory !== 'ALL') {
+                            const found = buffetItems.find((b) => b.id === row.itemId);
+                            if (
+                              !(found?.category || '')
+                                .toLowerCase()
+                                .includes(checkModalCategory.toLowerCase())
+                            ) {
+                              return false;
+                            }
+                          }
+                          if (checkModalHighValueOnly) {
+                            const found = buffetItems.find((b) => b.id === row.itemId);
+                            if (
+                              !isHighValueItem({
+                                itemCode: row.itemCode,
+                                itemName: row.itemName,
+                                costPrice: found?.costPrice,
+                              })
+                            ) {
+                              return false;
+                            }
+                          }
+                          return true;
+                        })
+                        .map((row, idx) => {
+                          const originalIdx = checkItemRows.findIndex(
+                            (r) => r.itemId === row.itemId
+                          );
+                          const diff = row.actualStock - row.systemStock;
+                          const hasDiff = diff !== 0;
+                          const isHigh = isHighValueItem({
+                            itemCode: row.itemCode,
+                            itemName: row.itemName,
+                          });
 
-                        return (
-                          <tr key={idx} className={hasDiff ? 'bg-amber-50/50' : ''}>
-                            <td className="p-2.5">
-                              <div className="font-bold text-slate-900">{row.itemName}</div>
-                              {row.batchCode && (
-                                <span className="font-mono text-[10px] text-indigo-600">
-                                  {row.batchCode}
-                                </span>
-                              )}
-                            </td>
-                            <td className="p-2.5 font-mono font-bold text-slate-700">
-                              {row.systemStock} {row.unit}
-                            </td>
-                            <td className="p-2.5">
-                              <input
-                                type="number"
-                                step="any"
-                                min="0"
-                                value={row.actualStock}
-                                onChange={(e) => {
-                                  const val = e.target.value.replace(',', '.');
-                                  handleActualStockChange(idx, parseFloat(val) || 0);
-                                }}
-                                onKeyDown={(e) => {
-                                  if (e.key === ',') {
-                                    e.preventDefault();
-                                    const cur = String(row.actualStock ?? '');
-                                    if (!cur.includes('.')) {
-                                      handleActualStockChange(idx, ((cur ? cur : '0') + '.') as any);
-                                    }
-                                  }
-                                }}
-                                className="w-24 h-9 px-2 rounded-lg border border-slate-300 font-mono font-extrabold text-sm focus:ring-2 focus:ring-amber-500"
-                              />
-                            </td>
-                            <td className="p-2.5">
-                              {diff === 0 ? (
-                                <span className="text-emerald-600 font-bold flex items-center gap-1">
-                                  <CheckCircle2 className="h-3.5 w-3.5" />
-                                  <span>Khớp</span>
-                                </span>
-                              ) : diff < 0 ? (
-                                <span className="text-rose-600 font-extrabold">
-                                  {diff} {row.unit} (Thiếu)
-                                </span>
-                              ) : (
-                                <span className="text-amber-600 font-extrabold">
-                                  +{diff} {row.unit} (Thừa)
-                                </span>
-                              )}
-                            </td>
-                            <td className="p-2.5">
-                              {hasDiff ? (
-                                <div className="space-y-1">
-                                  <select
-                                    value={row.reason}
-                                    onChange={(e) => handleReasonChange(idx, e.target.value)}
-                                    className="w-full h-8 px-2 rounded border border-rose-300 bg-white text-[11px] font-semibold text-rose-900 focus:ring-1 focus:ring-rose-500"
-                                  >
-                                    <option value="">-- Chọn lý do chênh lệch --</option>
-                                    <option value="Hao hụt rã đông / sơ chế">Hao hụt rã đông / sơ chế</option>
-                                    <option value="Hàng hỏng do bảo quản tủ đông">
-                                      Hàng hỏng do bảo quản tủ đông
-                                    </option>
-                                    <option value="Rơi vãi / thất thoát tại bếp">
-                                      Rơi vãi / thất thoát tại bếp
-                                    </option>
-                                    <option value="Bếp quên chưa bấm phiếu lấy hàng">
-                                      Bếp quên chưa bấm phiếu lấy hàng
-                                    </option>
-                                    <option value="Kiểm đếm sai ở ca trước">Kiểm đếm sai ở ca trước</option>
-                                    <option value="Khác (ghi rõ trong ghi chú)">Khác</option>
-                                  </select>
+                          return (
+                            <tr key={idx} className={hasDiff ? 'bg-amber-50/50' : ''}>
+                              <td className="p-2.5">
+                                <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                                  <span>{row.itemName}</span>
+                                  {isHigh && (
+                                    <span className="px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 text-[9px] font-black">
+                                      💎 Đắt tiền
+                                    </span>
+                                  )}
                                 </div>
-                              ) : (
-                                <span className="text-slate-400 text-[11px]">-- Không lệch --</span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
+                                {row.batchCode && (
+                                  <span className="font-mono text-[10px] text-indigo-600">
+                                    {row.batchCode}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="p-2.5 font-mono font-bold text-slate-700">
+                                {row.systemStock} {row.unit}
+                              </td>
+                              <td className="p-2.5">
+                                <input
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  value={row.actualStock}
+                                  onChange={(e) => {
+                                    const val = e.target.value.replace(',', '.');
+                                    handleActualStockChange(
+                                      originalIdx >= 0 ? originalIdx : idx,
+                                      parseFloat(val) || 0
+                                    );
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === ',') {
+                                      e.preventDefault();
+                                      const cur = String(row.actualStock ?? '');
+                                      if (!cur.includes('.')) {
+                                        handleActualStockChange(
+                                          originalIdx >= 0 ? originalIdx : idx,
+                                          ((cur ? cur : '0') + '.') as any
+                                        );
+                                      }
+                                    }
+                                  }}
+                                  className="w-24 h-9 px-2 rounded-lg border border-slate-300 font-mono font-extrabold text-sm focus:ring-2 focus:ring-amber-500"
+                                />
+                              </td>
+                              <td className="p-2.5">
+                                {diff === 0 ? (
+                                  <span className="text-emerald-600 font-bold flex items-center gap-1">
+                                    <CheckCircle2 className="h-3.5 w-3.5" />
+                                    <span>Khớp</span>
+                                  </span>
+                                ) : diff < 0 ? (
+                                  <span className="text-rose-600 font-extrabold">
+                                    {diff.toFixed(2)} {row.unit} (Thiếu)
+                                  </span>
+                                ) : (
+                                  <span className="text-amber-600 font-extrabold">
+                                    +{diff.toFixed(2)} {row.unit} (Thừa)
+                                  </span>
+                                )}
+                              </td>
+                              <td className="p-2.5">
+                                {hasDiff ? (
+                                  <div className="space-y-1">
+                                    <select
+                                      value={row.reason}
+                                      onChange={(e) =>
+                                        handleReasonChange(
+                                          originalIdx >= 0 ? originalIdx : idx,
+                                          e.target.value
+                                        )
+                                      }
+                                      className="w-full h-8 px-2 rounded border border-rose-300 bg-white text-[11px] font-semibold text-rose-900 focus:ring-1 focus:ring-rose-500"
+                                    >
+                                      <option value="">-- Chọn lý do chênh lệch --</option>
+                                      <option value="Hao hụt rã đông / sơ chế">Hao hụt rã đông / sơ chế</option>
+                                      <option value="Hàng hỏng do bảo quản tủ đông">
+                                        Hàng hỏng do bảo quản tủ đông
+                                      </option>
+                                      <option value="Rơi vãi / thất thoát tại bếp">
+                                        Rơi vãi / thất thoát tại bếp
+                                      </option>
+                                      <option value="Bếp quên chưa bấm phiếu lấy hàng">
+                                        Bếp quên chưa bấm phiếu lấy hàng
+                                      </option>
+                                      <option value="Kiểm đếm sai ở ca trước">Kiểm đếm sai ở ca trước</option>
+                                      <option value="Khác (ghi rõ trong ghi chú)">Khác</option>
+                                    </select>
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-400 text-[11px]">-- Không lệch --</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
                     </tbody>
                   </table>
                 </div>
@@ -2780,7 +3010,7 @@ export const WarehouseModule: React.FC = () => {
                 <button
                   type="submit"
                   disabled={isSubmittingCheck}
-                  className="btn-touch h-12 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-sm shadow-lg shadow-amber-500/30 flex items-center justify-center gap-2"
+                  className="btn-touch h-12 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-sm shadow-lg shadow-amber-500/30 flex items-center justify-center gap-2"
                 >
                   {isSubmittingCheck ? (
                     <>
@@ -2788,7 +3018,7 @@ export const WarehouseModule: React.FC = () => {
                       <span>ĐANG LƯU BIÊN BẢN...</span>
                     </>
                   ) : (
-                    <span>LƯU BIÊN BẢN KIỂM KÊ</span>
+                    <span>XÁC NHẬN LƯU BIÊN BẢN</span>
                   )}
                 </button>
               </div>
@@ -2798,15 +3028,15 @@ export const WarehouseModule: React.FC = () => {
       )}
 
       {/* =================================================================== */}
-      {/* MODAL: XEM CHI TIẾT BIÊN BẢN KIỂM KÊ                               */}
+      {/* MODAL: XEM CHI TIẾT BIÊN BẢN KIỂM KÊ                                */}
       {/* =================================================================== */}
       {viewingCheck && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in">
-          <div className="bg-white w-full max-w-xl rounded-3xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+          <div className="bg-white w-full max-w-2xl rounded-3xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2 text-amber-700 font-black text-base">
-                <Eye className="h-5 w-5" />
-                <span>BIÊN BẢN KIỂM KÊ: {viewingCheck.checkCode}</span>
+              <div className="flex items-center gap-2 text-amber-600 font-black text-base">
+                <ClipboardCheck className="h-5 w-5" />
+                <span>CHI TIẾT BIÊN BẢN KIỂM KÊ: {viewingCheck.checkCode}</span>
               </div>
               <button
                 onClick={() => setViewingCheck(null)}
@@ -2817,64 +3047,111 @@ export const WarehouseModule: React.FC = () => {
             </div>
 
             <div className="space-y-3 mt-4 text-xs sm:text-sm">
-              <div className="grid grid-cols-3 gap-2 bg-slate-50 p-3 rounded-xl">
+              <div className="grid grid-cols-2 gap-2 bg-slate-50 p-3 rounded-xl">
                 <div>
                   <span className="text-slate-400 block text-[11px]">Ca làm việc</span>
                   <span className="font-bold text-slate-800">
-                    {viewingCheck.shift === 'CA_SANG' || viewingCheck.shift === 'SANG'
+                    {viewingCheck.shift === 'CA_SANG'
                       ? 'Ca Sáng'
-                      : viewingCheck.shift === 'CA_TOI' || viewingCheck.shift === 'TOI'
+                      : viewingCheck.shift === 'CA_TOI'
                       ? 'Ca Tối'
                       : 'Cả ngày'}
                   </span>
                 </div>
                 <div>
                   <span className="text-slate-400 block text-[11px]">Ngày kiểm kê</span>
-                  <span className="font-mono text-slate-800">{viewingCheck.checkDate}</span>
+                  <span className="font-mono text-slate-800 font-bold">{viewingCheck.checkDate}</span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block text-[11px]">Người kiểm kê</span>
-                  <span className="font-bold text-slate-800">{viewingCheck.checkedBy}</span>
+                  <span className="text-slate-400 block text-[11px]">Người kiểm</span>
+                  <span className="font-bold text-slate-800">{viewingCheck.checkedByName || viewingCheck.checkedBy}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[11px]">Chi nhánh</span>
+                  <span className="font-bold text-slate-800">{viewingCheck.branchName || 'Chi nhánh Thái Nguyên'}</span>
                 </div>
               </div>
 
               {viewingCheck.note && (
                 <div className="p-3 bg-slate-50 rounded-xl">
-                  <span className="text-slate-400 block text-[11px]">Ghi chú</span>
+                  <span className="text-slate-400 block text-[11px]">Ghi chú kiểm kê</span>
                   <p className="text-slate-700 font-medium">{viewingCheck.note}</p>
                 </div>
               )}
 
-              <div className="border border-slate-200 rounded-xl overflow-hidden">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-100 font-bold text-slate-600">
-                    <tr>
-                      <th className="p-2.5">Nguyên liệu</th>
-                      <th className="p-2.5">Tồn Hệ Thống</th>
-                      <th className="p-2.5">Tồn Thực Tế</th>
-                      <th className="p-2.5">Chênh Lệch</th>
-                      <th className="p-2.5">Lý Do Lệch</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {(viewingCheck.items || []).map((it, idx) => (
-                      <tr key={idx}>
-                        <td className="p-2.5 font-bold text-slate-800">{it.itemName || it.itemCode}</td>
-                        <td className="p-2.5 font-mono">{it.systemStock}</td>
-                        <td className="p-2.5 font-mono font-bold">{it.actualStock}</td>
-                        <td className="p-2.5 font-mono font-extrabold text-rose-600">
-                          {it.difference}
-                        </td>
-                        <td className="p-2.5 text-slate-700 font-medium">{it.reason || '--'}</td>
+              <div>
+                <span className="font-bold text-slate-700 block mb-2">Bảng Số Liệu Kiểm Kê:</span>
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-100 font-bold text-slate-600">
+                      <tr>
+                        <th className="p-2.5">Nguyên liệu</th>
+                        <th className="p-2.5 text-right font-mono">Tồn Hệ Thống</th>
+                        <th className="p-2.5 text-right font-mono">Tồn Thực Tế</th>
+                        <th className="p-2.5 text-right font-mono">Chênh Lệch</th>
+                        <th className="p-2.5">Lý Do Giải Trình</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {(viewingCheck.items || []).map((it, idx) => {
+                        const diff = Number(it.difference || it.actualStock - it.systemStock || 0);
+                        const hasDiff = diff !== 0;
+
+                        return (
+                          <tr key={idx} className={hasDiff ? 'bg-amber-50/50' : ''}>
+                            <td className="p-2.5 font-bold text-slate-900">{it.itemName || it.itemCode}</td>
+                            <td className="p-2.5 text-right font-mono">
+                              {it.systemStock} {it.unit || 'kg'}
+                            </td>
+                            <td className="p-2.5 text-right font-mono font-bold text-indigo-900">
+                              {it.actualStock} {it.unit || 'kg'}
+                            </td>
+                            <td
+                              className={`p-2.5 text-right font-mono font-black ${
+                                diff < 0 ? 'text-rose-600' : diff > 0 ? 'text-amber-600' : 'text-emerald-600'
+                              }`}
+                            >
+                              {diff !== 0 ? (diff > 0 ? `+${diff}` : `${diff}`) : '0.0'} {it.unit || 'kg'}
+                            </td>
+                            <td className="p-2.5 text-slate-600">
+                              {hasDiff ? (
+                                <span className="font-semibold text-rose-800">{it.reason || 'Chưa ghi'}</span>
+                              ) : (
+                                <span className="text-emerald-700 font-semibold">Khớp 100%</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </div>
         </div>
       )}
+
+      {/* =================================================================== */}
+      {/* MODAL: XEM PHIẾU GIAO NHẬN A4 (OBJECTIVE 2: DELIVERY VOUCHER MODAL)  */}
+      {/* =================================================================== */}
+      <DeliveryVoucherModal
+        isOpen={!!viewingVoucherDoc}
+        onClose={() => setViewingVoucherDoc(null)}
+        doc={viewingVoucherDoc}
+        branchName={user?.branchName}
+      />
+
+      {/* =================================================================== */}
+      {/* MODAL: PHÓNG TO ẢNH FULL HD (OBJECTIVE 2: HD IMAGE LIGHTBOX MODAL)  */}
+      {/* =================================================================== */}
+      <HDImageModal
+        isOpen={isHDImageOpen}
+        onClose={() => setIsHDImageOpen(false)}
+        images={hdImages}
+        initialIndex={hdImageIndex}
+        docCode={hdDocCode}
+      />
     </div>
   );
 };

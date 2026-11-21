@@ -11,6 +11,10 @@ export interface Item {
   costPrice: number;
   isBuffetLine: boolean;
   isDailyOnly?: boolean;
+  branchId?: number;
+  storage?: string;
+  minStock?: number;
+  maxStock?: number;
 }
 
 export interface Recipe {

@@ -56,6 +56,8 @@ export interface WarehouseDocumentItem {
   actualWeight?: number;          // Khối lượng thực cân (kg)
   weightDiff?: number;            // Lệch = actualWeight - supplierReportedWeight
   shortageAmount?: number;        // Tiền phạt/trừ do cân thiếu
+  reason?: string;
+  lossCategory?: 'HAI_SAN_CHET_NCC' | 'HONG_BAO_QUAN_KHO' | 'BEP_LAM_HONG' | string;
 }
 
 export interface WarehouseDocument {
@@ -82,6 +84,7 @@ export interface WarehouseDocument {
 
 export interface CreateDocumentRequest {
   branchId?: number;
+  branchCode?: string;
   docType: 'NHAP' | 'XUAT_CHUYEN' | 'HUY' | 'KIEM_KE' | string;
   supplierId?: number;
   note?: string;
@@ -96,7 +99,87 @@ export interface CreateDocumentRequest {
     actualWeight?: number;
     weightDiff?: number;
     shortageAmount?: number;
+    reason?: string;
+    lossCategory?: 'HAI_SAN_CHET_NCC' | 'HONG_BAO_QUAN_KHO' | 'BEP_LAM_HONG' | string;
   }[];
+}
+
+export interface DebtAdjustment {
+  id: number;
+  supplierId: number;
+  supplierCode?: string;
+  supplierName?: string;
+  branchCode: string;
+  periodId?: number;
+  periodStartDate?: string;
+  periodEndDate?: string;
+  totalReportedWeight?: number;
+  totalActualWeight?: number;
+  weightDiff?: number;
+  shortageAmount?: number;
+  adjustmentAmount: number;
+  reason: string;
+  status: 'CHO_DUYET' | 'DA_CHOT';
+  adjustedBy: string;
+  createdAt: string;
+  closedAt?: string;
+}
+
+export interface CreateDebtAdjustmentRequest {
+  supplierId: number;
+  branchCode?: string;
+  periodId?: number;
+  periodStartDate?: string;
+  periodEndDate?: string;
+  totalReportedWeight?: number;
+  totalActualWeight?: number;
+  weightDiff?: number;
+  shortageAmount?: number;
+  adjustmentAmount: number;
+  reason: string;
+  status?: 'CHO_DUYET' | 'DA_CHOT';
+  adjustedBy?: string;
+}
+
+export interface ReconciliationPeriod {
+  id: number;
+  supplierId: number;
+  supplierCode?: string;
+  supplierName?: string;
+  branchCode: string;
+  periodStartDate: string;
+  periodEndDate: string;
+  totalReportedWeight: number;
+  totalActualWeight: number;
+  weightDiff: number;
+  shortageAmount: number;
+  adjustmentAmount: number;
+  finalPayableDebt?: number;
+  reason?: string;
+  status: 'CHO_DUYET' | 'DA_CHOT';
+  adjustedBy?: string;
+  createdAt: string;
+  closedAt?: string;
+}
+
+export interface StockLedgerEntry {
+  id: number | string;
+  docCode: string;
+  docType: 'NHAP' | 'XUAT_BEP' | 'XUAT_HUY' | 'KIEM_KE' | string;
+  docTypeName: string;
+  date: string;
+  itemId: number;
+  itemCode?: string;
+  itemName?: string;
+  batchCode?: string;
+  inQty: number;
+  outQty: number;
+  changeQty: number;
+  balance: number;
+  unit: string;
+  partnerOrReason?: string;
+  note?: string;
+  branchCode?: string;
 }
 
 export interface SupplierDebtSummary {
@@ -245,18 +328,45 @@ export const warehouseApi = {
   },
 
   // --- Batches (Lô nhập) ---
-  getAvailableBatches: async (params?: { branchId?: number; itemId?: number }): Promise<ImportBatch[]> => {
+  getAvailableBatches: async (
+    arg1?: number | { branchId?: number; itemId?: number; branchCode?: string },
+    arg2?: string | number
+  ): Promise<ImportBatch[]> => {
     await initializeDatabaseIfEmpty();
     await simulateLatency(80, 120);
 
+    let itemId: number | undefined;
+    let branchId: number | undefined;
+    let branchCode: string | undefined;
+
+    if (typeof arg1 === 'number') {
+      itemId = arg1;
+      if (typeof arg2 === 'string') {
+        branchCode = arg2;
+      } else if (typeof arg2 === 'number') {
+        branchId = arg2;
+      }
+    } else if (typeof arg1 === 'object' && arg1 !== null) {
+      itemId = arg1.itemId;
+      branchId = arg1.branchId;
+      branchCode = arg1.branchCode;
+    }
+
+    if (!branchId && branchCode) {
+      if (branchCode.toUpperCase() === 'TN') branchId = 1;
+      else if (branchCode.toUpperCase() === 'QV') branchId = 2;
+    }
+
     let list = await db.inventoryLots.toArray();
-    if (params?.branchId) {
-      list = list.filter((b) => !b.branchId || b.branchId === params.branchId);
+    if (branchId) {
+      list = list.filter(
+        (b) => !b.branchId || b.branchId === branchId || (branchCode && b.branchCode === branchCode)
+      );
     }
-    if (params?.itemId) {
-      list = list.filter((b) => b.itemId === params.itemId);
+    if (itemId) {
+      list = list.filter((b) => b.itemId === itemId);
     }
-    return list;
+    return list.filter((b) => b.currentStock === undefined || b.currentStock > 0);
   },
 
   getAllBatches: async (params?: { branchId?: number; itemId?: number }): Promise<ImportBatch[]> => {
@@ -330,6 +440,39 @@ export const warehouseApi = {
     const itemsList = await db.items.toArray();
     const itemMap = new Map(itemsList.map((i) => [i.id, i]));
 
+    const branchId = data.branchId || (data.branchCode === 'QV' ? 2 : 1);
+
+    // Kiểm tra chặn xuất âm kho nếu là phiếu xuất hoặc hủy
+    if (data.docType === 'HUY' || data.docType === 'XUAT_HUY' || data.docType === 'XUAT_CHUYEN') {
+      for (const it of data.items) {
+        const qtyToDeduct = it.actualWeight !== undefined ? it.actualWeight : it.quantity;
+        let availableStock = 0;
+        let targetLot: any = null;
+
+        if (it.batchId) {
+          targetLot = await db.inventoryLots.get(it.batchId);
+          availableStock = targetLot?.currentStock || 0;
+        } else {
+          const lots = await db.inventoryLots.where('itemId').equals(it.itemId).toArray();
+          const branchLots = lots.filter((l) => !branchId || !l.branchId || l.branchId === branchId);
+          availableStock = branchLots.reduce((sum, l) => sum + (l.currentStock || 0), 0);
+          targetLot = branchLots.find((l) => (l.currentStock || 0) >= qtyToDeduct) || branchLots[0];
+        }
+
+        if (qtyToDeduct > availableStock) {
+          throw new Error(
+            `Số lượng xuất/hủy (${qtyToDeduct}) vượt quá tồn kho khả dụng hiện tại (${availableStock}). Không cho phép xuất âm kho!`
+          );
+        }
+
+        // Trừ tồn kho trong lô hàng
+        if (targetLot && targetLot.currentStock !== undefined) {
+          const newStock = Math.max(0, Number((targetLot.currentStock - qtyToDeduct).toFixed(2)));
+          await db.inventoryLots.update(targetLot.id, { currentStock: newStock });
+        }
+      }
+    }
+
     let totalReportedAmount = 0;
     let totalShortageAmount = 0;
 
@@ -349,6 +492,7 @@ export const warehouseApi = {
         itemId: it.itemId,
         itemCode: foundItem?.itemCode || 'M-01',
         itemName: foundItem?.itemName || 'Nguyên liệu',
+        batchId: it.batchId,
         batchCode: it.batchId ? `LOT-${it.batchId}` : `LOT-NEW-${Date.now().toString().slice(-4)}`,
         quantity: actualWeight,
         unitPrice: it.unitPrice,
@@ -358,6 +502,8 @@ export const warehouseApi = {
         actualWeight,
         weightDiff,
         shortageAmount: shortage,
+        reason: it.reason,
+        lossCategory: it.lossCategory,
       };
     });
 
@@ -367,16 +513,21 @@ export const warehouseApi = {
     );
     const finalPayableAmount = Math.max(0, totalReportedAmount - totalShortageAmount);
     const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-    const codePrefix = data.docType === 'NHAP' ? 'PNK' : data.docType === 'XUAT_CHUYEN' ? 'PXK' : 'PHK';
+    const codePrefix =
+      data.docType === 'NHAP'
+        ? 'PNK'
+        : data.docType === 'XUAT_CHUYEN' || data.docType === 'XUAT_BEP'
+        ? 'PXK'
+        : 'PHK';
     const docCode = `${codePrefix}-${Date.now().toString().slice(-6)}`;
 
     const newDoc: WarehouseDocument = {
       id: Date.now(),
       docType: data.docType,
       docCode,
-      branchId: data.branchId || 1,
+      branchId,
       branchName:
-        data.branchId === 2
+        branchId === 2
           ? 'Sen Việt Buffet - Chi nhánh Quế Võ'
           : 'Sen Việt Buffet - Chi nhánh Thái Nguyên',
       supplierId: data.supplierId,
@@ -409,7 +560,7 @@ export const warehouseApi = {
           itemId: it.itemId,
           itemCode: it.itemCode,
           itemName: it.itemName,
-          branchId: data.branchId || 1,
+          branchId,
           importDate: new Date().toISOString().slice(0, 10),
           expiryDate: it.expiryDate || '2026-12-31',
           initialQuantity: it.quantity,
@@ -794,5 +945,405 @@ export const warehouseApi = {
     return new Blob([wbout], {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     });
+  },
+
+  // --- Realtime Item Stock (Tồn kho khả dụng) ---
+  getItemCurrentStock: async (itemId: number, branchCodeOrId?: string | number): Promise<number> => {
+    await initializeDatabaseIfEmpty();
+    await simulateLatency(60, 100);
+
+    let targetBranchId: number | undefined;
+    let targetBranchCode: string | undefined;
+
+    if (typeof branchCodeOrId === 'number') {
+      targetBranchId = branchCodeOrId;
+      targetBranchCode = branchCodeOrId === 1 ? 'TN' : branchCodeOrId === 2 ? 'QV' : undefined;
+    } else if (typeof branchCodeOrId === 'string') {
+      targetBranchCode = branchCodeOrId.toUpperCase();
+      targetBranchId = targetBranchCode === 'TN' ? 1 : targetBranchCode === 'QV' ? 2 : undefined;
+    }
+
+    let lots = await db.inventoryLots.where('itemId').equals(itemId).toArray();
+    if (targetBranchId) {
+      lots = lots.filter(
+        (l) =>
+          !l.branchId ||
+          l.branchId === targetBranchId ||
+          (targetBranchCode && l.branchCode === targetBranchCode)
+      );
+    }
+    const total = lots.reduce((sum, l) => sum + (Number(l.currentStock) || 0), 0);
+    return Number(total.toFixed(2));
+  },
+
+  // --- Thẻ Kho Tức Thời (Realtime Stock Ledger) ---
+  getStockLedger: async (
+    itemId: number,
+    branchCodeOrId?: string | number
+  ): Promise<StockLedgerEntry[]> => {
+    await initializeDatabaseIfEmpty();
+    await simulateLatency(80, 120);
+
+    let targetBranchId: number | undefined;
+    let targetBranchCode: string | undefined;
+
+    if (typeof branchCodeOrId === 'number') {
+      targetBranchId = branchCodeOrId;
+      targetBranchCode = branchCodeOrId === 1 ? 'TN' : branchCodeOrId === 2 ? 'QV' : undefined;
+    } else if (typeof branchCodeOrId === 'string') {
+      targetBranchCode = branchCodeOrId.toUpperCase();
+      targetBranchId = targetBranchCode === 'TN' ? 1 : targetBranchCode === 'QV' ? 2 : undefined;
+    }
+
+    const item = await db.items.get(itemId);
+    const itemName = item?.itemName || 'Nguyên liệu';
+    const itemCode = item?.itemCode || 'M-01';
+    const unit = item?.unit || 'kg';
+
+    const rawEvents: {
+      id: number | string;
+      docCode: string;
+      docType: 'NHAP' | 'XUAT_BEP' | 'XUAT_HUY' | 'KIEM_KE' | string;
+      docTypeName: string;
+      date: string;
+      batchCode?: string;
+      inQty: number;
+      outQty: number;
+      changeQty: number;
+      note?: string;
+      partnerOrReason?: string;
+    }[] = [];
+
+    // 1. Từ Phiếu kho (warehouseDocuments)
+    const docs = await db.warehouseDocuments.toArray();
+    for (const doc of docs) {
+      if (targetBranchId && doc.branchId && doc.branchId !== targetBranchId) continue;
+
+      const matchingItems = (doc.items || []).filter((it: any) => it.itemId === itemId);
+      for (const it of matchingItems) {
+        const qty = it.actualWeight !== undefined ? it.actualWeight : it.quantity;
+        if (doc.docType === 'NHAP') {
+          rawEvents.push({
+            id: `DOC-${doc.id}-${it.id || 0}`,
+            docCode: doc.docCode || `PNK-${doc.id}`,
+            docType: 'NHAP',
+            docTypeName: 'Nhập kho NCC',
+            date: doc.createdAt || '2026-11-16 08:00:00',
+            batchCode: it.batchCode,
+            inQty: qty,
+            outQty: 0,
+            changeQty: qty,
+            partnerOrReason: doc.supplierName || doc.supplierCode || 'Nhà cung cấp',
+            note: doc.note || `Nhập hàng từ ${doc.supplierName || 'NCC'}`,
+          });
+        } else if (doc.docType === 'HUY' || doc.docType === 'XUAT_HUY') {
+          rawEvents.push({
+            id: `DOC-${doc.id}-${it.id || 0}`,
+            docCode: doc.docCode || `PHK-${doc.id}`,
+            docType: 'XUAT_HUY',
+            docTypeName: 'Xuất hủy hỏng',
+            date: doc.createdAt || '2026-11-18 10:00:00',
+            batchCode: it.batchCode,
+            inQty: 0,
+            outQty: qty,
+            changeQty: -qty,
+            partnerOrReason: it.reason || doc.note || 'Xuất hủy hao hụt',
+            note: doc.note || 'Phiếu xuất hủy',
+          });
+        } else if (doc.docType === 'XUAT_CHUYEN' || doc.docType === 'XUAT_BEP') {
+          rawEvents.push({
+            id: `DOC-${doc.id}-${it.id || 0}`,
+            docCode: doc.docCode || `PXK-${doc.id}`,
+            docType: 'XUAT_BEP',
+            docTypeName: 'Xuất bếp / Chuyển kho',
+            date: doc.createdAt || '2026-11-17 09:00:00',
+            batchCode: it.batchCode,
+            inQty: 0,
+            outQty: qty,
+            changeQty: -qty,
+            partnerOrReason: doc.note || 'Xuất bếp chế biến',
+            note: doc.note || 'Xuất kho cho bếp',
+          });
+        }
+      }
+    }
+
+    // 2. Từ takeOutLogs (Bếp lấy nguyên liệu từ kho)
+    const takeOuts = await db.takeOutLogs.toArray();
+    for (const log of takeOuts) {
+      const logItemId = log.item?.id || log.itemId;
+      if (logItemId === itemId && !log.isCancelled) {
+        rawEvents.push({
+          id: `TO-${log.id}`,
+          docCode: `PXK-BEP-${log.id}`,
+          docType: 'XUAT_BEP',
+          docTypeName: 'Bếp lấy hàng chế biến',
+          date: log.createdAt || '2026-11-18 11:30:00',
+          inQty: 0,
+          outQty: log.quantity,
+          changeQty: -log.quantity,
+          partnerOrReason: 'Khu vực bếp ra line',
+          note: log.note || 'Bếp lấy hàng chế biến ca',
+        });
+      }
+    }
+
+    // 3. Từ inventoryChecks (Kiểm kê định kỳ)
+    const checks = await db.inventoryChecks.toArray();
+    for (const check of checks) {
+      if (targetBranchId && check.branchId && check.branchId !== targetBranchId) continue;
+
+      const matchingItems = (check.items || []).filter((it: any) => it.itemId === itemId);
+      for (const it of matchingItems) {
+        const diff =
+          it.difference !== undefined ? it.difference : it.actualStock - (it.systemStock || 0);
+        rawEvents.push({
+          id: `CHK-${check.id}-${it.id || 0}`,
+          docCode: check.checkCode || `KK-${check.id}`,
+          docType: 'KIEM_KE',
+          docTypeName: `Kiểm kê kho (${check.shift || 'Định kỳ'})`,
+          date:
+            check.createdAt ||
+            (check.checkDate ? `${check.checkDate} 12:00:00` : '2026-11-18 12:00:00'),
+          inQty: diff > 0 ? diff : 0,
+          outQty: diff < 0 ? Math.abs(diff) : 0,
+          changeQty: diff,
+          partnerOrReason:
+            it.reason || check.note || (diff < 0 ? 'Thất thoát / hao hụt ca' : 'Khớp số liệu'),
+          note: check.note || 'Biên bản kiểm kê kho',
+        });
+      }
+    }
+
+    // 4. Nếu chưa có sự kiện nhập ban đầu nào cho itemId từ warehouseDocuments, kiểm tra inventoryLots
+    const docBatchCodes = new Set(rawEvents.map((e) => e.batchCode).filter(Boolean));
+    const lots = await db.inventoryLots.where('itemId').equals(itemId).toArray();
+    for (const lot of lots) {
+      if (targetBranchId && lot.branchId && lot.branchId !== targetBranchId) continue;
+      if (!docBatchCodes.has(lot.batchCode)) {
+        rawEvents.push({
+          id: `LOT-INIT-${lot.id}`,
+          docCode: lot.batchCode || `PNK-INIT-${lot.id}`,
+          docType: 'NHAP',
+          docTypeName: 'Nhập kho ban đầu',
+          date: lot.importDate ? `${lot.importDate} 07:00:00` : '2026-11-15 07:00:00',
+          batchCode: lot.batchCode,
+          inQty: lot.initialQuantity || lot.currentStock || 0,
+          outQty: 0,
+          changeQty: lot.initialQuantity || lot.currentStock || 0,
+          partnerOrReason: lot.supplierName || lot.supplierCode || 'Nhà cung cấp',
+          note: `Lô nhập ${lot.batchCode} - HSD: ${lot.expiryDate || 'N/A'}`,
+        });
+      }
+    }
+
+    // Sắp xếp theo ngày tăng dần để tính lũy kế tồn kho (balance)
+    rawEvents.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    let runningBalance = 0;
+    const ledgerEntries: StockLedgerEntry[] = rawEvents.map((evt) => {
+      runningBalance += evt.changeQty;
+      return {
+        id: evt.id,
+        docCode: evt.docCode,
+        docType: evt.docType,
+        docTypeName: evt.docTypeName,
+        date: evt.date,
+        itemId,
+        itemCode,
+        itemName,
+        batchCode: evt.batchCode,
+        inQty: Number(evt.inQty.toFixed(2)),
+        outQty: Number(evt.outQty.toFixed(2)),
+        changeQty: Number(evt.changeQty.toFixed(2)),
+        balance: Number(runningBalance.toFixed(2)),
+        unit,
+        partnerOrReason: evt.partnerOrReason,
+        note: evt.note,
+        branchCode: targetBranchCode || 'TN',
+      };
+    });
+
+    return ledgerEntries.reverse();
+  },
+
+  // --- Điều Chỉnh & Đối Chiếu Công Nợ NCC (Debt Adjustments & Period Closing) ---
+  getDebtAdjustments: async (
+    supplierId?: number,
+    branchCodeOrId?: string | number
+  ): Promise<DebtAdjustment[]> => {
+    await initializeDatabaseIfEmpty();
+    await simulateLatency(80, 120);
+
+    let targetBranchCode: string | undefined;
+    if (typeof branchCodeOrId === 'number') {
+      targetBranchCode = branchCodeOrId === 1 ? 'TN' : branchCodeOrId === 2 ? 'QV' : undefined;
+    } else if (typeof branchCodeOrId === 'string') {
+      targetBranchCode = branchCodeOrId.toUpperCase();
+    }
+
+    let list = await db.debtAdjustments.toArray();
+    if (supplierId) {
+      list = list.filter((a) => a.supplierId === supplierId);
+    }
+    if (targetBranchCode) {
+      list = list.filter((a) => !a.branchCode || a.branchCode.toUpperCase() === targetBranchCode);
+    }
+    return list.reverse();
+  },
+
+  createDebtAdjustment: async (data: CreateDebtAdjustmentRequest): Promise<DebtAdjustment> => {
+    await initializeDatabaseIfEmpty();
+    await simulateLatency(120, 160);
+
+    const supplier = await db.suppliers.get(data.supplierId);
+    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+
+    const newAdj: DebtAdjustment = {
+      id: Date.now(),
+      supplierId: data.supplierId,
+      supplierCode: supplier?.supplierCode || 'NCC-UNKNOWN',
+      supplierName: supplier?.supplierName || 'Nhà cung cấp',
+      branchCode: (data.branchCode || 'TN').toUpperCase(),
+      periodId: data.periodId,
+      periodStartDate: data.periodStartDate || new Date().toISOString().slice(0, 10),
+      periodEndDate: data.periodEndDate || new Date().toISOString().slice(0, 10),
+      totalReportedWeight: data.totalReportedWeight || 0,
+      totalActualWeight: data.totalActualWeight || 0,
+      weightDiff: data.weightDiff || 0,
+      shortageAmount: data.shortageAmount || 0,
+      adjustmentAmount: data.adjustmentAmount,
+      reason: data.reason,
+      status: data.status || 'CHO_DUYET',
+      adjustedBy: data.adjustedBy || 'Kế toán trưởng',
+      createdAt: now,
+    };
+
+    await db.debtAdjustments.add(newAdj);
+    return newAdj;
+  },
+
+  closeDebtPeriod: async (
+    periodId: number
+  ): Promise<{ success: boolean; message: string; period?: any }> => {
+    await initializeDatabaseIfEmpty();
+    await simulateLatency(100, 150);
+
+    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    let updatedPeriod = await db.reconciliationPeriods.get(periodId);
+    let updatedAdjustment = await db.debtAdjustments.get(periodId);
+
+    if (updatedPeriod) {
+      await db.reconciliationPeriods.update(periodId, {
+        status: 'DA_CHOT',
+        closedAt: now,
+      });
+      await db.debtAdjustments
+        .where('periodId')
+        .equals(periodId)
+        .modify({ status: 'DA_CHOT', closedAt: now });
+      updatedPeriod = await db.reconciliationPeriods.get(periodId);
+      return {
+        success: true,
+        message: `Đã chốt kỳ đối soát công nợ #${periodId} thành công`,
+        period: updatedPeriod,
+      };
+    }
+
+    if (updatedAdjustment) {
+      await db.debtAdjustments.update(periodId, {
+        status: 'DA_CHOT',
+        closedAt: now,
+      });
+      updatedAdjustment = await db.debtAdjustments.get(periodId);
+      return {
+        success: true,
+        message: `Đã chốt phiếu điều chỉnh công nợ #${periodId} thành công`,
+        period: updatedAdjustment,
+      };
+    }
+
+    // Nếu periodId chưa có trong bảng reconciliationPeriods, tạo mới bản ghi đã chốt
+    const newPeriod: ReconciliationPeriod = {
+      id: periodId,
+      supplierId: 1,
+      supplierCode: 'NCC-HS01',
+      supplierName: 'Công ty Hải Sản Biển Đông',
+      branchCode: 'TN',
+      periodStartDate: '2026-11-11',
+      periodEndDate: '2026-11-20',
+      totalReportedWeight: 0,
+      totalActualWeight: 0,
+      weightDiff: 0,
+      shortageAmount: 0,
+      adjustmentAmount: 0,
+      status: 'DA_CHOT',
+      adjustedBy: 'Kế toán trưởng',
+      createdAt: now,
+      closedAt: now,
+    };
+    await db.reconciliationPeriods.add(newPeriod);
+    return {
+      success: true,
+      message: `Đã chốt kỳ đối soát công nợ #${periodId} thành công`,
+      period: newPeriod,
+    };
+  },
+
+  getReconciliationPeriods: async (
+    supplierId?: number,
+    branchCodeOrId?: string | number
+  ): Promise<ReconciliationPeriod[]> => {
+    await initializeDatabaseIfEmpty();
+    await simulateLatency(80, 120);
+
+    let targetBranchCode: string | undefined;
+    if (typeof branchCodeOrId === 'number') {
+      targetBranchCode = branchCodeOrId === 1 ? 'TN' : branchCodeOrId === 2 ? 'QV' : undefined;
+    } else if (typeof branchCodeOrId === 'string') {
+      targetBranchCode = branchCodeOrId.toUpperCase();
+    }
+
+    let list = await db.reconciliationPeriods.toArray();
+    if (supplierId) {
+      list = list.filter((p) => p.supplierId === supplierId);
+    }
+    if (targetBranchCode) {
+      list = list.filter((p) => !p.branchCode || p.branchCode.toUpperCase() === targetBranchCode);
+    }
+    return list.reverse();
+  },
+
+  createReconciliationPeriod: async (
+    data: Partial<ReconciliationPeriod> & { supplierId: number }
+  ): Promise<ReconciliationPeriod> => {
+    await initializeDatabaseIfEmpty();
+    await simulateLatency(120, 160);
+
+    const supplier = await db.suppliers.get(data.supplierId);
+    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+
+    const newPeriod: ReconciliationPeriod = {
+      id: data.id || Date.now(),
+      supplierId: data.supplierId,
+      supplierCode: data.supplierCode || supplier?.supplierCode || 'NCC-UNKNOWN',
+      supplierName: data.supplierName || supplier?.supplierName || 'Nhà cung cấp',
+      branchCode: (data.branchCode || 'TN').toUpperCase(),
+      periodStartDate: data.periodStartDate || new Date().toISOString().slice(0, 10),
+      periodEndDate: data.periodEndDate || new Date().toISOString().slice(0, 10),
+      totalReportedWeight: data.totalReportedWeight || 0,
+      totalActualWeight: data.totalActualWeight || 0,
+      weightDiff: data.weightDiff || 0,
+      shortageAmount: data.shortageAmount || 0,
+      adjustmentAmount: data.adjustmentAmount || 0,
+      finalPayableDebt: data.finalPayableDebt || 0,
+      reason: data.reason || 'Kỳ đối soát công nợ định kỳ',
+      status: data.status || 'CHO_DUYET',
+      adjustedBy: data.adjustedBy || 'Kế toán trưởng',
+      createdAt: now,
+    };
+
+    await db.reconciliationPeriods.add(newPeriod);
+    return newPeriod;
   },
 };

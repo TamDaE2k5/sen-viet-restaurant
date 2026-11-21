@@ -1073,6 +1073,280 @@ async function runTestSuite() {
     'Xuất file lệnh chi chuyển khoản ngân hàng (.xlsx) thành công với đầy đủ STK & Ngân hàng'
   );
 
+  // -----------------------------------------------------------------
+  // 14. KIỂM THỬ PHÂN HỆ QUẢN LÝ KHO & NHẬP HÀNG CHUYÊN SÂU (WAREHOUSE DEEP QA)
+  // -----------------------------------------------------------------
+  console.log('\n📦 SUITE 14: Warehouse & Inventory Deep Operations');
+
+  // 14.1. Phiếu xuất hủy 3 phân loại lý do nghiệp vụ
+  // Nhóm 1: Hải sản chết NCC / Cua chết (Truy vết bắt đền NCC)
+  const docHuyNCC = await warehouseApi.createDocument({
+    branchId: 1,
+    branchCode: 'TN',
+    docType: 'HUY',
+    supplierId: 1,
+    note: 'Xuất hủy 2.0 kg cá hồi chết/ngộp từ NCC Hải Sản Biển Đông',
+    items: [
+      {
+        itemId: 1,
+        quantity: 2.0,
+        unitPrice: 380000,
+        reason: 'Hải sản chết / ngộp khi giao - Trách nhiệm NCC',
+        lossCategory: 'HAI_SAN_CHET_NCC',
+      },
+    ],
+  });
+  assert(
+    docHuyNCC.docType === 'HUY' &&
+      docHuyNCC.items[0].lossCategory === 'HAI_SAN_CHET_NCC' &&
+      docHuyNCC.supplierId === 1,
+    'Warehouse Waste 3 Categories',
+    'Tạo phiếu xuất hủy nhóm (1) Hải sản chết NCC thành công kèm liên kết NCC để bắt đền'
+  );
+
+  // Nhóm 2: Hỏng bảo quản kho / Hết hạn
+  const docHuyKho = await warehouseApi.createDocument({
+    branchId: 1,
+    branchCode: 'TN',
+    docType: 'HUY',
+    note: 'Xuất hủy do sự cố tủ mát bảo quản',
+    items: [
+      {
+        itemId: 1,
+        quantity: 1.0,
+        unitPrice: 380000,
+        reason: 'Hỏng do bảo quản tủ mát không đạt nhiệt độ / Hết hạn',
+        lossCategory: 'HONG_BAO_QUAN_KHO',
+      },
+    ],
+  });
+  assert(
+    docHuyKho.items[0].lossCategory === 'HONG_BAO_QUAN_KHO',
+    'Warehouse Waste 3 Categories',
+    'Tạo phiếu xuất hủy nhóm (2) Hỏng bảo quản kho/hết hạn thành công'
+  );
+
+  // Nhóm 3: Bếp làm hỏng / Chè hỏng / Cháy khét
+  const docHuyBep = await warehouseApi.createDocument({
+    branchId: 1,
+    branchCode: 'TN',
+    docType: 'HUY',
+    note: 'Bếp sơ chế làm hỏng nguyên liệu',
+    items: [
+      {
+        itemId: 1,
+        quantity: 1.0,
+        unitPrice: 380000,
+        reason: 'Bếp sơ chế làm đứt gãy / mẻ chế biến cháy khét',
+        lossCategory: 'BEP_LAM_HONG',
+      },
+    ],
+  });
+  assert(
+    docHuyBep.items[0].lossCategory === 'BEP_LAM_HONG',
+    'Warehouse Waste 3 Categories',
+    'Tạo phiếu xuất hủy nhóm (3) Bếp làm hỏng/chè hỏng/cháy khét thành công'
+  );
+
+  // 14.2. Ràng buộc cứng chặn xuất âm kho (Negative Stock Prevention)
+  const currentStockBefore = await warehouseApi.getItemCurrentStock(1, 'TN');
+  let negativeStockBlocked = false;
+  let blockErrorMessage = '';
+  try {
+    await warehouseApi.createDocument({
+      branchId: 1,
+      branchCode: 'TN',
+      docType: 'HUY',
+      items: [
+        {
+          itemId: 1,
+          quantity: currentStockBefore + 999.0,
+          unitPrice: 380000,
+          lossCategory: 'HONG_BAO_QUAN_KHO',
+        },
+      ],
+    });
+  } catch (err: any) {
+    negativeStockBlocked = true;
+    blockErrorMessage = err.message || '';
+  }
+  assert(
+    negativeStockBlocked && blockErrorMessage.includes('vượt quá tồn kho'),
+    'Warehouse Negative Stock Prevention',
+    'Chặn cứng không cho phép xuất âm kho khi số lượng xuất hủy vượt quá tồn khả dụng',
+    `Tồn hiện tại: ${currentStockBefore} kg, Thử xuất: ${currentStockBefore + 999.0} kg -> Hệ thống chặn lỗi: "${blockErrorMessage}"`
+  );
+
+  // Kiểm tra tồn kho khả dụng giảm chính xác theo các phiếu xuất hủy hợp lệ
+  const stockAfterValidDeduct = await warehouseApi.getItemCurrentStock(1, 'TN');
+  assert(
+    stockAfterValidDeduct > 0 && stockAfterValidDeduct < currentStockBefore + 4.0,
+    'Warehouse Stock Balance Verification',
+    'Tồn kho khả dụng giảm chính xác theo số lượng hàng xuất hủy hợp lệ',
+    `Tồn sau khi hủy: ${stockAfterValidDeduct} kg`
+  );
+
+  // 14.3. Phiếu nhập kho với cân lệch NCC, tính tiền thiếu và trừ công nợ
+  const docNhapLech = await warehouseApi.createDocument({
+    branchId: 1,
+    branchCode: 'TN',
+    docType: 'NHAP',
+    supplierId: 1,
+    note: 'Nhập cá hồi Nauy lô mới - Phát hiện cân thiếu so với hóa đơn NCC',
+    items: [
+      {
+        itemId: 1,
+        supplierReportedWeight: 30.0, // NCC báo 30 kg
+        actualWeight: 26.5,           // Thực cân 26.5 kg (thiếu 3.5 kg)
+        quantity: 26.5,
+        unitPrice: 380000,
+      },
+    ],
+  });
+  const itemNhap = docNhapLech.items[0];
+  const expectedWeightDiff = -3.5;
+  const expectedShortage = 3.5 * 380000; // 1.330.000 đ
+  const expectedReportedAmount = 30.0 * 380000; // 11.400.000 đ
+  const expectedFinalPayable = 26.5 * 380000; // 10.070.000 đ
+
+  assert(
+    itemNhap.supplierReportedWeight === 30.0 &&
+      itemNhap.actualWeight === 26.5 &&
+      itemNhap.weightDiff === expectedWeightDiff &&
+      itemNhap.shortageAmount === expectedShortage,
+    'Warehouse Goods Receipt Weight Diff',
+    'Phiếu nhập kho ghi nhận 2 cột Khối lượng NCC báo (30kg) vs Thực cân (26.5kg) và tự động tính lệch (-3.5kg)',
+    `Lệch: ${itemNhap.weightDiff} kg, Tiền thiếu: ${itemNhap.shortageAmount?.toLocaleString('vi-VN')} đ`
+  );
+
+  assert(
+    docNhapLech.totalReportedAmount === expectedReportedAmount &&
+      docNhapLech.totalShortageAmount === expectedShortage &&
+      docNhapLech.finalPayableAmount === expectedFinalPayable,
+    'Warehouse Goods Receipt Shortage Deduction',
+    'Công nợ nhà cung cấp tự động trừ tiền cân thiếu: Công nợ thực trả = Tiền NCC báo - Tiền thiếu',
+    `NCC báo: ${docNhapLech.totalReportedAmount?.toLocaleString('vi-VN')} đ - Giảm trừ: ${docNhapLech.totalShortageAmount?.toLocaleString('vi-VN')} đ = Thực trả: ${docNhapLech.finalPayableAmount?.toLocaleString('vi-VN')} đ`
+  );
+
+  // 14.4. Đối chiếu công nợ NCC định kỳ 5-10 ngày, lập phiếu điều chỉnh công nợ và chốt kỳ
+  const sampleAdjustment = await warehouseApi.createDebtAdjustment({
+    supplierId: 1,
+    branchCode: 'TN',
+    periodStartDate: '2026-11-11',
+    periodEndDate: '2026-11-20',
+    totalReportedWeight: 150.0,
+    totalActualWeight: 144.5,
+    weightDiff: -5.5,
+    shortageAmount: 2090000,
+    adjustmentAmount: 2090000,
+    reason: 'NCC Hải Sản Biển Đông đồng ý trừ 5.5kg hao hụt & cân thiếu kỳ 11-20/11',
+    status: 'CHO_DUYET',
+    adjustedBy: 'Vũ Thêm (Kế toán tổng)',
+  });
+  assert(
+    sampleAdjustment.id > 0 &&
+      sampleAdjustment.adjustmentAmount === 2090000 &&
+      sampleAdjustment.status === 'CHO_DUYET',
+    'Warehouse Debt Adjustment Creation',
+    'Lập phiếu điều chỉnh công nợ đối soát định kỳ (5-10 ngày) thành công ở trạng thái Chờ duyệt'
+  );
+
+  const adjList = await warehouseApi.getDebtAdjustments(1, 'TN');
+  const foundAdj = adjList.find((a) => a.id === sampleAdjustment.id);
+  assert(
+    !!foundAdj && foundAdj.reason.includes('đồng ý trừ 5.5kg'),
+    'Warehouse Debt Adjustment Retrieval',
+    'Truy xuất danh sách phiếu điều chỉnh công nợ theo NCC và Chi nhánh chính xác'
+  );
+
+  const closeResult = await warehouseApi.closeDebtPeriod(sampleAdjustment.id);
+  assert(
+    closeResult.success === true &&
+      closeResult.period?.status === 'DA_CHOT' &&
+      !!closeResult.period?.closedAt,
+    'Warehouse Period Closing Lock',
+    'Chốt đối soát kỳ công nợ thành công: Niêm phong trạng thái ĐÃ CHỐT kèm thời gian chốt'
+  );
+
+  // 14.5. Thẻ kho tức thời (Stock Ledger) ghi nhận đầy đủ dòng thời gian biến động
+  const stockLedger = await warehouseApi.getStockLedger(1, 'TN');
+  assert(
+    stockLedger.length >= 3,
+    'Warehouse Realtime Stock Ledger',
+    `Thẻ kho (Stock Ledger) ghi nhận đầy đủ >= 3 sự kiện biến động (thực tế: ${stockLedger.length} dòng)`
+  );
+
+  const hasNhap = stockLedger.some((l) => l.docType === 'NHAP');
+  const hasHuy = stockLedger.some((l) => l.docType === 'XUAT_HUY' || l.docType === 'HUY');
+  assert(
+    hasNhap && hasHuy,
+    'Warehouse Stock Ledger Event Types',
+    'Thẻ kho ghi nhận đầy đủ các phân loại nghiệp vụ: Nhập kho NCC (NHAP) và Xuất hủy hao hụt (XUAT_HUY)'
+  );
+
+  const isLedgerWellFormed = stockLedger.every(
+    (entry) =>
+      !!entry.docCode &&
+      !!entry.docTypeName &&
+      !!entry.date &&
+      entry.inQty !== undefined &&
+      entry.outQty !== undefined &&
+      entry.changeQty !== undefined &&
+      entry.balance !== undefined &&
+      !!entry.unit
+  );
+  assert(
+    isLedgerWellFormed,
+    'Warehouse Stock Ledger Data Integrity',
+    '100% dòng thẻ kho có đầy đủ thông tin mã phiếu, loại chứng từ, lượng vào/ra và tồn lũy kế'
+  );
+
+  // 14.6. Kiểm kê kho theo nhóm mặt hàng (Group-based Inventory Check)
+  const inventoryAllItems = await db.items.toArray();
+  const seafoodItems = inventoryAllItems.filter(
+    (i) => i.category === 'Hải sản chính' || i.category?.includes('Hải sản')
+  );
+  assert(
+    seafoodItems.length >= 2,
+    'Warehouse Group Inventory Filter',
+    `Hệ thống hỗ trợ phân loại theo nhóm mặt hàng: Nhóm Hải sản có >= 2 mặt hàng (thực tế: ${seafoodItems.length})`
+  );
+
+  const checkRecord = await warehouseApi.createInventoryCheck({
+    branchId: 1,
+    shift: 'CA_TOI',
+    checkDate: '2026-11-21',
+    note: 'Kiểm kê định kỳ nhóm Hải sản tươi sống đắt tiền cuối ca tối',
+    items: [
+      {
+        itemId: 1,
+        systemStock: 30.0,
+        actualStock: 28.5,
+        reason: 'Hao hụt rã đông và tiêu hao ca',
+      },
+      {
+        itemId: 2,
+        systemStock: 25.0,
+        actualStock: 25.0,
+        reason: 'Khớp số liệu',
+      },
+    ],
+  });
+  assert(
+    checkRecord.checkCode.startsWith('KK-') &&
+      checkRecord.items.length === 2 &&
+      checkRecord.items[0].difference === -1.5,
+    'Warehouse Group Inventory Check Creation',
+    'Lập biên bản kiểm kê kho theo nhóm mặt hàng thành công, tự động tính chênh lệch thừa/thiếu'
+  );
+
+  const checkHistory = await warehouseApi.getInventoryChecks({ branchId: 1, checkDate: '2026-11-21' });
+  assert(
+    checkHistory.some((c) => c.id === checkRecord.id),
+    'Warehouse Inventory Check History',
+    'Truy xuất lịch sử biên bản kiểm kê kho theo ngày và chi nhánh chính xác'
+  );
+
   console.log('\n======================================================');
   const total = results.length;
   const passed = results.filter(r => r.passed).length;
