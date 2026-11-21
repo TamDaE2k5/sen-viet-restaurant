@@ -27,6 +27,8 @@ import {
   History,
   XCircle,
   FileText,
+  Utensils,
+  ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
@@ -52,12 +54,14 @@ interface VirtualNumpadProps {
   unit?: string;
   quickAddValues?: number[];
   max?: number;
+  className?: string;
 }
 
 /**
  * Numpad ảo kích thước lớn cho màn hình cảm ứng Kiosk / Tablet bếp.
  * Phím số to rõ, hỗ trợ găng tay làm việc và các nút cộng dồn định lượng nhanh.
  * Hỗ trợ dấu chấm '.' thập phân và gõ trực tiếp bàn phím cứng / cảm ứng.
+ * Trên màn hình Desktop PC (lg:), cụm 3x4 Numpad ảo được ẩn qua class lg:hidden để tối ưu không gian.
  */
 const VirtualNumpad: React.FC<VirtualNumpadProps> = ({
   value,
@@ -65,6 +69,7 @@ const VirtualNumpad: React.FC<VirtualNumpadProps> = ({
   unit = 'kg',
   quickAddValues = [1, 5, 10],
   max,
+  className = '',
 }) => {
   const [strVal, setStrVal] = useState<string>(value > 0 ? value.toString() : '');
 
@@ -120,7 +125,7 @@ const VirtualNumpad: React.FC<VirtualNumpadProps> = ({
   };
 
   return (
-    <div className="bg-slate-50 p-3 sm:p-4 rounded-2xl border border-slate-200 space-y-2.5">
+    <div className={`bg-slate-50 p-3 sm:p-4 rounded-2xl border border-slate-200 space-y-2.5 ${className}`}>
       {/* Ô nhập trực tiếp hỗ trợ bàn phím cứng & chuyển đổi dấu phẩy ',' thành '.' */}
       <div className="flex items-center justify-between bg-white px-3.5 py-2 rounded-xl border border-slate-200">
         <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Số đang nhập:</span>
@@ -164,8 +169,8 @@ const VirtualNumpad: React.FC<VirtualNumpadProps> = ({
         ))}
       </div>
 
-      {/* Numpad 3x4 Grid lớn + Nút dấu chấm '.' và Xóa */}
-      <div className="grid grid-cols-3 gap-2">
+      {/* Numpad 3x4 Grid lớn + Nút dấu chấm '.' và Xóa (TASK-PC-07: Ẩn trên Desktop PC qua lg:hidden) */}
+      <div className="grid grid-cols-3 gap-2 lg:hidden">
         {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
           <button
             key={digit}
@@ -490,6 +495,64 @@ export const KitchenModule: React.FC = () => {
         });
     }
   }, [damageItemId]);
+
+  // TASK-PC-07: Hệ thống phím tắt PC công thái học (Escape đóng modal, F2 hoặc / focus tìm kiếm, Ctrl+S lưu nhanh)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // 1. Phím Escape: Đóng mọi modal đang mở ngay lập tức
+      if (e.key === 'Escape') {
+        if (activeModal) setActiveModal(null);
+        if (showReceiveModal) setShowReceiveModal(false);
+        if (showDailyWasteModal) setShowDailyWasteModal(false);
+        if (viewingDamageImage) setViewingDamageImage(null);
+        if (showQuickAddModal) setShowQuickAddModal(false);
+        if (previewScalePhoto) setPreviewScalePhoto(null);
+        return;
+      }
+
+      // 2. Phím F2 hoặc '/': Nhảy con trỏ (focus) vào ô tìm kiếm hàng hóa
+      const target = e.target as HTMLElement;
+      const isTyping =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable);
+
+      if (e.key === 'F2' || (e.key === '/' && !isTyping)) {
+        e.preventDefault();
+        const searchInput = document.querySelector<HTMLInputElement>(
+          'input[placeholder*="Tìm"], input[placeholder*="tìm"]'
+        );
+        if (searchInput) {
+          searchInput.focus();
+          searchInput.select();
+        }
+        return;
+      }
+
+      // 3. Phím Ctrl+S hoặc Cmd+S: Lưu nhanh form đang mở
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        const activeSubmitBtn = document.querySelector<HTMLButtonElement>(
+          '.fixed form button[type="submit"], .fixed button.btn-touch-submit'
+        );
+        if (activeSubmitBtn && !activeSubmitBtn.disabled) {
+          activeSubmitBtn.click();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    activeModal,
+    showReceiveModal,
+    showDailyWasteModal,
+    viewingDamageImage,
+    showQuickAddModal,
+    previewScalePhoto,
+  ]);
 
   const showNotice = (type: 'success' | 'error' | 'warning', text: string) => {
     setStatusMessage({ type: type === 'warning' ? 'error' : type, text });
@@ -992,578 +1055,651 @@ export const KitchenModule: React.FC = () => {
   }
 
   return (
-    <div className="space-y-4 max-w-xl mx-auto pb-8">
-      {/* Thông báo Alert Toast */}
-      {statusMessage && (
-        <div
-          className={`p-4 rounded-xl flex items-center justify-between shadow-md transition-all animate-in fade-in slide-in-from-top-2 ${
-            statusMessage.type === 'success'
-              ? 'bg-emerald-50 border border-emerald-300 text-emerald-800'
-              : 'bg-rose-50 border border-rose-300 text-rose-800'
-          }`}
-        >
-          <div className="flex items-center gap-2">
-            {statusMessage.type === 'success' ? (
-              <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
-            ) : (
-              <AlertTriangle className="h-5 w-5 text-rose-600 shrink-0" />
-            )}
-            <span className="text-xs sm:text-sm font-medium">{statusMessage.text}</span>
-          </div>
-          <button onClick={() => setStatusMessage(null)} className="text-slate-400 hover:text-slate-600">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-      )}
-
-      {/* Header Panel tóm tắt ca làm việc của Bếp */}
-      <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex items-center justify-between">
-        <div>
-          <span className="text-xs font-semibold text-brand-600 uppercase tracking-wider">
-            {user?.branchName || 'Sen Việt Buffet'}
-          </span>
-          <h2 className="text-lg font-bold text-slate-800">Bảng Vận Hành Bếp & Bar</h2>
-          <p className="text-xs text-slate-500">Người thực hiện: <span className="font-semibold text-slate-700">{user?.fullName}</span></p>
-        </div>
-        <div className="flex items-center gap-2">
-          {activeBatches.length > 0 && (
-            <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 flex items-center gap-1">
-              <Flame className="h-3.5 w-3.5" />
-              {activeBatches.length} mẻ đang làm
-            </span>
-          )}
-          <button
-            onClick={loadInitialData}
-            title="Tải lại dữ liệu"
-            className="p-2 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
-          >
-            <RotateCw className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
-
-      {/* CẢNH BÁO MẺ DỞ DANG NỔI BẬT (BANNER ĐỎ / AMBER) */}
-      {activeBatches.length > 0 && (
-        <div className="bg-gradient-to-r from-amber-600 via-rose-600 to-red-600 rounded-2xl p-4 sm:p-5 text-white shadow-xl shadow-rose-600/20 border-2 border-amber-300 animate-in fade-in flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-start sm:items-center gap-3">
-            <div className="p-3 rounded-xl bg-white/20 backdrop-blur-md flex-shrink-0 animate-pulse">
-              <Flame className="h-7 w-7 text-amber-200" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-black text-base sm:text-lg tracking-tight">CẢNH BÁO: CÓ {activeBatches.length} MẺ CHƯA CÂN THÀNH PHẨM!</span>
-                <span className="px-2 py-0.5 rounded-full bg-amber-400 text-amber-950 text-[10px] font-black uppercase tracking-wider animate-bounce">
-                  Cần cân ngay
-                </span>
-              </div>
-              <p className="text-xs sm:text-sm text-amber-100/90 mt-0.5">
-                Hoàn tất cân thành phẩm mẻ đang làm để tránh vượt định mức hao hụt và mở mẻ mới chuẩn xác.
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              setBatchTab('finish');
-              setSelectedFinishBatch(activeBatches[0]);
-              const savedDraft = localStorage.getItem(`senviet_offline_finish_batch_${activeBatches[0].id}`);
-              if (savedDraft) {
-                setFinishOutputWeight(parseFloat(savedDraft));
-              } else {
-                setFinishOutputWeight(activeBatches[0].inputWeight ? Math.round(activeBatches[0].inputWeight * 0.8 * 10) / 10 : 0);
-              }
-              setActiveModal('batch');
-            }}
-            className="btn-touch px-4 py-3 rounded-xl bg-white text-rose-700 hover:bg-amber-50 font-black text-xs sm:text-sm shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-all flex-shrink-0"
-          >
-            <Scale className="h-4 w-4 text-rose-600" />
-            <span>TIẾP TỤC MẺ TRƯỚC</span>
-          </button>
-        </div>
-      )}
-
-      {/* BỘ LỌC TRẠM CHẾ BIẾN (STATION FILTER) */}
-      <div className="bg-white p-2.5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-2 overflow-x-auto no-scrollbar">
-        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider px-2 whitespace-nowrap flex items-center gap-1">
-          <Layers className="h-3.5 w-3.5" />
-          <span>Trạm:</span>
-        </span>
-        {[
-          { key: 'ALL', label: 'Tất cả trạm', icon: '🍽️' },
-          { key: 'BEP_NONG', label: 'Bếp Nóng', icon: '🔥' },
-          { key: 'BEP_LANH', label: 'Bếp Lạnh', icon: '🥗' },
-          { key: 'BAR', label: 'Quầy Bar', icon: '🍹' },
-          { key: 'RA_LINE', label: 'Ra Line Buffet', icon: '🍱' },
-        ].map((st) => (
-          <button
-            key={st.key}
-            type="button"
-            onClick={() => setSelectedStation(st.key as KitchenStation)}
-            className={`btn-touch px-3 py-1.5 rounded-xl font-bold text-xs whitespace-nowrap flex items-center gap-1.5 transition-all ${
-              selectedStation === st.key
-                ? 'bg-slate-900 text-white shadow-sm'
-                : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+    <div className="w-full max-w-xl mx-auto lg:max-w-none lg:w-full lg:h-[calc(100vh-100px)] lg:overflow-hidden lg:grid lg:grid-cols-[300px_1fr_420px] lg:gap-4 space-y-4 lg:space-y-0 pb-8 lg:pb-0 font-sans">
+      {/* ══════════════════════════════════════════════════════════════
+          CỘT 1 (TRÁI - 300px): BÀN ĐIỀU KHIỂN & TÁC VỤ CHÍNH (TASK-PC-01)
+      ══════════════════════════════════════════════════════════════ */}
+      <div className="lg:h-full lg:overflow-y-auto space-y-3 pr-0 lg:pr-1 flex flex-col">
+        {/* Thông báo Alert Toast */}
+        {statusMessage && (
+          <div
+            className={`p-3.5 rounded-xl flex items-center justify-between shadow-md transition-all animate-in fade-in slide-in-from-top-2 ${
+              statusMessage.type === 'success'
+                ? 'bg-emerald-50 border border-emerald-300 text-emerald-800'
+                : 'bg-rose-50 border border-rose-300 text-rose-800'
             }`}
           >
-            <span>{st.icon}</span>
-            <span>{st.label}</span>
-          </button>
-        ))}
-      </div>
-
-      {/* KHO-13: NÚT CÂN HÀNG MỚI VỀ (BẾP NHẬN HÀNG NCC TRỰC TIẾP) */}
-      <button
-        type="button"
-        onClick={() => setShowReceiveModal(true)}
-        className="w-full btn-touch p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-amber-500 via-orange-600 to-rose-600 hover:from-amber-600 hover:to-rose-700 text-white flex items-center justify-between shadow-xl shadow-orange-500/20 active:scale-[0.98] transition-all"
-      >
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-white/20 backdrop-blur-sm">
-            <Scale className="h-6 w-6 text-white" />
-          </div>
-          <div className="text-left">
             <div className="flex items-center gap-2">
-              <span className="font-black text-sm sm:text-base tracking-tight uppercase">
-                ⚖️ Cân Hàng Mới Về
-              </span>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-white text-orange-800 uppercase shadow-sm">
-                Bếp Nhận Hàng
-              </span>
+              {statusMessage.type === 'success' ? (
+                <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
+              ) : (
+                <AlertTriangle className="h-5 w-5 text-rose-600 shrink-0" />
+              )}
+              <span className="text-xs font-medium">{statusMessage.text}</span>
             </div>
-            <p className="text-[11px] sm:text-xs text-orange-100 mt-0.5">
-              Chọn NCC + Gõ số cân thực tế + Chụp ảnh cân ➔ Chuyển thẳng Kế toán (Ẩn giá tiền)
-            </p>
-          </div>
-        </div>
-        <div className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20">
-          <ArrowRight className="h-5 w-5 text-white" />
-        </div>
-      </button>
-
-      {/* 4 NÚT BẤM CỰC LỚN (MOBILE-FIRST BUTTONS: MIN 56PX - 64PX TOUCH TARGETS) */}
-      <div className="grid grid-cols-2 gap-3.5 sm:gap-4">
-        {/* NÚT 1: LẤY HÀNG (Màu Xanh Dương) */}
-        <button
-          onClick={() => {
-            setTakeOutQty('');
-            setTakeOutNote('');
-            setActiveModal('takeOut');
-          }}
-          className="btn-touch min-h-[140px] sm:min-h-[155px] rounded-2xl bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-800 hover:from-blue-700 hover:to-indigo-900 text-white p-4 sm:p-5 flex flex-col justify-between shadow-xl shadow-blue-600/25 active:scale-[0.97] transition-all text-left"
-        >
-          <div className="flex items-center justify-between w-full">
-            <div className="p-2.5 rounded-xl bg-white/20 backdrop-blur-sm">
-              <Package className="h-7 w-7 text-white" />
-            </div>
-            <span className="text-[11px] font-black px-2.5 py-1 rounded bg-black/25 uppercase tracking-wider">Nút 1</span>
-          </div>
-          <div>
-            <div className="font-black text-lg sm:text-xl leading-tight tracking-tight">LẤY HÀNG</div>
-            <div className="text-xs sm:text-sm text-blue-100 mt-1">Xuất kho sơ bộ ra bếp</div>
-          </div>
-        </button>
-
-        {/* NÚT 2: CHẾ BIẾN MẺ (Màu Xanh Lá) */}
-        <button
-          onClick={() => {
-            setBatchTab(activeBatches.length > 0 ? 'finish' : 'start');
-            setBatchInputWeight(0);
-            setBatchNote('');
-            setActiveModal('batch');
-          }}
-          className="btn-touch min-h-[140px] sm:min-h-[155px] rounded-2xl bg-gradient-to-br from-emerald-600 via-emerald-700 to-teal-800 hover:from-emerald-700 hover:to-teal-900 text-white p-4 sm:p-5 flex flex-col justify-between shadow-xl shadow-emerald-600/25 active:scale-[0.97] transition-all text-left relative overflow-hidden"
-        >
-          {activeBatches.length > 0 && (
-            <span className="absolute top-3 right-3 flex h-3.5 w-3.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-amber-300"></span>
-            </span>
-          )}
-          <div className="flex items-center justify-between w-full">
-            <div className="p-2.5 rounded-xl bg-white/20 backdrop-blur-sm">
-              <Flame className="h-7 w-7 text-white" />
-            </div>
-            <span className="text-[11px] font-black px-2.5 py-1 rounded bg-black/25 uppercase tracking-wider">Nút 2</span>
-          </div>
-          <div>
-            <div className="font-black text-lg sm:text-xl leading-tight tracking-tight">CHẾ BIẾN MẺ</div>
-            <div className="text-xs sm:text-sm text-emerald-100 mt-1">
-              {activeBatches.length > 0 ? `${activeBatches.length} mẻ cần cân hụt` : 'Mở mẻ & cân thành phẩm'}
-            </div>
-          </div>
-        </button>
-
-        {/* NÚT 3: RA LINE (+1) (Màu Vàng / Hổ Phách) */}
-        <button
-          onClick={() => setActiveModal('lineItem')}
-          className="btn-touch min-h-[140px] sm:min-h-[155px] rounded-2xl bg-gradient-to-br from-amber-500 via-amber-600 to-orange-700 hover:from-amber-600 hover:to-orange-800 text-white p-4 sm:p-5 flex flex-col justify-between shadow-xl shadow-amber-500/25 active:scale-[0.97] transition-all text-left"
-        >
-          <div className="flex items-center justify-between w-full">
-            <div className="p-2.5 rounded-xl bg-white/20 backdrop-blur-sm">
-              <PlusCircle className="h-7 w-7 text-white" />
-            </div>
-            <span className="text-[11px] font-black px-2.5 py-1 rounded bg-black/25 uppercase tracking-wider">Nút 3</span>
-          </div>
-          <div>
-            <div className="font-black text-lg sm:text-xl leading-tight tracking-tight">RA LINE (+1)</div>
-            <div className="text-xs sm:text-sm text-amber-100 mt-1">Ghi nhận đĩa ra buffet</div>
-          </div>
-        </button>
-
-        {/* NÚT 4: BÁO HỎNG (Màu Đỏ Rose) */}
-        <button
-          onClick={() => setActiveModal('damage')}
-          className="btn-touch min-h-[140px] sm:min-h-[155px] rounded-2xl bg-gradient-to-br from-rose-600 via-rose-700 to-red-800 hover:from-rose-700 hover:to-red-900 text-white p-4 sm:p-5 flex flex-col justify-between shadow-xl shadow-rose-600/25 active:scale-[0.97] transition-all text-left"
-        >
-          <div className="flex items-center justify-between w-full">
-            <div className="p-2.5 rounded-xl bg-white/20 backdrop-blur-sm">
-              <AlertTriangle className="h-7 w-7 text-white" />
-            </div>
-            <span className="text-[11px] font-black px-2.5 py-1 rounded bg-black/25 uppercase tracking-wider">Nút 4</span>
-          </div>
-          <div>
-            <div className="font-black text-lg sm:text-xl leading-tight tracking-tight">BÁO HỎNG</div>
-            <div className="text-xs sm:text-sm text-rose-100 mt-1">Kèm ảnh chụp nén &lt;200KB</div>
-          </div>
-        </button>
-      </div>
-
-      {/* ============================================================== */}
-      {/* TASK-S1-03: BẢNG LỊCH SỬ LẤY HÀNG TRONG CA HÔM NAY             */}
-      {/* ============================================================== */}
-      <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm space-y-3">
-        <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-          <div className="flex items-center gap-2">
-            <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
-              <Package className="h-5 w-5" />
-            </div>
-            <div>
-              <h3 className="font-bold text-sm sm:text-base text-slate-900">Lịch Sử Lấy Hàng Trong Ca Hôm Nay</h3>
-              <p className="text-[11px] text-slate-500">
-                Xuất kho ra bếp sơ chế. Hỗ trợ hủy thao tác hoàn trả lại kho nếu lấy nhầm.
-              </p>
-            </div>
-          </div>
-          <span className="text-xs font-black px-2.5 py-1 rounded-full bg-blue-100 text-blue-800">
-            {takeOutLogs.length} lần xuất
-          </span>
-        </div>
-
-        {takeOutLogs.length === 0 ? (
-          <div className="text-center py-6 text-slate-400 bg-slate-50/60 rounded-xl border border-dashed border-slate-200">
-            <Package className="h-7 w-7 mx-auto mb-1 text-slate-300" />
-            <p className="text-xs font-semibold">Chưa có lượt lấy hàng nào trong ca hôm nay</p>
-            <p className="text-[11px] text-slate-400 mt-0.5">Nhấn "NÚT 1: LẤY HÀNG" ở trên để ghi nhận xuất kho sơ bộ</p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto -mx-1 sm:mx-0">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 text-slate-600 font-bold uppercase tracking-wider text-[11px] border-b border-slate-200">
-                <tr>
-                  <th className="py-2.5 px-3">Thời gian</th>
-                  <th className="py-2.5 px-3">Tên nguyên liệu</th>
-                  <th className="py-2.5 px-3 text-right">Số lượng</th>
-                  <th className="py-2.5 px-3">Ghi chú</th>
-                  <th className="py-2.5 px-3 text-center">Thao tác</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {takeOutLogs.map((log) => {
-                  const isCancelled = log.isCancelled || log.status === 'CANCELLED';
-                  const timeStr = log.createdAt ? log.createdAt.slice(11, 16) : '--:--';
-                  return (
-                    <tr
-                      key={log.id}
-                      className={`transition-colors ${isCancelled ? 'bg-slate-50/80 opacity-60' : 'hover:bg-blue-50/40'}`}
-                    >
-                      <td className="py-2.5 px-3 font-mono font-bold text-slate-600 whitespace-nowrap">
-                        <div className="flex items-center gap-1">
-                          <Clock className="h-3 w-3 text-slate-400" />
-                          <span>{timeStr}</span>
-                        </div>
-                      </td>
-                      <td className="py-2.5 px-3 font-bold text-slate-800">
-                        <div className="flex items-center gap-1.5">
-                          <span>{log.item?.itemName || 'Nguyên liệu'}</span>
-                          {log.item?.category && (
-                            <span className="text-[10px] font-normal text-slate-400 bg-slate-100 px-1 rounded">
-                              {log.item.category}
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                        <span className={`font-mono font-black text-sm ${isCancelled ? 'line-through text-slate-400' : 'text-blue-700'}`}>
-                          {log.quantity}
-                        </span>{' '}
-                        <span className="font-semibold text-slate-500">{log.unit || log.item?.unit}</span>
-                      </td>
-                      <td className="py-2.5 px-3 text-slate-600 max-w-[140px] truncate" title={log.note}>
-                        {log.note || '--'}
-                      </td>
-                      <td className="py-2.5 px-3 text-center whitespace-nowrap">
-                        {isCancelled ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-slate-200 text-slate-600">
-                            <Check className="h-3 w-3" /> Đã hoàn kho
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => handleCancelTakeOut(log)}
-                            disabled={cancellingTakeOutId === log.id}
-                            className="btn-touch px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold text-[11px] active:scale-95 transition-all inline-flex items-center gap-1 shadow-sm"
-                            title="Hủy lần xuất này nếu lấy nhầm và hoàn trả số lượng lại kho"
-                          >
-                            {cancellingTakeOutId === log.id ? (
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                            ) : (
-                              <Undo2 className="h-3 w-3 text-rose-600" />
-                            )}
-                            <span>Hủy (Hoàn kho)</span>
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            <button onClick={() => setStatusMessage(null)} className="text-slate-400 hover:text-slate-600">
+              <X className="h-4 w-4" />
+            </button>
           </div>
         )}
-      </div>
 
-      {/* ============================================================== */}
-      {/* TASK-S1-05: BẢNG THEO DÕI ĐƠN BÁO HỎNG ĐÃ GỬI CA NÀY          */}
-      {/* ============================================================== */}
-      <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm space-y-3">
-        <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+        {/* Header Panel tóm tắt ca làm việc của Bếp */}
+        <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex items-center justify-between">
+          <div>
+            <span className="text-xs font-semibold text-brand-600 uppercase tracking-wider">
+              {user?.branchName || 'Sen Việt Buffet'}
+            </span>
+            <h2 className="text-base sm:text-lg font-bold text-slate-800">Bảng Vận Hành Bếp & Bar</h2>
+            <p className="text-xs text-slate-500">
+              Người thực hiện: <span className="font-semibold text-slate-700">{user?.fullName}</span>
+            </p>
+          </div>
           <div className="flex items-center gap-2">
-            <div className="p-2 rounded-xl bg-rose-50 text-rose-600">
-              <AlertTriangle className="h-5 w-5" />
+            {activeBatches.length > 0 && (
+              <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 flex items-center gap-1">
+                <Flame className="h-3 w-3" />
+                {activeBatches.length} mẻ
+              </span>
+            )}
+            <button
+              onClick={loadInitialData}
+              title="Tải lại dữ liệu"
+              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+            >
+              <RotateCw className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* CẢNH BÁO MẺ DỞ DANG NỔI BẬT (BANNER ĐỎ / AMBER) */}
+        {activeBatches.length > 0 && (
+          <div className="bg-gradient-to-r from-amber-600 via-rose-600 to-red-600 rounded-2xl p-3.5 text-white shadow-lg shadow-rose-600/20 border-2 border-amber-300 animate-in fade-in flex flex-col gap-2.5">
+            <div className="flex items-start gap-2.5">
+              <div className="p-2 rounded-xl bg-white/20 backdrop-blur-md flex-shrink-0 animate-pulse">
+                <Flame className="h-5 w-5 text-amber-200" />
+              </div>
+              <div>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="font-black text-xs sm:text-sm tracking-tight">
+                    CẢNH BÁO: CÓ {activeBatches.length} MẺ CHƯA CÂN!
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded-full bg-amber-400 text-amber-950 text-[9px] font-black uppercase tracking-wider">
+                    Cần cân
+                  </span>
+                </div>
+                <p className="text-[11px] text-amber-100/90 mt-0.5">
+                  Cân thành phẩm để khóa định mức hao hụt mẻ.
+                </p>
+              </div>
             </div>
-            <div>
-              <h3 className="font-bold text-sm sm:text-base text-slate-900">Đơn Báo Hỏng Đã Gửi Ca Này</h3>
-              <p className="text-[11px] text-slate-500">
-                Minh bạch tình trạng phê duyệt từ Bếp trưởng & Quản lý với 3 badge màu chuẩn hóa.
+            <button
+              type="button"
+              onClick={() => {
+                setBatchTab('finish');
+                setSelectedFinishBatch(activeBatches[0]);
+                const savedDraft = localStorage.getItem(`senviet_offline_finish_batch_${activeBatches[0].id}`);
+                if (savedDraft) {
+                  setFinishOutputWeight(parseFloat(savedDraft));
+                } else {
+                  setFinishOutputWeight(
+                    activeBatches[0].inputWeight ? Math.round(activeBatches[0].inputWeight * 0.8 * 10) / 10 : 0
+                  );
+                }
+                setActiveModal('batch');
+              }}
+              className="btn-touch w-full py-2.5 rounded-xl bg-white text-rose-700 hover:bg-amber-50 font-black text-xs shadow flex items-center justify-center gap-1.5 active:scale-95 transition-all"
+            >
+              <Scale className="h-4 w-4 text-rose-600" />
+              <span>TIẾP TỤC MẺ TRƯỚC</span>
+            </button>
+          </div>
+        )}
+
+        {/* KHO-13: NÚT CÂN HÀNG MỚI VỀ (BẾP NHẬN HÀNG NCC TRỰC TIẾP) */}
+        <button
+          type="button"
+          onClick={() => setShowReceiveModal(true)}
+          className="w-full btn-touch p-3 rounded-2xl bg-gradient-to-r from-amber-500 via-orange-600 to-rose-600 hover:from-amber-600 hover:to-rose-700 text-white flex items-center justify-between shadow-lg shadow-orange-500/20 active:scale-[0.98] transition-all cursor-pointer"
+        >
+          <div className="flex items-center gap-2.5 min-w-0 text-left">
+            <div className="p-2 rounded-xl bg-white/20 backdrop-blur-sm shrink-0">
+              <Scale className="h-5 w-5 text-white" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="font-black text-xs sm:text-sm tracking-tight uppercase truncate">
+                  ⚖️ Cân Hàng Mới Về
+                </span>
+                <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-white text-orange-800 uppercase shadow-xs shrink-0">
+                  Bếp Nhận
+                </span>
+              </div>
+              <p className="text-[11px] text-orange-100 truncate mt-0.5">
+                Cân thực tế + Chụp ảnh ➔ Kế toán
               </p>
             </div>
           </div>
-          <span className="text-xs font-black px-2.5 py-1 rounded-full bg-rose-100 text-rose-800">
-            {damageReports.length} đơn
-          </span>
+          <div className="p-1 rounded-lg bg-white/10 shrink-0">
+            <ArrowRight className="h-4 w-4 text-white" />
+          </div>
+        </button>
+
+        {/* 4 NÚT BẤM TÁC VỤ CHÍNH CHO BẾP (TASK-PC-01: PC 2X2 GRID CHUẨN HÓA) */}
+        <div className="grid grid-cols-2 gap-2.5">
+          {/* NÚT 1: LẤY HÀNG (Màu Xanh Dương) */}
+          <button
+            onClick={() => {
+              setTakeOutQty('');
+              setTakeOutNote('');
+              setActiveModal('takeOut');
+            }}
+            className="btn-touch min-h-[90px] rounded-xl bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-800 hover:from-blue-700 hover:to-indigo-900 text-white p-3 flex flex-col justify-between shadow-md shadow-blue-600/20 active:scale-[0.97] transition-all text-left cursor-pointer"
+          >
+            <div className="flex items-center justify-between w-full">
+              <div className="p-1.5 rounded-lg bg-white/20 backdrop-blur-sm">
+                <Package className="h-5 w-5 text-white" />
+              </div>
+              <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-black/25 uppercase">Nút 1</span>
+            </div>
+            <div>
+              <div className="font-black text-sm sm:text-base leading-tight">LẤY HÀNG</div>
+              <div className="text-[11px] text-blue-100 mt-0.5">Xuất kho ra bếp</div>
+            </div>
+          </button>
+
+          {/* NÚT 2: CHẾ BIẾN MẺ (Màu Xanh Lá) */}
+          <button
+            onClick={() => {
+              setBatchTab(activeBatches.length > 0 ? 'finish' : 'start');
+              setBatchInputWeight(0);
+              setBatchNote('');
+              setActiveModal('batch');
+            }}
+            className="btn-touch min-h-[90px] rounded-xl bg-gradient-to-br from-emerald-600 via-emerald-700 to-teal-800 hover:from-emerald-700 hover:to-teal-900 text-white p-3 flex flex-col justify-between shadow-md shadow-emerald-600/20 active:scale-[0.97] transition-all text-left relative overflow-hidden cursor-pointer"
+          >
+            {activeBatches.length > 0 && (
+              <span className="absolute top-2 right-2 flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-300"></span>
+              </span>
+            )}
+            <div className="flex items-center justify-between w-full">
+              <div className="p-1.5 rounded-lg bg-white/20 backdrop-blur-sm">
+                <Flame className="h-5 w-5 text-white" />
+              </div>
+              <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-black/25 uppercase">Nút 2</span>
+            </div>
+            <div>
+              <div className="font-black text-sm sm:text-base leading-tight">CHẾ BIẾN MẺ</div>
+              <div className="text-[11px] text-emerald-100 mt-0.5">
+                {activeBatches.length > 0 ? `${activeBatches.length} mẻ chờ cân` : 'Mở & cân mẻ'}
+              </div>
+            </div>
+          </button>
+
+          {/* NÚT 3: RA LINE (+1) (Màu Vàng / Hổ Phách) */}
+          <button
+            onClick={() => setActiveModal('lineItem')}
+            className="btn-touch min-h-[90px] rounded-xl bg-gradient-to-br from-amber-500 via-amber-600 to-orange-700 hover:from-amber-600 hover:to-orange-800 text-white p-3 flex flex-col justify-between shadow-md shadow-amber-500/20 active:scale-[0.97] transition-all text-left cursor-pointer"
+          >
+            <div className="flex items-center justify-between w-full">
+              <div className="p-1.5 rounded-lg bg-white/20 backdrop-blur-sm">
+                <PlusCircle className="h-5 w-5 text-white" />
+              </div>
+              <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-black/25 uppercase">Nút 3</span>
+            </div>
+            <div>
+              <div className="font-black text-sm sm:text-base leading-tight">RA LINE (+1)</div>
+              <div className="text-[11px] text-amber-100 mt-0.5">Đĩa ra buffet</div>
+            </div>
+          </button>
+
+          {/* NÚT 4: BÁO HỎNG (Màu Đỏ Rose) */}
+          <button
+            onClick={() => setActiveModal('damage')}
+            className="btn-touch min-h-[90px] rounded-xl bg-gradient-to-br from-rose-600 via-rose-700 to-red-800 hover:from-rose-700 hover:to-red-900 text-white p-3 flex flex-col justify-between shadow-md shadow-rose-600/20 active:scale-[0.97] transition-all text-left cursor-pointer"
+          >
+            <div className="flex items-center justify-between w-full">
+              <div className="p-1.5 rounded-lg bg-white/20 backdrop-blur-sm">
+                <AlertTriangle className="h-5 w-5 text-white" />
+              </div>
+              <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-black/25 uppercase">Nút 4</span>
+            </div>
+            <div>
+              <div className="font-black text-sm sm:text-base leading-tight">BÁO HỎNG</div>
+              <div className="text-[11px] text-rose-100 mt-0.5">Ảnh nén &lt;200KB</div>
+            </div>
+          </button>
         </div>
 
-        {damageReports.length === 0 ? (
-          <div className="text-center py-6 text-slate-400 bg-slate-50/60 rounded-xl border border-dashed border-slate-200">
-            <AlertTriangle className="h-7 w-7 mx-auto mb-1 text-slate-300" />
-            <p className="text-xs font-semibold">Chưa có đơn báo hỏng nào trong ca</p>
-            <p className="text-[11px] text-slate-400 mt-0.5">Nhấn "NÚT 4: BÁO HỎNG" để lập đơn kèm ảnh chụp nén</p>
+        {/* XỬ LÝ MÓN TƯƠI CHỈ DÙNG TRONG NGÀY CUỐI CA */}
+        <div className="bg-gradient-to-r from-teal-700 via-emerald-700 to-teal-800 rounded-2xl p-3 text-white shadow-sm flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="p-2 rounded-xl bg-white/20 backdrop-blur-sm flex-shrink-0">
+              <Salad className="h-5 w-5 text-emerald-200" />
+            </div>
+            <div className="min-w-0">
+              <div className="font-extrabold text-xs leading-tight truncate">
+                MÓN DÙNG TRONG NGÀY
+              </div>
+              <p className="text-[10px] text-emerald-100/90 truncate">
+                Kiểm đếm tồn salad, kim chi cuối ca
+              </p>
+            </div>
           </div>
-        ) : (
-          <div className="space-y-2.5">
-            {damageReports.map((report) => {
-              const timeStr = report.createdAt ? report.createdAt.slice(11, 16) : '--:--';
-              const isPending = report.status === 'CHO_DUYET';
-              const isApproved = report.status === 'DA_DUYET' || report.status === 'TU_DONG_DUYET';
-              const isRejected = report.status === 'TU_CHOI';
+          <button
+            onClick={handleOpenDailyWasteModal}
+            className="btn-touch px-2.5 py-1.5 rounded-xl bg-white text-emerald-900 font-extrabold text-[11px] hover:bg-emerald-50 flex items-center gap-1 shadow-xs active:scale-95 transition-all flex-shrink-0 cursor-pointer"
+          >
+            <span>XỬ LÝ</span>
+          </button>
+        </div>
+      </div>
 
-              return (
+      {/* ══════════════════════════════════════════════════════════════
+          CỘT 2 (GIỮA - FLEX-1): QUẦY BUFFET RA LINE & MẺ ĐANG NẤU (TASK-PC-01)
+      ══════════════════════════════════════════════════════════════ */}
+      <div className="lg:h-full lg:overflow-y-auto space-y-3 px-0 lg:px-1 min-w-0 flex flex-col">
+        {/* DANH SÁCH MẺ ĐANG CHẾ BIẾN DỞ DANG (NẾU CÓ) */}
+        {activeBatches.length > 0 && (
+          <div className="bg-amber-50 rounded-2xl p-3.5 border border-amber-200 shadow-xs">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2 text-amber-900 font-bold text-xs sm:text-sm">
+                <Flame className="h-4 w-4 text-amber-600 animate-pulse" />
+                <span>Mẻ đang chế biến chưa cân thành phẩm ({activeBatches.length})</span>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {activeBatches.map((b) => (
                 <div
-                  key={report.id}
-                  className={`p-3.5 rounded-xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-                    isPending
-                      ? 'bg-amber-50/60 border-amber-200'
-                      : isApproved
-                      ? 'bg-emerald-50/40 border-emerald-200'
-                      : 'bg-rose-50/50 border-rose-200'
+                  key={b.id}
+                  className="bg-white p-2.5 rounded-xl border border-amber-200 shadow-xs flex items-center justify-between gap-2"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="font-bold text-slate-800 text-xs truncate">{b.itemName}</div>
+                    <div className="text-[11px] text-slate-500 mt-0.5">
+                      Vào: <strong className="text-brand-600 font-mono">{b.inputWeight} kg</strong> •{' '}
+                      <span className="font-mono text-[10px] bg-slate-100 px-1 rounded">{b.batchCode}</span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setSelectedFinishBatch(b);
+                      const savedDraft = localStorage.getItem(`senviet_offline_finish_batch_${b.id}`);
+                      if (savedDraft) {
+                        setFinishOutputWeight(parseFloat(savedDraft));
+                        showNotice('success', `Đã khôi phục số cân lưu tạm: ${savedDraft} kg`);
+                      } else {
+                        setFinishOutputWeight(b.inputWeight ? Math.round(b.inputWeight * 0.8 * 10) / 10 : 0);
+                      }
+                      setBatchTab('finish');
+                      setActiveModal('batch');
+                    }}
+                    className="btn-touch px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1 shadow-xs shrink-0 cursor-pointer"
+                  >
+                    <Scale className="h-3.5 w-3.5" />
+                    <span>Cân Xong</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* QUẦY BUFFET RA LINE TRỰC QUAN */}
+        <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex-1 flex flex-col space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 border-b border-slate-100 gap-2">
+            <div className="flex items-center gap-2">
+              <div className="p-2 rounded-xl bg-amber-50 text-amber-700">
+                <Utensils className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-sm sm:text-base text-slate-900 flex items-center gap-2">
+                  <span>Quầy Buffet Ra Line (+1 Đĩa)</span>
+                  <span className="text-[11px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full">
+                    Đối Soát CukCuk POS
+                  </span>
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Ghi nhận số đĩa ra line phục vụ khách, không trừ tồn kho vật lý.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowQuickAddModal(true)}
+              className="px-3 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 text-xs font-bold flex items-center gap-1 transition-colors self-start sm:self-auto cursor-pointer"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>+ Thêm món</span>
+            </button>
+          </div>
+
+          {/* Thanh tìm kiếm & lọc Station */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="h-4 w-4 absolute left-3 top-2.5 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Tìm món ra line (Phím / hoặc F2)..."
+                value={lineSearchTerm}
+                onChange={(e) => setLineSearchTerm(e.target.value)}
+                className="w-full pl-9 pr-3 py-1.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-amber-500"
+              />
+            </div>
+            {/* Station Filter Pills */}
+            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar shrink-0">
+              {[
+                { key: 'ALL', label: 'Tất cả' },
+                { key: 'BEP_NONG', label: 'Bếp Nóng' },
+                { key: 'BEP_LANH', label: 'Bếp Lạnh' },
+                { key: 'BAR', label: 'Bar' },
+                { key: 'RA_LINE', label: 'Line Buffet' },
+              ].map((st) => (
+                <button
+                  key={st.key}
+                  type="button"
+                  onClick={() => setSelectedStation(st.key as KitchenStation)}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                    selectedStation === st.key
+                      ? 'bg-amber-600 text-white shadow-sm'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
-                  <div className="space-y-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-black text-sm text-slate-900">{report.item?.itemName}</span>
-                      <span className="font-mono text-xs font-bold text-slate-600 bg-white px-2 py-0.5 rounded border border-slate-200">
-                        {report.quantity} {report.item?.unit}
-                      </span>
-                      <span className="text-xs font-extrabold text-rose-700">
-                        {report.estimatedValue ? Number(report.estimatedValue).toLocaleString('vi-VN') : '0'} đ
-                      </span>
-                      <span className="text-[11px] font-mono text-slate-500 flex items-center gap-1">
-                        <Clock className="h-3 w-3" /> {timeStr}
-                      </span>
-                    </div>
+                  {st.label}
+                </button>
+              ))}
+            </div>
+          </div>
 
-                    <div className="text-xs text-slate-600 flex items-center gap-2 flex-wrap">
-                      <span className="font-medium">
-                        Lý do:{' '}
-                        <strong className="text-slate-800">
-                          {report.reason === 'HONG_SO_CHE_NAU'
-                            ? 'Hủy do sơ chế / nấu hỏng'
-                            : report.reason === 'HONG_DO_NHA_CUNG_CAP'
-                            ? 'Hủy do nguyên liệu chết / ươn từ NCC'
-                            : report.reason === 'HUY_THUA_CUOI_CA'
-                            ? 'Hủy do thừa cuối ca'
-                            : report.reason}
-                        </strong>
-                      </span>
-                      {report.batchNumber && (
-                        <span className="text-[10px] font-mono font-bold bg-white px-1.5 py-0.5 rounded border border-slate-200 text-slate-700">
-                          Lô: {report.batchNumber}
-                        </span>
-                      )}
-                      {report.supplierCode && (
-                        <span className="text-[10px] font-semibold text-slate-500">
-                          NCC: {report.supplierCode}
-                        </span>
-                      )}
-                    </div>
+          {/* Grid các món ăn ra line (2 - 3 cột tuỳ chiều ngang) */}
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5 overflow-y-auto max-h-[calc(100vh-320px)] pr-1">
+            {filterItemsByStation(items, selectedStation)
+              .filter(
+                (it) =>
+                  it.itemName.toLowerCase().includes(lineSearchTerm.toLowerCase()) ||
+                  it.itemCode.toLowerCase().includes(lineSearchTerm.toLowerCase())
+              )
+              .map((item) => {
+                const isLoadingBtn = !!loadingLineButtons[item.id];
+                const isCooldown = !!cooldownButtons[item.id];
+                const isLocked = isLoadingBtn || isCooldown;
+                const countToday = lineCounters[item.id] || 0;
+                const isAnimating = animatingLineItemId === item.id;
+                const isShaking = shakingLineItemId === item.id;
 
-                    {/* Thông tin giải trình / lý do từ chối nếu có */}
-                    {isRejected && report.rejectedReason && (
-                      <div className="text-[11px] font-medium text-rose-700 bg-white/80 p-1.5 rounded-lg border border-rose-200 flex items-start gap-1">
-                        <XCircle className="h-3.5 w-3.5 text-rose-600 shrink-0 mt-0.5" />
-                        <span>Lý do từ chối: {report.rejectedReason}</span>
+                return (
+                  <div
+                    key={item.id}
+                    className={`relative p-3 rounded-xl bg-white border border-slate-200 shadow-xs flex items-center justify-between gap-2 overflow-hidden transition-all ${
+                      isShaking ? 'ring-2 ring-amber-400 animate-haptic-shake' : 'hover:border-amber-300'
+                    }`}
+                  >
+                    {isAnimating && (
+                      <div className="absolute top-1 right-2 px-2.5 py-0.5 rounded-full bg-emerald-600 text-white font-black text-[10px] shadow-lg animate-float-up flex items-center gap-1 z-20 pointer-events-none">
+                        <Check className="h-3 w-3" />
+                        <span>+1 {item.unit}!</span>
                       </div>
                     )}
-
-                    {isApproved && (
-                      <div className="text-[11px] font-medium text-emerald-800 flex items-center gap-1">
-                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                        <span>
-                          Duyệt bởi: <strong>{report.approvedBy || (report.status === 'TU_DONG_DUYET' ? 'Hệ thống tự động' : 'Bếp trưởng')}</strong>
-                          {report.approvedAt && ` (${report.approvedAt.slice(11, 16)})`}
-                        </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-bold text-xs sm:text-sm text-slate-900 truncate" title={item.itemName}>
+                        {item.itemName}
                       </div>
-                    )}
+                      <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1">
+                        <span>Đã ra:</span>
+                        <span
+                          className={`font-mono font-black ${
+                            isAnimating ? 'text-emerald-600 scale-110' : 'text-amber-700'
+                          }`}
+                        >
+                          {countToday}
+                        </span>
+                        <span>{item.unit}</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleLineItemInc(item)}
+                      disabled={isLocked}
+                      className={`px-3 py-2 rounded-xl text-white font-black text-xs flex items-center gap-1 shadow-sm active:scale-95 transition-all shrink-0 ${
+                        isLocked
+                          ? 'bg-amber-300 cursor-not-allowed opacity-80'
+                          : 'bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 shadow-amber-500/20 cursor-pointer'
+                      }`}
+                    >
+                      {isLoadingBtn ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Plus className="h-3.5 w-3.5" />
+                      )}
+                      <span>+1</span>
+                    </button>
                   </div>
+                );
+              })}
+          </div>
+        </div>
+      </div>
 
-                  {/* Badge Trạng Thái Màu Sắc Theo Tiêu Chuẩn Nghiệm Thu */}
-                  <div className="flex sm:flex-col items-center sm:items-end justify-between gap-2 shrink-0">
-                    {isPending && (
-                      <span className="px-3 py-1.5 rounded-full text-xs font-black bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1.5 shadow-sm">
-                        <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse"></span>
-                        <span>🟡 Chờ Bếp trưởng duyệt</span>
-                      </span>
-                    )}
+      {/* ══════════════════════════════════════════════════════════════
+          CỘT 3 (PHẢI - 420px): LỊCH SỬ LẤY HÀNG & ĐƠN BÁO HỎNG (TASK-PC-01)
+      ══════════════════════════════════════════════════════════════ */}
+      <div className="lg:h-full lg:overflow-y-auto space-y-3 pl-0 lg:pl-1 flex flex-col">
+        {/* ============================================================== */}
+        {/* TASK-S1-03: BẢNG LỊCH SỬ LẤY HÀNG TRONG CA HÔM NAY             */}
+        {/* ============================================================== */}
+        <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm space-y-3">
+          <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+            <div className="flex items-center gap-2">
+              <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
+                <Package className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-sm text-slate-900">Lịch Sử Lấy Hàng Trong Ca</h3>
+                <p className="text-[11px] text-slate-500">
+                  Xuất kho ra bếp sơ chế. Hỗ trợ hủy thao tác hoàn kho.
+                </p>
+              </div>
+            </div>
+            <span className="text-xs font-black px-2.5 py-1 rounded-full bg-blue-100 text-blue-800">
+              {takeOutLogs.length} lần
+            </span>
+          </div>
 
-                    {isApproved && (
-                      <span className="px-3 py-1.5 rounded-full text-xs font-black bg-emerald-100 text-emerald-900 border border-emerald-300 flex items-center gap-1.5 shadow-sm">
-                        <span>🟢 Đã duyệt</span>
-                      </span>
-                    )}
-
-                    {isRejected && (
-                      <span className="px-3 py-1.5 rounded-full text-xs font-black bg-rose-100 text-rose-900 border border-rose-300 flex items-center gap-1.5 shadow-sm">
-                        <span>🔴 Từ chối</span>
-                      </span>
-                    )}
-
-                    {report.imageUrls && (
-                      <button
-                        type="button"
-                        onClick={() => setViewingDamageImage(report.imageUrls || null)}
-                        className="text-[11px] font-bold text-slate-600 hover:text-slate-900 underline flex items-center gap-1"
+          {takeOutLogs.length === 0 ? (
+            <div className="text-center py-6 text-slate-400 bg-slate-50/60 rounded-xl border border-dashed border-slate-200">
+              <Package className="h-7 w-7 mx-auto mb-1 text-slate-300" />
+              <p className="text-xs font-semibold">Chưa có lượt lấy hàng nào</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto max-h-[300px] overflow-y-auto pr-1">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 text-slate-600 font-bold uppercase tracking-wider text-[11px] border-b border-slate-200 sticky top-0">
+                  <tr>
+                    <th className="py-2 px-2.5">Giờ</th>
+                    <th className="py-2 px-2.5">Tên nguyên liệu</th>
+                    <th className="py-2 px-2.5 text-right">SL</th>
+                    <th className="py-2 px-2.5 text-center">Thao tác</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {takeOutLogs.map((log) => {
+                    const isCancelled = log.isCancelled || log.status === 'CANCELLED';
+                    const timeStr = log.createdAt ? log.createdAt.slice(11, 16) : '--:--';
+                    return (
+                      <tr
+                        key={log.id}
+                        className={`transition-colors ${
+                          isCancelled ? 'bg-slate-50/80 opacity-60' : 'hover:bg-blue-50/40'
+                        }`}
                       >
-                        <ImageIcon className="h-3.5 w-3.5" />
-                        <span>Xem ảnh</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Modal Phóng To Xem Ảnh Báo Hỏng */}
-        {viewingDamageImage && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[80] flex items-center justify-center p-4 animate-in fade-in">
-            <div className="bg-white rounded-2xl p-4 max-w-lg w-full space-y-3">
-              <div className="flex items-center justify-between pb-2 border-b">
-                <span className="font-bold text-sm text-slate-800">Ảnh minh chứng báo hỏng</span>
-                <button onClick={() => setViewingDamageImage(null)} className="p-1 rounded text-slate-400 hover:text-slate-600">
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-              <img src={viewingDamageImage} alt="Ảnh báo hỏng" className="w-full max-h-[70vh] object-contain rounded-xl" />
+                        <td className="py-2 px-2.5 font-mono font-bold text-slate-600 whitespace-nowrap">
+                          {timeStr}
+                        </td>
+                        <td className="py-2 px-2.5 font-bold text-slate-800">
+                          <div className="truncate max-w-[130px]" title={log.item?.itemName}>
+                            {log.item?.itemName || 'Nguyên liệu'}
+                          </div>
+                        </td>
+                        <td className="py-2 px-2.5 text-right whitespace-nowrap">
+                          <span
+                            className={`font-mono font-black ${
+                              isCancelled ? 'line-through text-slate-400' : 'text-blue-700'
+                            }`}
+                          >
+                            {log.quantity}
+                          </span>{' '}
+                          <span className="text-[10px] text-slate-500">{log.unit || log.item?.unit}</span>
+                        </td>
+                        <td className="py-2 px-2.5 text-center whitespace-nowrap">
+                          {isCancelled ? (
+                            <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
+                              Đã hoàn
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleCancelTakeOut(log)}
+                              disabled={cancellingTakeOutId === log.id}
+                              className="px-2 py-0.5 rounded bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold text-[10px] transition-all inline-flex items-center gap-0.5"
+                              title="Hủy lần xuất này nếu lấy nhầm"
+                            >
+                              {cancellingTakeOutId === log.id ? (
+                                <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                              ) : (
+                                <Undo2 className="h-2.5 w-2.5 text-rose-600" />
+                              )}
+                              <span>Hủy</span>
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-          </div>
-        )}
-      </div>
-
-      {/* ============================================================== */}
-      {/* GIAI ĐOẠN 8: XỬ LÝ MÓN TƯƠI CHỈ DÙNG TRONG NGÀY CUỐI CA         */}
-      {/* ============================================================== */}
-      <div className="bg-gradient-to-r from-teal-700 via-emerald-700 to-teal-800 rounded-2xl p-4 text-white shadow-md flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="p-2.5 rounded-xl bg-white/20 backdrop-blur-sm flex-shrink-0">
-            <Salad className="h-6 w-6 text-emerald-200" />
-          </div>
-          <div className="min-w-0">
-            <div className="font-extrabold text-sm sm:text-base leading-tight flex items-center gap-2">
-              <span className="truncate">MÓN CHỈ DÙNG TRONG NGÀY</span>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/40 text-emerald-100 uppercase flex-shrink-0">
-                Phase 8
-              </span>
-            </div>
-            <p className="text-xs text-emerald-100/90 mt-0.5 truncate sm:whitespace-normal">
-              Cuối ca: Kiểm đếm tồn salad, kim chi, nộm & xác nhận ghi bỏ (không phạt bếp)
-            </p>
-          </div>
+          )}
         </div>
 
-        <button
-          onClick={handleOpenDailyWasteModal}
-          className="btn-touch px-3.5 py-2.5 rounded-xl bg-white text-emerald-900 font-extrabold text-xs hover:bg-emerald-50 flex items-center gap-1.5 shadow-sm active:scale-95 transition-all flex-shrink-0"
-        >
-          <Salad className="h-4 w-4 text-emerald-700" />
-          <span>XỬ LÝ CUỐI CA</span>
-        </button>
-      </div>
-
-      {/* DANH SÁCH MẺ ĐANG CHẾ BIẾN DỞ DANG (NẾU CÓ) */}
-      {activeBatches.length > 0 && (
-        <div className="bg-amber-50 rounded-2xl p-4 border border-amber-200">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2 text-amber-900 font-bold text-sm">
-              <Flame className="h-4 w-4 text-amber-600" />
-              <span>Các mẻ đang chế biến chưa cân thành phẩm ({activeBatches.length})</span>
-            </div>
-          </div>
-          <div className="space-y-2">
-            {activeBatches.map((b) => (
-              <div
-                key={b.id}
-                className="bg-white p-3 rounded-xl border border-amber-200 shadow-sm flex items-center justify-between"
-              >
-                <div>
-                  <div className="font-bold text-slate-800 text-sm">{b.itemName}</div>
-                  <div className="text-xs text-slate-500 mt-0.5">
-                    Mã: <span className="font-mono font-semibold">{b.batchCode}</span> | Vào: <span className="font-bold text-brand-600">{b.inputWeight} kg</span>
-                  </div>
-                </div>
-                <button
-                  onClick={() => {
-                    setSelectedFinishBatch(b);
-                    const savedDraft = localStorage.getItem(`senviet_offline_finish_batch_${b.id}`);
-                    if (savedDraft) {
-                      setFinishOutputWeight(parseFloat(savedDraft));
-                      showNotice('success', `Đã khôi phục số cân lưu tạm: ${savedDraft} kg`);
-                    } else {
-                      setFinishOutputWeight(b.inputWeight ? Math.round(b.inputWeight * 0.8 * 10) / 10 : 0);
-                    }
-                    setBatchTab('finish');
-                    setActiveModal('batch');
-                  }}
-                  className="btn-touch px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1 shadow-sm"
-                >
-                  <Scale className="h-4 w-4" />
-                  <span>Cân Xong</span>
-                </button>
+        {/* ============================================================== */}
+        {/* TASK-S1-05: BẢNG THEO DÕI ĐƠN BÁO HỎNG ĐÃ GỬI CA NÀY          */}
+        {/* ============================================================== */}
+        <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm space-y-3">
+          <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+            <div className="flex items-center gap-2">
+              <div className="p-2 rounded-xl bg-rose-50 text-rose-600">
+                <AlertTriangle className="h-5 w-5" />
               </div>
-            ))}
+              <div>
+                <h3 className="font-bold text-sm text-slate-900">Đơn Báo Hỏng Trong Ca</h3>
+                <p className="text-[11px] text-slate-500">
+                  Tình trạng duyệt từ Bếp trưởng & Quản lý.
+                </p>
+              </div>
+            </div>
+            <span className="text-xs font-black px-2.5 py-1 rounded-full bg-rose-100 text-rose-800">
+              {damageReports.length} đơn
+            </span>
           </div>
+
+          {damageReports.length === 0 ? (
+            <div className="text-center py-6 text-slate-400 bg-slate-50/60 rounded-xl border border-dashed border-slate-200">
+              <AlertTriangle className="h-7 w-7 mx-auto mb-1 text-slate-300" />
+              <p className="text-xs font-semibold">Chưa có đơn báo hỏng nào trong ca</p>
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-[340px] overflow-y-auto pr-1">
+              {damageReports.map((report) => {
+                const timeStr = report.createdAt ? report.createdAt.slice(11, 16) : '--:--';
+                const isPending = report.status === 'CHO_DUYET';
+                const isApproved = report.status === 'DA_DUYET' || report.status === 'TU_DONG_DUYET';
+                const isRejected = report.status === 'TU_CHOI';
+
+                return (
+                  <div
+                    key={report.id}
+                    className={`p-3 rounded-xl border transition-all space-y-2 ${
+                      isPending
+                        ? 'bg-amber-50/60 border-amber-200'
+                        : isApproved
+                        ? 'bg-emerald-50/40 border-emerald-200'
+                        : 'bg-rose-50/50 border-rose-200'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-1.5">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-xs text-slate-900 truncate">
+                            {report.item?.itemName}
+                          </span>
+                          <span className="font-mono text-[10px] font-bold text-slate-700 bg-white px-1.5 py-0.2 rounded border border-slate-200">
+                            {report.quantity} {report.item?.unit}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-rose-700 font-extrabold mt-0.5">
+                          {report.estimatedValue ? Number(report.estimatedValue).toLocaleString('vi-VN') : '0'} đ
+                        </div>
+                      </div>
+
+                      {/* Badge trạng thái */}
+                      <div className="shrink-0 text-right">
+                        {isPending && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300 inline-block">
+                            🟡 Chờ duyệt
+                          </span>
+                        )}
+                        {isApproved && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-900 border border-emerald-300 inline-block">
+                            🟢 Đã duyệt
+                          </span>
+                        )}
+                        {isRejected && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-900 border border-rose-300 inline-block">
+                            🔴 Từ chối
+                          </span>
+                        )}
+                        <div className="text-[10px] text-slate-400 mt-0.5 font-mono">{timeStr}</div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-200/60">
+                      <span className="truncate max-w-[180px]">
+                        Lý do: {report.reason === 'HONG_SO_CHE_NAU' ? 'Sơ chế/nấu' : report.reason === 'HONG_DO_NHA_CUNG_CAP' ? 'Nguyên liệu từ NCC' : 'Thừa cuối ca'}
+                      </span>
+                      {report.imageUrls && (
+                        <button
+                          type="button"
+                          onClick={() => setViewingDamageImage(report.imageUrls || null)}
+                          className="font-bold text-brand-600 hover:text-brand-800 underline flex items-center gap-1 cursor-pointer"
+                        >
+                          <ImageIcon className="h-3 w-3" />
+                          <span>Xem ảnh</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Modal Phóng To Xem Ảnh Báo Hỏng */}
+          {viewingDamageImage && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[80] flex items-center justify-center p-4 animate-in fade-in">
+              <div className="bg-white rounded-2xl p-4 max-w-lg w-full space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b">
+                  <span className="font-bold text-sm text-slate-800">Ảnh minh chứng báo hỏng</span>
+                  <button onClick={() => setViewingDamageImage(null)} className="p-1 rounded text-slate-400 hover:text-slate-600">
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+                <img src={viewingDamageImage} alt="Ảnh báo hỏng" className="w-full max-h-[70vh] object-contain rounded-xl" />
+              </div>
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
       {/* ============================================================== */}
       {/* MODAL 1: LẤY HÀNG RA BẾP                                      */}
@@ -1674,17 +1810,21 @@ export const KitchenModule: React.FC = () => {
       )}
 
       {/* ============================================================== */}
-      {/* MODAL 2: CHẾ BIẾN MẺ & CÂN THÀNH PHẨM                          */}
+      {/* MODAL 2: CHẾ BIẾN MẺ & CÂN THÀNH PHẨM (SPLIT-VIEW PC - TASK-PC-06) */}
       {/* ============================================================== */}
       {activeModal === 'batch' && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in">
-          <div className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+          <div className="bg-white w-full max-w-lg lg:max-w-5xl xl:max-w-6xl rounded-t-3xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2 text-emerald-600 font-bold text-base">
                 <Flame className="h-6 w-6" />
-                <span>NÚT 2: CHẾ BIẾN MẺ & CÂN HAO HỤT</span>
+                <span>NÚT 2: CHẾ BIẾN MẺ & CÂN HAO HỤT THÀNH PHẨM</span>
               </div>
-              <button onClick={() => setActiveModal(null)} className="p-2 text-slate-400 hover:text-slate-600">
+              <button
+                onClick={() => setActiveModal(null)}
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                title="Đóng (Phím Esc)"
+              >
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -1710,72 +1850,114 @@ export const KitchenModule: React.FC = () => {
               </button>
             </div>
 
-            {/* TAB 1: MỞ MẺ MỚI */}
+            {/* TAB 1: MỞ MẺ MỚI (SPLIT-VIEW 2 CỘT TRÊN PC) */}
             {batchTab === 'start' && (
-              <div className="space-y-4 mt-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-1">MÓN CHẾ BIẾN</label>
-                  <select
-                    value={batchItemId}
-                    onChange={(e) => setBatchItemId(Number(e.target.value))}
-                    className="w-full h-12 px-3 rounded-xl border border-slate-300 font-medium text-slate-800 focus:ring-2 focus:ring-emerald-500"
-                  >
-                    {items.map((i) => (
-                      <option key={i.id} value={i.id}>
-                        {i.itemName}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs font-bold text-slate-700">KHỐI LƯỢNG NGUYÊN LIỆU ĐẦU VÀO (KG)</label>
-                    <span className="text-xs font-semibold text-emerald-600">
-                      Đang nhập: <strong className="text-base text-slate-900 font-mono">{batchInputWeight}</strong> kg
-                    </span>
+              <div className="lg:grid lg:grid-cols-12 lg:gap-6 mt-4">
+                {/* Cột trái (60%): Form nhập liệu */}
+                <div className="lg:col-span-7 space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-1">MÓN CHẾ BIẾN</label>
+                    <select
+                      value={batchItemId}
+                      onChange={(e) => setBatchItemId(Number(e.target.value))}
+                      className="w-full h-12 px-3 rounded-xl border border-slate-300 font-medium text-slate-800 focus:ring-2 focus:ring-emerald-500"
+                    >
+                      {items.map((i) => (
+                        <option key={i.id} value={i.id}>
+                          {i.itemName}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                  <VirtualNumpad
-                    value={batchInputWeight}
-                    onChange={(val) => setBatchInputWeight(val)}
-                    unit="kg"
-                    quickAddValues={[1, 5, 10]}
-                  />
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-bold text-slate-700">KHỐI LƯỢNG NGUYÊN LIỆU ĐẦU VÀO (KG)</label>
+                      <span className="text-xs font-semibold text-emerald-600">
+                        Đang nhập: <strong className="text-base text-slate-900 font-mono">{batchInputWeight}</strong> kg
+                      </span>
+                    </div>
+                    <VirtualNumpad
+                      value={batchInputWeight}
+                      onChange={(val) => setBatchInputWeight(val)}
+                      unit="kg"
+                      quickAddValues={[1, 5, 10]}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-1">GHI CHÚ MẺ</label>
+                    <input
+                      type="text"
+                      placeholder="Ví dụ: Cua hấp bia sả ca trưa..."
+                      value={batchNote}
+                      onChange={(e) => setBatchNote(e.target.value)}
+                      className="w-full h-11 px-3 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500"
+                    >
+                    </input>
+                  </div>
+
+                  <div className="pt-2">
+                    <button
+                      onClick={() => handleStartBatchSubmit(false)}
+                      disabled={isStartingBatch}
+                      className="btn-touch w-full h-14 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white font-extrabold text-base flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition-all cursor-pointer"
+                    >
+                      {isStartingBatch ? (
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                      ) : (
+                        <>
+                          <Flame className="h-5 w-5" />
+                          <span>BẮT ĐẦU CHẾ BIẾN MẺ</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-1">GHI CHÚ MẺ</label>
-                  <input
-                    type="text"
-                    placeholder="Ví dụ: Cua hấp bia sả..."
-                    value={batchNote}
-                    onChange={(e) => setBatchNote(e.target.value)}
-                    className="w-full h-11 px-3 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500"
-                  />
-                </div>
+                {/* Cột phải (40%): Định mức & Quy định an toàn bếp */}
+                <div className="hidden lg:flex lg:col-span-5 flex-col space-y-3 bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                  <div className="flex items-center gap-2 text-emerald-800 font-bold text-sm border-b border-slate-200 pb-2">
+                    <ShieldCheck className="h-4 w-4 text-emerald-600" />
+                    <span>Định Mức Hao Hụt Tiêu Chuẩn Chuỗi</span>
+                  </div>
+                  <div className="space-y-2 text-xs">
+                    <div className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
+                      <span className="font-semibold text-slate-800">🦀 Cua thịt Cà Mau / Cua gạch:</span>
+                      <span className="font-mono font-bold text-emerald-700">&le; 3.8%</span>
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
+                      <span className="font-semibold text-slate-800">🦀 Ghẹ xanh Nghệ An / Ghẹ tươi:</span>
+                      <span className="font-mono font-bold text-emerald-700">&le; 4.2%</span>
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
+                      <span className="font-semibold text-slate-800">🦐 Bề bề, Tôm thẻ, Mực trứng:</span>
+                      <span className="font-mono font-bold text-emerald-700">&le; 5.0%</span>
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
+                      <span className="font-semibold text-slate-800">🥩 Ba chỉ bò Mỹ, Dẻ sườn nướng:</span>
+                      <span className="font-mono font-bold text-emerald-700">&le; 6.5%</span>
+                    </div>
+                  </div>
 
-                <div className="pt-2">
-                  <button
-                    onClick={() => handleStartBatchSubmit(false)}
-                    disabled={isStartingBatch}
-                    className="btn-touch w-full h-14 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white font-extrabold text-base flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition-all"
-                  >
-                    {isStartingBatch ? (
-                      <Loader2 className="h-5 w-5 animate-spin" />
-                    ) : (
-                      <>
-                        <Flame className="h-5 w-5" />
-                        <span>BẮT ĐẦU CHẾ BIẾN MẺ</span>
-                      </>
-                    )}
-                  </button>
+                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 text-xs space-y-1">
+                    <span className="font-bold flex items-center gap-1 text-amber-800">
+                      <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+                      Quy Tắc Vận Hành Chống Thất Thoát
+                    </span>
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
+                      1. Cân khối lượng đầu vào trước khi mở mẻ.<br/>
+                      2. Hoàn thành mẻ bắt buộc cân thành phẩm ngay trước khi mở mẻ mới.<br/>
+                      3. Bắt buộc chụp ảnh mặt bàn cân hiển thị rõ số kg.
+                    </p>
+                  </div>
                 </div>
               </div>
             )}
 
-            {/* TAB 2: CÂN THÀNH PHẨM */}
+            {/* TAB 2: CÂN THÀNH PHẨM (SPLIT-VIEW 2 CỘT TRÊN PC) */}
             {batchTab === 'finish' && (
-              <div className="space-y-4 mt-4">
+              <div>
                 {activeBatches.length === 0 ? (
                   <div className="text-center py-8 text-slate-500">
                     <CheckCircle2 className="h-10 w-10 text-emerald-500 mx-auto mb-2 opacity-50" />
@@ -1788,170 +1970,198 @@ export const KitchenModule: React.FC = () => {
                     </button>
                   </div>
                 ) : (
-                  <>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-600 mb-1">CHỌN MẺ CẦN CÂN THÀNH PHẨM</label>
-                      <div className="space-y-2 max-h-48 overflow-y-auto">
-                        {activeBatches.map((b) => (
-                          <div
-                            key={b.id}
-                            onClick={() => {
-                              setSelectedFinishBatch(b);
-                              setFinishScalePhoto(null);
-                              const savedDraft = localStorage.getItem(`senviet_offline_finish_batch_${b.id}`);
-                              if (savedDraft) {
-                                try {
-                                  const parsed = JSON.parse(savedDraft);
-                                  if (parsed.weight) setFinishOutputWeight(parsed.weight);
-                                  if (parsed.photo) setFinishScalePhoto(parsed.photo);
-                                  showNotice('success', `Đã khôi phục số cân lưu tạm: ${parsed.weight} kg kèm ảnh`);
-                                } catch {
-                                  setFinishOutputWeight(parseFloat(savedDraft) || 0);
-                                  showNotice('success', `Đã khôi phục số cân lưu tạm: ${savedDraft} kg`);
+                  <div className="lg:grid lg:grid-cols-12 lg:gap-6 mt-4">
+                    {/* Cột trái (60%): Chọn mẻ & nhập khối lượng thành phẩm */}
+                    <div className="lg:col-span-7 space-y-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 mb-1">CHỌN MẺ CẦN CÂN THÀNH PHẨM</label>
+                        <div className="space-y-2 max-h-40 overflow-y-auto">
+                          {activeBatches.map((b) => (
+                            <div
+                              key={b.id}
+                              onClick={() => {
+                                setSelectedFinishBatch(b);
+                                setFinishScalePhoto(null);
+                                const savedDraft = localStorage.getItem(`senviet_offline_finish_batch_${b.id}`);
+                                if (savedDraft) {
+                                  try {
+                                    const parsed = JSON.parse(savedDraft);
+                                    if (parsed.weight) setFinishOutputWeight(parsed.weight);
+                                    if (parsed.photo) setFinishScalePhoto(parsed.photo);
+                                    showNotice('success', `Đã khôi phục số cân lưu tạm: ${parsed.weight} kg kèm ảnh`);
+                                  } catch {
+                                    setFinishOutputWeight(parseFloat(savedDraft) || 0);
+                                    showNotice('success', `Đã khôi phục số cân lưu tạm: ${savedDraft} kg`);
+                                  }
+                                } else {
+                                  setFinishOutputWeight(0);
                                 }
-                              } else {
-                                setFinishOutputWeight(0);
-                              }
-                            }}
-                            className={`p-3 rounded-xl border cursor-pointer transition-all ${
-                              selectedFinishBatch?.id === b.id
-                                ? 'bg-emerald-50 border-emerald-500 shadow-sm'
-                                : 'bg-white border-slate-200 hover:border-slate-300'
-                            }`}
-                          >
-                            <div className="flex items-center justify-between">
-                              <span className="font-bold text-sm text-slate-800">{b.itemName}</span>
-                              <span className="font-mono text-xs font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">
-                                {b.batchCode}
+                              }}
+                              className={`p-3 rounded-xl border cursor-pointer transition-all ${
+                                selectedFinishBatch?.id === b.id
+                                  ? 'bg-emerald-50 border-emerald-500 shadow-sm'
+                                  : 'bg-white border-slate-200 hover:border-slate-300'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-sm text-slate-800">{b.itemName}</span>
+                                <span className="font-mono text-xs font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">
+                                  {b.batchCode}
+                                </span>
+                              </div>
+                              <div className="text-xs text-slate-500 mt-1 flex items-center justify-between">
+                                <span>Khối lượng đầu vào: <strong className="text-slate-800">{b.inputWeight} kg</strong></span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {selectedFinishBatch && (
+                        <div className="space-y-4">
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="block text-xs font-bold text-slate-700">KHỐI LƯỢNG THÀNH PHẨM CÂN ĐƯỢC (KG)</label>
+                              <span className="text-xs text-slate-500">
+                                Đang cân: <strong className="text-base text-slate-900 font-mono">{finishOutputWeight}</strong> / {selectedFinishBatch.inputWeight} kg
                               </span>
                             </div>
-                            <div className="text-xs text-slate-500 mt-1 flex items-center justify-between">
-                              <span>Khối lượng đầu vào: <strong className="text-slate-800">{b.inputWeight} kg</strong></span>
-                            </div>
+                            <VirtualNumpad
+                              value={finishOutputWeight}
+                              onChange={(val) => setFinishOutputWeight(val)}
+                              unit="kg"
+                              quickAddValues={[1, 5, 10]}
+                              max={selectedFinishBatch.inputWeight}
+                            />
                           </div>
-                        ))}
-                      </div>
+
+                          {/* Phân tích hao hụt realtime */}
+                          {finishOutputWeight > 0 && selectedFinishBatch.inputWeight && (
+                            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs flex items-center justify-between">
+                              <div>
+                                <span className="text-slate-500 block">Tỷ lệ hao hụt thực tế:</span>
+                                <span className="font-mono font-black text-sm text-slate-900">
+                                  {(((selectedFinishBatch.inputWeight - finishOutputWeight) / selectedFinishBatch.inputWeight) * 100).toFixed(1)}%
+                                </span>
+                                <span className="text-slate-400 ml-1">
+                                  (-{(selectedFinishBatch.inputWeight - finishOutputWeight).toFixed(2)} kg)
+                                </span>
+                              </div>
+                              <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
+                                ((selectedFinishBatch.inputWeight - finishOutputWeight) / selectedFinishBatch.inputWeight) * 100 <= 5.0
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-rose-100 text-rose-800'
+                              }`}>
+                                {((selectedFinishBatch.inputWeight - finishOutputWeight) / selectedFinishBatch.inputWeight) * 100 <= 5.0
+                                  ? '✓ Trong định mức'
+                                  : '⚠️ Vượt định mức'}
+                              </span>
+                            </div>
+                          )}
+
+                          <button
+                            onClick={handleFinishBatchSubmit}
+                            disabled={isFinishingBatch || finishOutputWeight <= 0 || !finishScalePhoto}
+                            className="btn-touch w-full h-14 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-extrabold text-base flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition-all cursor-pointer"
+                          >
+                            {isFinishingBatch ? (
+                              <Loader2 className="h-5 w-5 animate-spin" />
+                            ) : (
+                              <>
+                                <Scale className="h-5 w-5" />
+                                <span>XÁC NHẬN HOÀN TẤT CÂN MẺ</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      )}
                     </div>
 
-                    {selectedFinishBatch && (
-                      <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-4">
-                        <div>
-                          <div className="flex items-center justify-between mb-1">
-                            <label className="block text-xs font-bold text-slate-700">KHỐI LƯỢNG THÀNH PHẨM CÂN ĐƯỢC (KG)</label>
-                            <span className="text-xs text-slate-500">
-                              Đang cân: <strong className="text-base text-slate-900 font-mono">{finishOutputWeight}</strong> / {selectedFinishBatch.inputWeight} kg
-                            </span>
-                          </div>
-                          <VirtualNumpad
-                            value={finishOutputWeight}
-                            onChange={(val) => setFinishOutputWeight(val)}
-                            unit="kg"
-                            quickAddValues={[1, 5, 10]}
-                            max={selectedFinishBatch.inputWeight}
-                          />
-                        </div>
-
-                        {/* TASK-WH-04: Bắt buộc chụp ảnh mặt bàn cân điện tử hiển thị rõ số kg */}
-                        <div className="p-4 rounded-xl bg-white border-2 border-dashed border-slate-300 space-y-3">
-                          <div className="flex items-center justify-between">
-                            <label className="block text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                              <Camera className="w-4 h-4 text-emerald-600" />
-                              <span>ẢNH CHỤP MẶT BÀN CÂN ĐIỆN TỬ</span>
-                              <span className="text-rose-600 font-black">(*)</span>
-                            </label>
-                            <span className="text-[11px] font-bold text-slate-400">Chống gian lận cân</span>
-                          </div>
-
-                          <input
-                            ref={finishScalePhotoInputRef}
-                            type="file"
-                            accept="image/*"
-                            capture="environment"
-                            onChange={handleFinishScalePhotoUpload}
-                            className="hidden"
-                          />
-
-                          {finishScalePhoto ? (
-                            <div className="space-y-2">
-                              <div className="relative rounded-xl overflow-hidden border border-emerald-400 bg-slate-950 aspect-video max-h-56 flex items-center justify-center group">
-                                <img
-                                  src={finishScalePhoto}
-                                  alt="Mặt bàn cân điện tử"
-                                  className="w-full h-full object-contain"
-                                />
-                                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => setPreviewScalePhoto(finishScalePhoto)}
-                                    className="p-2 rounded-lg bg-white/90 text-slate-800 text-xs font-bold flex items-center gap-1 shadow"
-                                  >
-                                    <ZoomIn className="w-4 h-4" /> Soi cận cảnh
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => finishScalePhotoInputRef.current?.click()}
-                                    className="p-2 rounded-lg bg-emerald-600 text-white text-xs font-bold flex items-center gap-1 shadow"
-                                  >
-                                    <Camera className="w-4 h-4" /> Chụp lại
-                                  </button>
-                                </div>
-                              </div>
-                              <div className="flex items-center justify-between text-xs">
-                                <span className="text-emerald-700 font-semibold flex items-center gap-1">
-                                  <CheckCircle2 className="w-4 h-4" /> Đã có ảnh bàn cân kèm Watermark xác thực
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => setFinishScalePhoto(null)}
-                                  className="text-rose-600 hover:text-rose-800 font-bold"
-                                >
-                                  Xóa ảnh
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="text-center py-3">
-                              {isCompressingScalePhoto ? (
-                                <div className="flex flex-col items-center justify-center gap-2 text-emerald-700 py-4">
-                                  <Loader2 className="w-6 h-6 animate-spin" />
-                                  <span className="text-xs font-bold">Đang nén ảnh & đóng dấu Watermark xác thực...</span>
-                                </div>
-                              ) : (
-                                <div className="space-y-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => finishScalePhotoInputRef.current?.click()}
-                                    className="w-full py-3.5 px-4 rounded-xl bg-white hover:bg-emerald-50 border-2 border-dashed border-emerald-500 text-emerald-700 font-bold text-sm flex items-center justify-center gap-2 shadow-sm transition-all"
-                                  >
-                                    <Camera className="w-5 h-5 text-emerald-600" />
-                                    <span>CHỤP ẢNH MẶT BÀN CÂN ĐIỆN TỬ (*)</span>
-                                  </button>
-                                  <p className="text-[11px] text-rose-600 font-medium bg-rose-50 p-2 rounded-lg border border-rose-200">
-                                    ⚠️ BẮT BUỘC chụp ảnh mặt bàn cân điện tử hiển thị rõ số kg thành phẩm để chống gian lận!
-                                  </p>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-
-                        <button
-                          onClick={handleFinishBatchSubmit}
-                          disabled={isFinishingBatch || finishOutputWeight <= 0 || !finishScalePhoto}
-                          className="btn-touch w-full h-14 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-extrabold text-base flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition-all"
-                        >
-                          {isFinishingBatch ? (
-                            <Loader2 className="h-5 w-5 animate-spin" />
-                          ) : (
-                            <>
-                              <Scale className="h-5 w-5" />
-                              <span>XÁC NHẬN HOÀN TẤT CÂN MẺ</span>
-                            </>
-                          )}
-                        </button>
+                    {/* Cột phải (40%): Khung chụp ảnh mặt bàn cân điện tử cỡ lớn */}
+                    <div className="lg:col-span-5 space-y-3 bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                      <div className="flex items-center justify-between">
+                        <label className="block text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                          <Camera className="w-4 h-4 text-emerald-600" />
+                          <span>ẢNH BÀN CÂN ĐIỆN TỬ</span>
+                          <span className="text-rose-600 font-black">(*)</span>
+                        </label>
+                        <span className="text-[11px] font-bold text-slate-400">Chống gian lận</span>
                       </div>
-                    )}
-                  </>
+
+                      <input
+                        ref={finishScalePhotoInputRef}
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        onChange={handleFinishScalePhotoUpload}
+                        className="hidden"
+                      />
+
+                      {finishScalePhoto ? (
+                        <div className="space-y-2">
+                          <div className="relative rounded-xl overflow-hidden border border-emerald-400 bg-slate-950 aspect-video max-h-64 flex items-center justify-center group">
+                            <img
+                              src={finishScalePhoto}
+                              alt="Mặt bàn cân điện tử"
+                              className="w-full h-full object-contain"
+                            />
+                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setPreviewScalePhoto(finishScalePhoto)}
+                                className="p-2 rounded-lg bg-white/90 text-slate-800 text-xs font-bold flex items-center gap-1 shadow cursor-pointer"
+                              >
+                                <ZoomIn className="w-4 h-4" /> Soi cận cảnh
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => finishScalePhotoInputRef.current?.click()}
+                                className="p-2 rounded-lg bg-emerald-600 text-white text-xs font-bold flex items-center gap-1 shadow cursor-pointer"
+                              >
+                                <Camera className="w-4 h-4" /> Chụp lại
+                              </button>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                              <CheckCircle2 className="w-4 h-4" /> Đã có Watermark xác thực
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setFinishScalePhoto(null)}
+                              className="text-rose-600 hover:text-rose-800 font-bold cursor-pointer"
+                            >
+                              Xóa ảnh
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-center py-6">
+                          {isCompressingScalePhoto ? (
+                            <div className="flex flex-col items-center justify-center gap-2 text-emerald-700 py-4">
+                              <Loader2 className="w-6 h-6 animate-spin" />
+                              <span className="text-xs font-bold">Đang nén ảnh & đóng dấu Watermark...</span>
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              <button
+                                type="button"
+                                onClick={() => finishScalePhotoInputRef.current?.click()}
+                                className="w-full py-6 px-4 rounded-xl bg-white hover:bg-emerald-50 border-2 border-dashed border-emerald-500 text-emerald-700 font-bold text-sm flex flex-col items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
+                              >
+                                <Camera className="w-8 h-8 text-emerald-600" />
+                                <span>CHỤP ẢNH MẶT BÀN CÂN ĐIỆN TỬ (*)</span>
+                                <span className="text-xs font-normal text-slate-500">Hiển thị rõ số kg LCD</span>
+                              </button>
+                              <p className="text-[11px] text-rose-600 font-medium bg-rose-50 p-2.5 rounded-lg border border-rose-200 text-left">
+                                ⚠️ BẮT BUỘC chụp ảnh mặt bàn cân điện tử hiển thị rõ số kg thành phẩm để chống gian lận!
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
             )}
@@ -2246,257 +2456,266 @@ export const KitchenModule: React.FC = () => {
       )}
 
       {/* ============================================================== */}
-      {/* MODAL 4: BÁO HỎNG NGUYÊN LIỆU (NÉN ẢNH CANVAS)                  */}
+      {/* MODAL 4: BÁO HỎNG NGUYÊN LIỆU (SPLIT-VIEW PC - TASK-PC-06)      */}
       {/* ============================================================== */}
       {activeModal === 'damage' && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in">
-          <div className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+          <div className="bg-white w-full max-w-lg lg:max-w-5xl xl:max-w-6xl rounded-t-3xl sm:rounded-3xl p-5 sm:p-6 shadow-2xl max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2 text-rose-600 font-bold text-base">
                 <AlertTriangle className="h-6 w-6" />
-                <span>NÚT 4: BÁO HỎNG NGUYÊN LIỆU</span>
+                <span>NÚT 4: BÁO HỎNG NGUYÊN LIỆU & BẮT ĐỀN NCC</span>
               </div>
-              <button onClick={() => setActiveModal(null)} className="p-2 text-slate-400 hover:text-slate-600">
+              <button
+                onClick={() => setActiveModal(null)}
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                title="Đóng (Phím Esc)"
+              >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <form onSubmit={handleDamageSubmit} className="space-y-4 mt-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">NGUYÊN LIỆU BÁO HỎNG</label>
-                <select
-                  value={damageItemId}
-                  onChange={(e) => setDamageItemId(Number(e.target.value))}
-                  className="w-full h-12 px-3 rounded-xl border border-slate-300 font-medium text-slate-800 focus:ring-2 focus:ring-rose-500"
-                >
-                  {items.map((i) => (
-                    <option key={i.id} value={i.id}>
-                      {i.itemName} ({Number(i.costPrice).toLocaleString('vi-VN')} đ/{i.unit})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
+            <form onSubmit={handleDamageSubmit} className="lg:grid lg:grid-cols-12 lg:gap-6 mt-4 space-y-4 lg:space-y-0">
+              {/* CỘT TRÁI (60% ~ 7/12 CỘT): FORM NHẬP LIỆU */}
+              <div className="lg:col-span-7 space-y-3.5">
                 <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-1">SỐ LƯỢNG HỎNG</label>
-                  <input
-                    type="number"
-                    step="any"
-                    min="0.001"
-                    placeholder="Nhập số lượng..."
-                    value={damageQty}
-                    onChange={(e) => {
-                      const val = e.target.value.replace(',', '.');
-                      setDamageQty(parseFloat(val) || 0);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === ',') {
-                        e.preventDefault();
-                        const cur = String(damageQty ?? '');
-                        if (!cur.includes('.')) {
-                          setDamageQty(((cur ? cur : '0') + '.') as any);
-                        }
-                      }
-                    }}
-                    className="w-full h-12 px-3 rounded-xl border border-slate-300 font-extrabold text-lg text-slate-900 focus:ring-2 focus:ring-rose-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-1">PHÂN LOẠI LÝ DO HỦY</label>
+                  <label className="block text-xs font-bold text-slate-600 mb-1">NGUYÊN LIỆU BÁO HỎNG</label>
                   <select
-                    value={damageReason}
-                    onChange={(e) => setDamageReason(e.target.value)}
-                    className="w-full h-12 px-2.5 rounded-xl border border-slate-300 text-xs font-semibold text-slate-800 focus:ring-2 focus:ring-rose-500"
+                    value={damageItemId}
+                    onChange={(e) => setDamageItemId(Number(e.target.value))}
+                    className="w-full h-11 px-3 rounded-xl border border-slate-300 font-medium text-slate-800 text-xs sm:text-sm focus:ring-2 focus:ring-rose-500"
                   >
-                    <optgroup label="1. Hủy do sơ chế / nấu hỏng">
-                      <option value="HONG_SO_CHE_NAU">Hủy do sơ chế / nấu hỏng (chè cháy, cơm khê, nước dùng hỏng)</option>
-                      <option value="HONG_CHE_BIEN">Lỗi thao tác chế biến của đầu bếp</option>
-                    </optgroup>
-                    <optgroup label="2. Hủy do nguyên liệu chết / ươn từ NCC">
-                      <option value="HONG_DO_NHA_CUNG_CAP">Hủy do nguyên liệu chết / ươn từ NCC (cua chết, ghẹ óp, ngao thối)</option>
-                      <option value="HONG_BAO_QUAN">Hư hỏng thiết bị lạnh / tủ cấp đông</option>
-                    </optgroup>
-                    <optgroup label="3. Hủy do thừa cuối ca">
-                      <option value="HUY_THUA_CUOI_CA">Hủy do thừa cuối ca (hàng ra line không dùng hết theo quy định VSATTP)</option>
-                      <option value="HET_HAN_SU_DUNG">Hết hạn sử dụng trong ngày</option>
-                    </optgroup>
-                  </select>
-                </div>
-              </div>
-
-              {/* CHỌN LÔ HÀNG (BATCH/LOT) ĐỂ TRUY VẾT NCC & CUA CHẾT */}
-              <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">
-                  LÔ HÀNG LIÊN KẾT (TRUY VẾT LÔ NHẬP & NCC)
-                </label>
-                {availableBatches.length > 0 ? (
-                  <select
-                    value={selectedBatchCode}
-                    onChange={(e) => {
-                      const code = e.target.value;
-                      setSelectedBatchCode(code);
-                      const found = availableBatches.find((b) => b.batchCode === code);
-                      if (found && (found.supplierCode || found.supplierName)) {
-                        setDamageSupplier(found.supplierCode || found.supplierName || '');
-                      }
-                    }}
-                    className="w-full h-11 px-3 rounded-xl border border-slate-300 font-mono font-bold text-slate-800 text-xs sm:text-sm focus:ring-2 focus:ring-rose-500"
-                  >
-                    <option value="">-- Chọn lô nhập để truy vết chính xác NCC --</option>
-                    {availableBatches.map((b) => (
-                      <option key={b.id} value={b.batchCode}>
-                        {b.batchCode} ({b.supplierName || b.supplierCode || 'NCC'} - Tồn: {b.currentStock} {b.unit})
+                    {items.map((i) => (
+                      <option key={i.id} value={i.id}>
+                        {i.itemName} ({Number(i.costPrice).toLocaleString('vi-VN')} đ/{i.unit})
                       </option>
                     ))}
                   </select>
-                ) : (
-                  <input
-                    type="text"
-                    placeholder="Mã lô (VD: LOT-202611-001) hoặc để trống..."
-                    value={selectedBatchCode}
-                    onChange={(e) => setSelectedBatchCode(e.target.value)}
-                    className="w-full h-11 px-3 rounded-xl border border-slate-300 font-mono text-sm focus:ring-2 focus:ring-rose-500"
-                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-1">SỐ LƯỢNG HỎNG</label>
+                    <input
+                      type="number"
+                      step="any"
+                      min="0.001"
+                      placeholder="Nhập số lượng..."
+                      value={damageQty}
+                      onChange={(e) => {
+                        const val = e.target.value.replace(',', '.');
+                        setDamageQty(parseFloat(val) || 0);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === ',') {
+                          e.preventDefault();
+                          const cur = String(damageQty ?? '');
+                          if (!cur.includes('.')) {
+                            setDamageQty(((cur ? cur : '0') + '.') as any);
+                          }
+                        }
+                      }}
+                      className="w-full h-11 px-3 rounded-xl border border-slate-300 font-extrabold text-base text-slate-900 focus:ring-2 focus:ring-rose-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-1">PHÂN LOẠI LÝ DO HỦY</label>
+                    <select
+                      value={damageReason}
+                      onChange={(e) => setDamageReason(e.target.value)}
+                      className="w-full h-11 px-2.5 rounded-xl border border-slate-300 text-xs font-semibold text-slate-800 focus:ring-2 focus:ring-rose-500"
+                    >
+                      <optgroup label="1. Hủy do sơ chế / nấu hỏng">
+                        <option value="HONG_SO_CHE_NAU">Hủy do sơ chế / nấu hỏng</option>
+                        <option value="HONG_CHE_BIEN">Lỗi thao tác chế biến của đầu bếp</option>
+                      </optgroup>
+                      <optgroup label="2. Hủy do nguyên liệu chết / ươn từ NCC">
+                        <option value="HONG_DO_NHA_CUNG_CAP">Hủy do hàng chết / ươn từ NCC</option>
+                        <option value="HONG_BAO_QUAN">Hư hỏng thiết bị lạnh / tủ cấp đông</option>
+                      </optgroup>
+                      <optgroup label="3. Hủy do thừa cuối ca">
+                        <option value="HUY_THUA_CUOI_CA">Hủy thừa cuối ca (chuẩn VSATTP)</option>
+                        <option value="HET_HAN_SU_DUNG">Hết hạn sử dụng trong ngày</option>
+                      </optgroup>
+                    </select>
+                  </div>
+                </div>
+
+                {/* CHỌN LÔ HÀNG (BATCH/LOT) ĐỂ TRUY VẾT NCC & CUA CHẾT */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-1">
+                    LÔ HÀNG LIÊN KẾT (TRUY VẾT LÔ NHẬP & NCC)
+                  </label>
+                  {availableBatches.length > 0 ? (
+                    <select
+                      value={selectedBatchCode}
+                      onChange={(e) => {
+                        const code = e.target.value;
+                        setSelectedBatchCode(code);
+                        const found = availableBatches.find((b) => b.batchCode === code);
+                        if (found && (found.supplierCode || found.supplierName)) {
+                          setDamageSupplier(found.supplierCode || found.supplierName || '');
+                        }
+                      }}
+                      className="w-full h-11 px-3 rounded-xl border border-slate-300 font-mono font-bold text-slate-800 text-xs focus:ring-2 focus:ring-rose-500"
+                    >
+                      <option value="">-- Chọn lô nhập để truy vết chính xác NCC --</option>
+                      {availableBatches.map((b) => (
+                        <option key={b.id} value={b.batchCode}>
+                          {b.batchCode} ({b.supplierName || b.supplierCode || 'NCC'} - Tồn: {b.currentStock} {b.unit})
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      placeholder="Mã lô (VD: LOT-202611-001) hoặc để trống..."
+                      value={selectedBatchCode}
+                      onChange={(e) => setSelectedBatchCode(e.target.value)}
+                      className="w-full h-11 px-3 rounded-xl border border-slate-300 font-mono text-xs focus:ring-2 focus:ring-rose-500"
+                    />
+                  )}
+                </div>
+
+                {damageReason === 'HONG_DO_NHA_CUNG_CAP' && (
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-1">MÃ / TÊN NHÀ CUNG CẤP</label>
+                    <input
+                      type="text"
+                      value={damageSupplier}
+                      onChange={(e) => setDamageSupplier(e.target.value)}
+                      className="w-full h-11 px-3 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-rose-500"
+                    />
+                  </div>
                 )}
-                <span className="text-[10px] text-slate-500 mt-0.5 block">
-                  * Ví dụ: Báo hỏng cua chết gắn với Lô LOT-202611-001 để trừ tồn lô và tính tỷ lệ hỏng của NCC Hải Sản Quảng Ninh.
-                </span>
+
+                <div className="pt-2">
+                  <button
+                    type="submit"
+                    disabled={isSubmittingDamage}
+                    className="btn-touch w-full h-13 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:bg-rose-400 text-white font-extrabold text-sm sm:text-base flex items-center justify-center gap-2 shadow-lg shadow-rose-600/30 transition-all cursor-pointer"
+                  >
+                    {isSubmittingDamage ? (
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                    ) : (
+                      <>
+                        <CheckCircle2 className="h-5 w-5" />
+                        <span>GỬI ĐƠN BÁO HỎNG (Ctrl + S)</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
 
-              {damageReason === 'HONG_DO_NHA_CUNG_CAP' && (
+              {/* CỘT PHẢI (40% ~ 5/12 CỘT): ẢNH MINH CHỨNG & TÓM TẮT THIỆT HẠI */}
+              <div className="lg:col-span-5 space-y-3 bg-slate-50 p-4 rounded-2xl border border-slate-200 flex flex-col justify-between">
                 <div>
-                  <label className="block text-xs font-bold text-slate-600 mb-1">MÃ / TÊN NHÀ CUNG CẤP</label>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <Camera className="w-4 h-4 text-rose-600" />
+                      <span>ẢNH MINH CHỨNG HỎNG</span>
+                      <span className="text-rose-600 font-black">(*)</span>
+                    </label>
+                    <span className="text-[10px] text-slate-400">Nén &lt; 250KB</span>
+                  </div>
+
+                  {/* Input ẩn chụp ảnh */}
                   <input
-                    type="text"
-                    value={damageSupplier}
-                    onChange={(e) => setDamageSupplier(e.target.value)}
-                    className="w-full h-11 px-3 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-rose-500"
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    ref={fileInputRef}
+                    onChange={handlePhotoSelect}
+                    className="hidden"
                   />
-                </div>
-              )}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    ref={galleryInputRef}
+                    onChange={handlePhotoSelect}
+                    className="hidden"
+                  />
 
-              {/* UPLOAD & NÉN ẢNH CANVAS (Hỗ trợ 2 chế độ: Chụp trực tiếp & Chọn từ thư viện) */}
-              <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">ẢNH MINH CHỨNG (NÉN TỰ ĐỘNG DƯỚI 250KB)</label>
-                {/* Input 1: Chụp ảnh trực tiếp với camera sau */}
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  ref={fileInputRef}
-                  onChange={handlePhotoSelect}
-                  className="hidden"
-                />
-                {/* Input 2: Chọn ảnh từ máy / thư viện nếu camera bị hạn chế quyền */}
-                <input
-                  type="file"
-                  accept="image/*"
-                  ref={galleryInputRef}
-                  onChange={handlePhotoSelect}
-                  className="hidden"
-                />
-
-                {damageImage ? (
-                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <img
-                        src={damageImage.dataUrl}
-                        alt="Preview"
-                        className="h-14 w-14 object-cover rounded-lg border border-slate-300"
-                      />
-                      <div>
-                        <div className="text-xs font-bold text-emerald-700 flex items-center gap-1">
+                  {damageImage ? (
+                    <div className="space-y-2">
+                      <div className="relative rounded-xl overflow-hidden border border-rose-300 bg-slate-950 aspect-video max-h-56 flex items-center justify-center">
+                        <img
+                          src={damageImage.dataUrl}
+                          alt="Ảnh minh chứng báo hỏng"
+                          className="w-full h-full object-contain"
+                        />
+                      </div>
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="text-emerald-700 font-semibold flex items-center gap-1">
                           <CheckCircle2 className="h-3.5 w-3.5" />
-                          <span>Đã nén thành công</span>
+                          <span>Đã nén: {damageImage.compressedSizeKb} KB</span>
                         </div>
-                        <div className="text-[11px] text-slate-500 mt-0.5">
-                          Dung lượng: <strong className="text-slate-800">{damageImage.compressedSizeKb} KB</strong> (từ {damageImage.originalSizeKb} KB)
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setDamageImage(null)}
+                          className="text-rose-600 hover:text-rose-800 font-bold cursor-pointer"
+                        >
+                          Xóa & Chụp lại
+                        </button>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setDamageImage(null)}
-                      className="p-1.5 text-slate-400 hover:text-rose-600"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={isCompressing}
-                      className="btn-touch h-14 rounded-xl border-2 border-dashed border-rose-300 hover:border-rose-500 bg-rose-50/40 text-rose-800 flex items-center justify-center gap-2 font-bold text-xs shadow-sm transition-all active:scale-95"
-                    >
-                      {isCompressing ? (
-                        <Loader2 className="h-5 w-5 animate-spin" />
-                      ) : (
-                        <>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={isCompressing}
+                          className="btn-touch h-16 rounded-xl border-2 border-dashed border-rose-300 hover:border-rose-500 bg-white text-rose-800 flex flex-col items-center justify-center gap-1 font-bold text-xs shadow-xs transition-all active:scale-95 cursor-pointer"
+                        >
                           <Camera className="h-5 w-5 text-rose-600" />
                           <span>Chụp Ảnh Ngay</span>
-                        </>
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => galleryInputRef.current?.click()}
-                      disabled={isCompressing}
-                      className="btn-touch h-14 rounded-xl border-2 border-dashed border-slate-300 hover:border-slate-500 bg-slate-50 text-slate-700 flex items-center justify-center gap-2 font-bold text-xs shadow-sm transition-all active:scale-95"
-                    >
-                      {isCompressing ? (
-                        <Loader2 className="h-5 w-5 animate-spin" />
-                      ) : (
-                        <>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => galleryInputRef.current?.click()}
+                          disabled={isCompressing}
+                          className="btn-touch h-16 rounded-xl border-2 border-dashed border-slate-300 hover:border-slate-500 bg-white text-slate-700 flex flex-col items-center justify-center gap-1 font-bold text-xs shadow-xs transition-all active:scale-95 cursor-pointer"
+                        >
                           <ImageIcon className="h-5 w-5 text-slate-500" />
-                          <span>Chọn Từ Thư Viện</span>
-                        </>
+                          <span>Từ Thư Viện</span>
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-slate-500 italic text-center">
+                        Chụp cận cảnh thực phẩm hỏng, ươn chết để làm căn cứ trừ tiền NCC.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Card dự toán thiệt hại tiền mặt */}
+                <div className="space-y-2 pt-2 border-t border-slate-200">
+                  <div className="p-3 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
+                    <div>
+                      <span className="text-[11px] text-slate-500 block">Ước tính thiệt hại:</span>
+                      <div className="font-mono font-black text-base text-rose-700">
+                        {estimatedDamageCost.toLocaleString('vi-VN')} đ
+                      </div>
+                    </div>
+                    <div>
+                      {isAutoApprove ? (
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold flex items-center gap-1">
+                          <CheckCircle2 className="h-3 w-3" />
+                          Tự động (&le;500k)
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold flex items-center gap-1">
+                          <AlertTriangle className="h-3 w-3" />
+                          Quản lý duyệt (&gt;500k)
+                        </span>
                       )}
-                    </button>
+                    </div>
                   </div>
-                )}
-              </div>
 
-              {/* DỰ TOÁN GIÁ TRỊ & TỰ ĐỘNG DUYỆT */}
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs">
-                <div>
-                  <span className="text-slate-500">Giá trị ước tính:</span>
-                  <div className="font-extrabold text-sm text-slate-900">
-                    {estimatedDamageCost.toLocaleString('vi-VN')} VNĐ
+                  <div className="text-[10px] text-slate-500 bg-white/60 p-2 rounded-lg border border-slate-100 leading-relaxed">
+                    💡 <strong>Quy trình xử lý:</strong> Đơn báo hỏng được gửi tức thời đến Bếp trưởng & Quản lý cơ sở để duyệt trừ công nợ NCC hoặc ghi nhận hao hụt ca.
                   </div>
                 </div>
-                <div>
-                  {isAutoApprove ? (
-                    <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold flex items-center gap-1">
-                      <CheckCircle2 className="h-3.5 w-3.5" />
-                      Tự động duyệt (&le; 500k)
-                    </span>
-                  ) : (
-                    <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 font-bold flex items-center gap-1">
-                      <AlertTriangle className="h-3.5 w-3.5" />
-                      Cần Quản lý duyệt (&gt; 500k)
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div className="pt-2">
-                <button
-                  type="submit"
-                  disabled={isSubmittingDamage}
-                  className="btn-touch w-full h-14 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:bg-rose-400 text-white font-extrabold text-base flex items-center justify-center gap-2 shadow-lg shadow-rose-600/30 transition-all"
-                >
-                  {isSubmittingDamage ? (
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                  ) : (
-                    <>
-                      <CheckCircle2 className="h-5 w-5" />
-                      <span>GỬI ĐƠN BÁO HỎNG</span>
-                    </>
-                  )}
-                </button>
               </div>
             </form>
           </div>

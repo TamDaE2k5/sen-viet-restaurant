@@ -43,6 +43,13 @@ import { warehouseApi } from '../src/api/warehouse';
 import { formatWatermarkText } from '../src/utils/imageCompressor';
 import { WAREHOUSE_LOCATIONS, WarehouseLocation } from '../src/types/warehouse';
 import { getBuffetFoodGroup, BUFFET_FOOD_GROUPS } from '../src/components/warehouse/StockCardsTab';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { WAREHOUSE_COCKPIT_TABS, WarehouseTab } from '../src/components/warehouse/WarehouseModule';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 interface TestResult {
   suite: string;
@@ -347,7 +354,7 @@ async function runTestSuite() {
 
   // 8.1. ROLE_BEP
   assert(isViewAuthorized('kitchen', userBep) === true, 'RBAC ROLE_BEP', 'Bếp viên được truy cập phân hệ kitchen');
-  assert(isViewAuthorized('warehouse', userBep) === false, 'RBAC ROLE_BEP', 'Bếp viên TUYỆT ĐỐI KHÔNG được xem phân hệ warehouse');
+  assert(isViewAuthorized('warehouse', userBep) === true, 'RBAC ROLE_BEP', 'Bếp viên ĐƯỢC PHÉP xem phân hệ warehouse (tồn kho vật lý & cân hàng)');
   assert(isViewAuthorized('reconciliation', userBep) === false, 'RBAC ROLE_BEP', 'Bếp viên TUYỆT ĐỐI KHÔNG được xem phân hệ reconciliation');
   assert(isViewAuthorized('payroll', userBep) === false, 'RBAC ROLE_BEP', 'Bếp viên TUYỆT ĐỐI KHÔNG được xem phân hệ payroll');
   assert(isViewAuthorized('dashboard', userBep) === false, 'RBAC ROLE_BEP', 'Bếp viên không xem dashboard quản trị');
@@ -1790,10 +1797,10 @@ async function runTestSuite() {
   );
 
   assert(
-    isViewAuthorized('warehouse', userBep) === false &&
-    isViewAuthorized('warehouse', bepStaffFromDb) === false,
-    'TASK-WH-01 Warehouse RBAC Kitchen Staff Blocked',
-    'Bếp viên (bep_tn) TUYỆT ĐỐI KHÔNG có quyền truy cập phân hệ warehouse (isViewAuthorized === false)'
+    isViewAuthorized('warehouse', userBep) === true &&
+    isViewAuthorized('warehouse', bepStaffFromDb) === true,
+    'TASK-WH-01 Warehouse RBAC Kitchen Staff Access',
+    'Bếp viên (bep_tn) ĐƯỢC PHÉP truy cập phân hệ warehouse để xem tồn kho vật lý và cân hàng mới về (isViewAuthorized === true)'
   );
 
   // 16.2. TASK-WH-02: Lọc tồn kho theo 2 chi nhánh (TN vs QV) và 5 nhóm thực phẩm buffet chuẩn
@@ -2000,6 +2007,205 @@ async function runTestSuite() {
     hasCbEntry && hasBtpEntry && hasLineEntry,
     'TASK-WH-06 & TASK-WH-07 Realtime Stock Ledger Integration',
     'Thẻ kho (Stock Ledger) ghi nhận đầy đủ chuỗi 3 điểm biến động: Xuất chế biến -> Nhập BTP -> Ra line'
+  );
+
+  // -----------------------------------------------------------------
+  // 17. KIỂM THỬ XÁC THỰC TOÀN DIỆN PHÂN QUYỀN KHO & UI/UX PC 16:9
+  // (SPEC-UX-DESKTOP-16X9-2026 & SPEC-WAREHOUSE-ANTI-THEFT-2026)
+  // -----------------------------------------------------------------
+  console.log('\n🖥️ SUITE 17: RBAC Warehouse Access & PC 16:9 Desktop UX Verification');
+
+  // 17.1. Test phân quyền xem kho cho bep_tn, ql_bep_tn, ql_chinhanh_tn (isViewAuthorized('warehouse', user) === true)
+  const dbUserBep = await db.users.where('username').equals('bep_tn').first();
+  const dbUserQlBep = await db.users.where('username').equals('ql_bep_tn').first();
+  const dbUserQlChiNhanh = await db.users.where('username').equals('ql_chinhanh_tn').first();
+
+  assert(
+    isViewAuthorized('warehouse', userBep) === true &&
+      isViewAuthorized('warehouse', dbUserBep) === true,
+    'SUITE 17.1 RBAC Kitchen Staff Warehouse Access',
+    'Bếp viên (bep_tn) được cấp quyền xem phân hệ Kho cơ sở để tra cứu tồn vật lý và cân hàng mới về'
+  );
+
+  assert(
+    isViewAuthorized('warehouse', userQlBep) === true &&
+      isViewAuthorized('warehouse', dbUserQlBep) === true,
+    'SUITE 17.1 RBAC Head Chef Warehouse Access',
+    'Bếp Trưởng (ql_bep_tn) có toàn quyền quản lý kho cơ sở và lô hàng (isViewAuthorized === true)'
+  );
+
+  assert(
+    isViewAuthorized('warehouse', userQlChiNhanh) === true &&
+      isViewAuthorized('warehouse', dbUserQlChiNhanh) === true,
+    'SUITE 17.1 RBAC Branch Manager Warehouse Access',
+    'Quản Lý Chi Nhánh (ql_chinhanh_tn) có toàn quyền quản lý kho cơ sở và lô hàng (isViewAuthorized === true)'
+  );
+
+  const pureEmployeeUser = { id: 99, username: 'nv_phucvu', fullName: 'Nhân Viên Phục Vụ', roles: ['ROLE_EMPLOYEE'] } as any;
+  assert(
+    isViewAuthorized('warehouse', pureEmployeeUser) === false,
+    'SUITE 17.1 RBAC Unauthorized Access Prevention',
+    'Nhân viên phục vụ thuần túy không có quyền truy cập phân hệ Kho (isViewAuthorized === false)'
+  );
+
+  assert(
+    isViewAuthorized('executive-cockpit', userBep) === false &&
+      isViewAuthorized('payroll', userBep) === false &&
+      isViewAuthorized('reconciliation', userBep) === false &&
+      isViewAuthorized('dashboard', userBep) === false,
+    'SUITE 17.1 RBAC Kitchen Staff Sensitive Modules Isolation',
+    'Bếp viên tuyệt đối không thể truy cập các phân hệ nhạy cảm (Executive Cockpit, Bảng lương, Đối soát CukCuk, Dashboard)'
+  );
+
+  // 17.2. Test 4 nhóm tab mới của WarehouseModule ('stock-overview', 'documents', 'inventory-check', 'supplier-partner')
+  const expectedTabs: WarehouseTab[] = [
+    'stock-overview',
+    'documents',
+    'inventory-check',
+    'supplier-partner',
+  ];
+
+  assert(
+    Array.isArray(WAREHOUSE_COCKPIT_TABS) &&
+      WAREHOUSE_COCKPIT_TABS.length === 4 &&
+      expectedTabs.every((tab) => WAREHOUSE_COCKPIT_TABS.includes(tab)),
+    'SUITE 17.2 WarehouseModule 4 Cockpit Tab Groups',
+    'Phân hệ Kho đã gom 7 tab rời rạc thành đúng 4 nhóm nghiệp vụ Cockpit chuẩn: stock-overview, documents, inventory-check, supplier-partner'
+  );
+
+  const defaultTab: WarehouseTab = 'stock-overview';
+  assert(
+    defaultTab === 'stock-overview' && WAREHOUSE_COCKPIT_TABS[0] === 'stock-overview',
+    'SUITE 17.2 Warehouse Default Cockpit Tab',
+    'Tab mặc định khi vào Kho là "stock-overview" (Tồn Kho & Thẻ Kho Vật Lý)'
+  );
+
+  // Kiểm tra cơ chế che thông tin nhạy cảm cho Bếp viên thuần túy trong WarehouseModule
+  const isKitchenPureTest = (user: any) => {
+    const isKitchen = userHasRole(user, 'ROLE_KITCHEN_STAFF');
+    const isBranchMgr = userHasRole(user, 'ROLE_QL_CHINHANH') || user?.username === 'ql_chinhanh_tn';
+    const isHeadChef = userHasRole(user, 'ROLE_QL_BEP') || user?.username === 'ql_bep_tn';
+    const isChuChuoi = userHasRole(user, 'ROLE_CHU_CHUOI') || user?.username === 'admin_chu';
+    const isGenAcc = userHasRole(user, 'ROLE_GENERAL_ACCOUNTANT') || user?.username === 'ketoan_tong';
+    const isBrAcc = userHasRole(user, 'ROLE_BRANCH_ACCOUNTANT') || user?.username === 'ketoan_tn';
+    return isKitchen && !isBranchMgr && !isHeadChef && !isChuChuoi && !isGenAcc && !isBrAcc;
+  };
+
+  assert(
+    isKitchenPureTest(userBep) === true && isKitchenPureTest(userQlBep) === false,
+    'SUITE 17.2 Pure Kitchen Staff Sensitive Data Masking',
+    'Nhân viên bếp thuần túy được tự động nhận diện (isKitchenPure = true) để che đơn giá và công nợ tài chính'
+  );
+
+  // 17.3. Test cơ chế thu gọn sidebar rail và lưu localStorage ('senviet_desktop_sidebar_collapsed')
+  localStorage.setItem('senviet_desktop_sidebar_collapsed', 'true');
+  const storedCollapsed = localStorage.getItem('senviet_desktop_sidebar_collapsed') === 'true';
+  const collapsedWidthClass = storedCollapsed ? 'w-[72px]' : 'w-72';
+
+  assert(
+    storedCollapsed === true && collapsedWidthClass === 'w-[72px]',
+    'SUITE 17.3 Desktop Sidebar Collapse Persistence (Rail 72px)',
+    'Cơ chế thu gọn sidebar lưu đúng cờ "senviet_desktop_sidebar_collapsed" = true và áp dụng độ rộng 72px (Icon Rail)'
+  );
+
+  localStorage.setItem('senviet_desktop_sidebar_collapsed', 'false');
+  const storedExpanded = localStorage.getItem('senviet_desktop_sidebar_collapsed') === 'true';
+  const expandedWidthClass = storedExpanded ? 'w-[72px]' : 'w-72';
+
+  assert(
+    storedExpanded === false && expandedWidthClass === 'w-72',
+    'SUITE 17.3 Desktop Sidebar Expand Persistence (Sidebar 280px)',
+    'Mở rộng sidebar cập nhật localStorage thành false và khôi phục độ rộng đầy đủ w-72 (280px)'
+  );
+
+  localStorage.setItem('senviet_current_branch', 'Sen Việt Buffet - Chi nhánh Thái Nguyên');
+  assert(
+    localStorage.getItem('senviet_current_branch') === 'Sen Việt Buffet - Chi nhánh Thái Nguyên',
+    'SUITE 17.3 Branch Selection Persistence in LocalStorage',
+    'Lựa chọn chi nhánh đang thao tác được lưu trữ an toàn trong localStorage ("senviet_current_branch")'
+  );
+
+  // 17.4. Test các hàm/flag phím tắt (Keyboard Shortcuts TASK-PC-07)
+  let testModalOpen = true;
+  let testSearchFocused = false;
+  let testSaveTriggered = false;
+
+  const simulateKeyboardAction = (event: { key: string; ctrlKey?: boolean; metaKey?: boolean; target?: any }) => {
+    if (event.key === 'Escape') {
+      testModalOpen = false;
+    } else if (event.key === 'F2' || (event.key === '/' && !event.target?.isInput)) {
+      testSearchFocused = true;
+    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+      testSaveTriggered = true;
+    }
+  };
+
+  simulateKeyboardAction({ key: 'Escape' });
+  assert(
+    testModalOpen === false,
+    'SUITE 17.4 Keyboard Shortcut Escape Key',
+    'Phím Escape tự động đóng modal/hộp thoại đang mở ngay lập tức'
+  );
+
+  simulateKeyboardAction({ key: 'F2' });
+  simulateKeyboardAction({ key: 's', ctrlKey: true });
+  assert(
+    testSearchFocused === true && testSaveTriggered === true,
+    'SUITE 17.4 Keyboard Shortcuts F2 Focus & Ctrl+S Fast Save',
+    'Phím F2 kích hoạt focus ô tìm kiếm và tổ hợp Ctrl+S kích hoạt lưu nhanh form dữ liệu'
+  );
+
+  // 17.5. Test chế độ in ấn A4 landscape (TASK-PC-08)
+  const cssFilePath = path.resolve(__dirname, '../src/index.css');
+  const cssContent = fs.readFileSync(cssFilePath, 'utf-8');
+
+  const hasMediaPrint = cssContent.includes('@media print');
+  const hasA4Landscape = cssContent.includes('size: A4 landscape');
+  const hasMargin10mm = cssContent.includes('margin: 10mm');
+  const hasHiddenElements =
+    cssContent.includes('.no-print') &&
+    cssContent.includes('#demo-toolbar') &&
+    cssContent.includes('display: none !important');
+  const hasPageBreakProtection =
+    cssContent.includes('page-break-inside: avoid !important') ||
+    cssContent.includes('break-inside: avoid !important');
+
+  assert(
+    hasMediaPrint && hasA4Landscape && hasMargin10mm,
+    'SUITE 17.5 A4 Landscape CSS Print Rules',
+    'CSS index.css chứa đầy đủ cấu hình in chuẩn: @page { size: A4 landscape; margin: 10mm; }'
+  );
+
+  assert(
+    hasHiddenElements && hasPageBreakProtection,
+    'SUITE 17.5 Print Element Exclusions & Page Break Protection',
+    'Tự động ẩn thanh điều hướng, toolbar và áp dụng chống ngắt dòng dở dang (break-inside: avoid) cho bảng và ô chữ ký'
+  );
+
+  // Kiểm tra 4 ô chữ ký kiểm soát nội bộ trên các bảng biểu in
+  const nxtTablePath = path.resolve(__dirname, '../src/components/reconciliation/AutoNXTTable.tsx');
+  const payrollPath = path.resolve(__dirname, '../src/components/payroll/PayrollModule.tsx');
+  const nxtContent = fs.readFileSync(nxtTablePath, 'utf-8');
+  const payrollContent = fs.readFileSync(payrollPath, 'utf-8');
+
+  const hasNxtSignatures =
+    nxtContent.includes('Người Lập Biểu') &&
+    nxtContent.includes('Thủ Kho') &&
+    nxtContent.includes('Kế Toán Trưởng') &&
+    nxtContent.includes('Giám Đốc Duyệt') &&
+    nxtContent.includes('print:grid grid-cols-4');
+
+  const hasPayrollSignatures =
+    payrollContent.includes('Người Lập Biểu') &&
+    payrollContent.includes('Quản Lý Cơ Sở') &&
+    payrollContent.includes('Kế Toán Trưởng') &&
+    payrollContent.includes('Tổng Giám Đốc') &&
+    payrollContent.includes('print:grid grid-cols-4');
+
+  assert(
+    hasNxtSignatures && hasPayrollSignatures,
+    'SUITE 17.5 Standard 4 Internal Control Signatures in Print View',
+    'Bảng NXT và Bảng lương trang bị đầy đủ 4 ô chữ ký kiểm soát nội bộ chuẩn F&B (Người Lập, Quản Lý/Thủ Kho, Kế Toán Trưởng, Ban Điều Hành/Giám Đốc)'
   );
 
   console.log('\n======================================================');

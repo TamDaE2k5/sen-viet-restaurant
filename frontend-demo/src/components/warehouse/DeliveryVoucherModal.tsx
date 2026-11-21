@@ -110,7 +110,10 @@ export const DeliveryVoucherModal: React.FC<DeliveryVoucherModalProps> = ({
           {/* Header 2 Bên */}
           <div className="flex flex-col sm:flex-row justify-between items-start pb-4 border-b-2 border-slate-900 gap-4">
             <div>
-              <div className="font-black text-lg sm:text-xl text-indigo-950 uppercase tracking-tight">
+              <div className="font-black text-sm sm:text-base text-slate-800 uppercase tracking-tight">
+                CÔNG TY T&T NGUYỄN DƯƠNG — HỆ THỐNG BUFFET SEN VIỆT
+              </div>
+              <div className="font-black text-lg sm:text-xl text-indigo-950 uppercase tracking-tight mt-0.5">
                 HỆ THỐNG SEN VIỆT BUFFET
               </div>
               <div className="font-semibold text-slate-700 mt-0.5">

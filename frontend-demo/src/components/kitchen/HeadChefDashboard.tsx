@@ -30,7 +30,13 @@ import {
   RotateCcw,
   FileText,
   ShieldAlert,
+  Boxes,
+  ArrowRight,
 } from 'lucide-react';
+
+export interface HeadChefDashboardProps {
+  onNavigateToWarehouse?: () => void;
+}
 
 export interface DamageReportItem {
   id: number;
@@ -96,7 +102,7 @@ const DEFAULT_SUPPLIERS = [
   { code: 'QVCOTHAO', name: 'Cô Thảo đồ khô & gia vị (Quế Võ)' },
 ];
 
-export const HeadChefDashboard: React.FC = () => {
+export const HeadChefDashboard: React.FC<HeadChefDashboardProps> = ({ onNavigateToWarehouse }) => {
   const { user } = useAuth();
   const { showSuccess, showError } = useNotification();
 
@@ -475,6 +481,22 @@ export const HeadChefDashboard: React.FC = () => {
               <span className="flex items-center gap-1">
                 <Clock className="w-3.5 h-3.5" /> Ca Làm Việc Hiện Tại (Ca Trưa 10:00 - 14:30)
               </span>
+            </div>
+
+            {/* Quick Action: Chuyển nhanh đến phân hệ Kho cơ sở */}
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (onNavigateToWarehouse) onNavigateToWarehouse();
+                  else window.dispatchEvent(new CustomEvent('app-navigate', { detail: 'warehouse' }));
+                }}
+                className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-amber-950 font-extrabold text-xs shadow-md transition-all active:scale-95"
+              >
+                <Boxes className="w-4 h-4 text-amber-900" />
+                <span>Xem Tồn Kho Cơ Sở & Cân Hàng</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
             </div>
           </div>
 
