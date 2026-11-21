@@ -91,8 +91,8 @@ export function isViewAuthorized(viewId: string, user: User | null | undefined):
       return isKitchen || isMgr || isHeadChef || isBranchMgr;
 
     case 'warehouse':
-      // Kế toán chi nhánh, Bếp trưởng, Quản lý chi nhánh, Kế toán tổng, Chủ chuỗi quản lý kho cơ sở & lô hàng (TASK-WH-01)
-      return isBrAcc || isHeadChef || isBranchMgr || isGenAcc || isChuChuoi;
+      // Kế toán chi nhánh, Bếp trưởng, Quản lý chi nhánh, Kế toán tổng, Chủ chuỗi và Bếp viên (xem tồn vật lý & cân hàng) (TASK-WH-01)
+      return isKitchen || isBrAcc || isHeadChef || isBranchMgr || isGenAcc || isChuChuoi;
 
     case 'reconciliation':
       // Quản lý, Bếp trưởng và Kế toán xem đối soát cuối ngày CukCuk

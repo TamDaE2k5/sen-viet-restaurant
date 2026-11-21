@@ -28,6 +28,9 @@ import {
   Filter,
   Edit3,
   Calculator,
+  Printer,
+  LayoutList,
+  Rows,
 } from 'lucide-react';
 import {
   payrollApi,
@@ -49,6 +52,8 @@ export const PayrollModule: React.FC<PayrollModuleProps> = ({ currentUser }) => 
   const [activeTab, setActiveTab] = useState<'payroll' | 'advance' | 'raise' | 'payslip'>('payroll');
   const [selectedMonth, setSelectedMonth] = useState<string>('2026-11');
   const [loading, setLoading] = useState(false);
+  // TASK-PC-05: Chế độ hiển thị Compact Density Mode (32px vs 48px)
+  const [density, setDensity] = useState<'comfortable' | 'compact'>('comfortable');
   const [message, setInternalMessage] = useState<{ text: string; type: 'success' | 'error' | 'warning' } | null>(null);
 
   const setMessage = (msg: { text: string; type: 'success' | 'error' | 'warning' } | null) => {
@@ -120,6 +125,19 @@ export const PayrollModule: React.FC<PayrollModuleProps> = ({ currentUser }) => 
   const [workDaysInput, setWorkDaysInput] = useState<number>(26);
   const [copiedAccount, setCopiedAccount] = useState<string | null>(null);
   const [selectedPayslipUserId, setSelectedPayslipUserId] = useState<number>(0);
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+
+  // TASK-PC-07: Phím tắt F2 hoặc / focus vào ô tìm kiếm
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.key === 'F2' || e.key === '/') && !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName)) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const handleOpenEditWorkDays = (p: Payroll) => {
     setEditingPayroll(p);
@@ -785,8 +803,9 @@ export const PayrollModule: React.FC<PayrollModuleProps> = ({ currentUser }) => 
               <div className="relative">
                 <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
                 <input
+                  ref={searchInputRef}
                   type="text"
-                  placeholder="Tìm tên, STK, ngân hàng..."
+                  placeholder="Tìm tên, STK, ngân hàng... (F2)"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs w-44 focus:w-56 transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500"
@@ -805,26 +824,81 @@ export const PayrollModule: React.FC<PayrollModuleProps> = ({ currentUser }) => 
                 <Clock className="w-3.5 h-3.5" />
                 <span>Chỉ xem 0.5 công ({halfDaysCount})</span>
               </button>
+
+              {/* TASK-PC-05: Density toggle (32px compact vs 48px comfortable) */}
+              <div className="flex items-center bg-slate-100 rounded-xl p-0.5 border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setDensity('comfortable')}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                    density === 'comfortable'
+                      ? 'bg-white text-slate-800 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                  title="Chế độ hiển thị tiêu chuẩn (48px)"
+                >
+                  <Rows className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Tiêu chuẩn</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDensity('compact')}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                    density === 'compact'
+                      ? 'bg-white text-emerald-700 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                  title="Chế độ hiển thị cô đọng (32px)"
+                >
+                  <LayoutList className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Cô đọng</span>
+                </button>
+              </div>
+
+              {/* TASK-PC-08: In ấn khổ A4 Landscape */}
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold transition-all shadow-sm"
+                title="In Bảng lương khổ A4 Landscape (Ctrl+P)"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">In Bảng Lương A4</span>
+              </button>
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="bg-slate-50 text-slate-600 uppercase border-b border-slate-200">
-                  <th className="py-2.5 px-3">STT</th>
-                  <th className="py-2.5 px-3">Nhân viên</th>
-                  <th className="py-2.5 px-3">Ngân hàng & STK</th>
-                  <th className="py-2.5 px-3 text-right">Lương CB</th>
-                  <th className="py-2.5 px-3 text-center">Ngày công</th>
-                  <th className="py-2.5 px-3 text-right">Lương công</th>
-                  <th className="py-2.5 px-3 text-right">Chuyên cần</th>
-                  <th className="py-2.5 px-3 text-right">Trách nhiệm</th>
-                  <th className="py-2.5 px-3 text-right">BHXH</th>
-                  <th className="py-2.5 px-3 text-right">Ứng lương</th>
-                  <th className="py-2.5 px-3 text-right">Tiền phạt</th>
-                  <th className="py-2.5 px-3 text-right font-bold text-slate-900">Thực lĩnh</th>
-                  <th className="py-2.5 px-3">Trạng thái / Thao tác</th>
+          {/* TASK-PC-08: Header in ấn chuẩn A4 Landscape */}
+          <div className="hidden print:block mb-4 text-center">
+            <h1 className="text-sm font-black uppercase tracking-wider text-slate-900">
+              CÔNG TY T&T NGUYỄN DƯƠNG — HỆ THỐNG BUFFET SEN VIỆT
+            </h1>
+            <h2 className="text-base font-bold text-slate-800 mt-1">
+              BẢNG THANH TOÁN LƯƠNG NHÂN VIÊN — THÁNG {selectedMonth}
+            </h2>
+            <p className="text-xs text-slate-500 italic mt-0.5">
+              Thời gian xuất biểu: {new Date().toLocaleDateString('vi-VN')} {new Date().toLocaleTimeString('vi-VN')}
+            </p>
+          </div>
+
+          {/* TASK-PC-04: Freeze Columns & Sticky Header */}
+          <div className="overflow-x-auto max-h-[calc(100vh-270px)] relative border border-slate-200 rounded-xl">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead className="sticky top-0 z-30 bg-slate-50 text-slate-600 uppercase border-b border-slate-200 shadow-sm">
+                <tr>
+                  <th className={`sticky left-0 z-40 bg-slate-100 ${density === 'compact' ? 'py-1.5 px-2' : 'py-2.5 px-3'} w-12 text-center`}>STT</th>
+                  <th className={`sticky left-12 z-40 bg-slate-100 ${density === 'compact' ? 'py-1.5 px-2' : 'py-2.5 px-3'} min-w-[190px] border-r border-slate-300 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]`}>Nhân viên</th>
+                  <th className={`${density === 'compact' ? 'py-1.5 px-2' : 'py-2.5 px-3'}`}>Ngân hàng & STK</th>
+                  <th className={`${density === 'compact' ? 'py-1.5 px-2' : 'py-2.5 px-3'} text-right`}>Lương CB</th>
+                  <th className={`${density === 'compact' ? 'py-1.5 px-2' : 'py-2.5 px-3'} text-center`}>Ngày công</th>
+                  <th className={`${density === 'compact' ? 'py-1.5 px-2' : 'py-2.5 px-3'} text-right`}>Lương công</th>
+                  <th className={`${density === 'compact' ? 'py-1.5 px-2' : 'py-2.5 px-3'} text-right`}>Chuyên cần</th>
+                  <th className={`${density === 'compact' ? 'py-1.5 px-2' : 'py-2.5 px-3'} text-right`}>Trách nhiệm</th>
+                  <th className={`${density === 'compact' ? 'py-1.5 px-2' : 'py-2.5 px-3'} text-right`}>BHXH</th>
+                  <th className={`${density === 'compact' ? 'py-1.5 px-2' : 'py-2.5 px-3'} text-right`}>Ứng lương</th>
+                  <th className={`${density === 'compact' ? 'py-1.5 px-2' : 'py-2.5 px-3'} text-right`}>Tiền phạt</th>
+                  <th className={`${density === 'compact' ? 'py-1.5 px-2' : 'py-2.5 px-3'} text-right font-bold text-slate-900`}>Thực lĩnh</th>
+                  <th className={`sticky right-0 z-40 bg-slate-100 ${density === 'compact' ? 'py-1.5 px-2' : 'py-2.5 px-3'} shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)] text-right`}>Trạng thái / Thao tác</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -835,165 +909,225 @@ export const PayrollModule: React.FC<PayrollModuleProps> = ({ currentUser }) => 
                     </td>
                   </tr>
                 ) : (
-                  filteredPayrolls.map((p, idx) => (
-                    <tr
-                      key={p.id}
-                      className={`hover:bg-slate-50 transition-colors ${
-                        p.status === 'BO_VIEC' || p.isAbandoned || p.excludedFromCost
-                          ? 'bg-slate-100/90 text-slate-500'
-                          : p.status === 'DANG_GIU_LUONG' || p.isUniformRetained
-                          ? 'bg-rose-50/50'
-                          : ''
-                      }`}
-                    >
-                      <td className="py-3 px-3 text-slate-400 font-mono">{idx + 1}</td>
-                      <td className="py-3 px-3">
-                        <div className="font-semibold text-slate-900">{p.fullName}</div>
-                        <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
-                          <span>@{p.username}</span>
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-medium">
-                            {p.position || 'Nhân viên'}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="py-3 px-3 font-mono">
-                        <div className="flex items-center gap-1.5">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${getBankColor(p.bankName)}`}>
-                            {p.bankName || 'Vietcombank'}
-                          </span>
-                        </div>
-                        <div className="text-slate-900 font-bold flex items-center gap-1 mt-0.5">
-                          <span>{p.bankAccountNumber || '—'}</span>
-                          {p.bankAccountNumber && (
-                            <button
-                              type="button"
-                              onClick={() => handleCopyAccount(p.bankAccountNumber!, p.fullName)}
-                              title="Sao chép số tài khoản"
-                              className="text-slate-400 hover:text-blue-600 p-0.5 rounded transition-colors"
-                            >
-                              {copiedAccount === p.bankAccountNumber ? (
-                                <Check className="w-3.5 h-3.5 text-emerald-600" />
-                              ) : (
-                                <Copy className="w-3.5 h-3.5" />
-                              )}
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                      <td className="py-3 px-3 text-right font-medium text-slate-700">
-                        {p.baseSalary.toLocaleString('vi-VN')} đ
-                      </td>
-                      <td className="py-3 px-3 text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <span className="font-extrabold text-slate-900">
-                            {p.actualWorkDays}
-                          </span>
-                          <span className="text-[11px] text-slate-400">/{p.standardWorkDays}</span>
-                          <button
-                            type="button"
-                            onClick={() => handleOpenEditWorkDays(p)}
-                            title="Chỉnh sửa chấm công (hỗ trợ 0.5 công / nửa ca)"
-                            className="p-1 hover:bg-slate-200 text-slate-500 rounded transition-colors"
-                          >
-                            <Edit3 className="w-3 h-3 text-blue-600" />
-                          </button>
-                        </div>
-                        {p.actualWorkDays % 1 !== 0 && (
-                          <span className="inline-block px-1.5 py-0.2 bg-teal-100 border border-teal-300 text-teal-800 text-[9px] font-bold rounded-full mt-0.5">
-                            +0.5 công
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3 px-3 text-right font-semibold text-slate-800">
-                        {(p.workSalary || Math.round((p.baseSalary / p.standardWorkDays) * p.actualWorkDays)).toLocaleString('vi-VN')} đ
-                      </td>
-                      <td className="py-3 px-3 text-right text-emerald-600 font-semibold">
-                        {(p.attendanceBonus || 0) > 0 ? `+${(p.attendanceBonus || 0).toLocaleString('vi-VN')} đ` : '—'}
-                      </td>
-                      <td className="py-3 px-3 text-right text-blue-600 font-semibold">
-                        {(p.responsibilityAllowance || p.allowance || 0) > 0
-                          ? `+${(p.responsibilityAllowance || p.allowance || 0).toLocaleString('vi-VN')} đ`
-                          : '—'}
-                      </td>
-                      <td className="py-3 px-3 text-right text-purple-700 font-semibold">
-                        {(p.insuranceDeduction || 0) > 0 ? `-${(p.insuranceDeduction || 0).toLocaleString('vi-VN')} đ` : '—'}
-                      </td>
-                      <td className="py-3 px-3 text-right text-amber-600 font-semibold">
-                        {(p.advanceDeduction || 0) > 0 ? `-${(p.advanceDeduction || 0).toLocaleString('vi-VN')} đ` : '—'}
-                      </td>
-                      <td className="py-3 px-3 text-right text-rose-600 font-semibold">
-                        {(p.penaltyDeduction || 0) > 0 ? `-${(p.penaltyDeduction || 0).toLocaleString('vi-VN')} đ` : '—'}
-                      </td>
-                      <td className="py-3 px-3 text-right font-mono font-bold text-sm">
-                        {p.status === 'BO_VIEC' || p.isAbandoned || p.excludedFromCost ? (
-                          <div className="flex flex-col items-end">
-                            <span className="text-slate-400 line-through">0 đ</span>
-                            <span className="text-[10px] text-slate-400 font-normal">Tách khỏi chi phí</span>
-                          </div>
-                        ) : (
-                          <span
-                            className={
-                              p.status === 'DANG_GIU_LUONG' || p.isUniformRetained
-                                ? 'text-rose-600 font-black'
-                                : 'text-emerald-700 font-black'
-                            }
-                          >
-                            {p.netSalary.toLocaleString('vi-VN')} đ
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3 px-3">
-                        <div className="flex flex-col gap-1 items-start">
-                          <span
-                            className={`px-2.5 py-1 rounded-full text-[11px] font-black ${
-                              p.status === 'BO_VIEC' || p.isAbandoned || p.excludedFromCost
-                                ? 'bg-slate-200 text-slate-800'
-                                : p.status === 'DANG_GIU_LUONG' || p.isUniformRetained
-                                ? 'bg-rose-100 text-rose-800 border border-rose-300 animate-pulse'
-                                : p.isLocked
-                                ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                                : 'bg-emerald-100 text-emerald-800'
-                            }`}
-                          >
-                            {p.status === 'BO_VIEC' || p.isAbandoned || p.excludedFromCost
-                              ? 'BỎ VIỆC (LƯƠNG = 0)'
-                              : p.status === 'DANG_GIU_LUONG' || p.isUniformRetained
-                              ? 'TẠM KHÓA CHI LƯƠNG'
-                              : p.isLocked
-                              ? 'ĐÃ KHÓA'
-                              : 'Đã duyệt'}
-                          </span>
+                  filteredPayrolls.map((p, idx) => {
+                    const isAbnormal = p.status === 'BO_VIEC' || p.isAbandoned || p.excludedFromCost;
+                    const isHold = p.status === 'DANG_GIU_LUONG' || p.isUniformRetained;
+                    const cellPy = density === 'compact' ? 'py-1.5 px-2.5 text-xs' : 'py-3 px-3 text-sm';
 
-                          {(p.status === 'DANG_GIU_LUONG' || p.isUniformRetained) && isManagerOrAccountant && (
+                    return (
+                      <tr
+                        key={p.id}
+                        className={`hover:bg-slate-50 transition-colors group ${
+                          isAbnormal
+                            ? 'bg-slate-100/90 text-slate-500'
+                            : isHold
+                            ? 'bg-rose-50/50'
+                            : ''
+                        }`}
+                      >
+                        <td
+                          className={`sticky left-0 z-20 w-12 text-center font-mono ${cellPy} ${
+                            isAbnormal
+                              ? 'bg-slate-100 text-slate-500'
+                              : isHold
+                              ? 'bg-rose-50 text-slate-600'
+                              : 'bg-white group-hover:bg-slate-50 text-slate-400'
+                          }`}
+                        >
+                          {idx + 1}
+                        </td>
+                        <td
+                          className={`sticky left-12 z-20 min-w-[190px] border-r border-slate-300 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${cellPy} ${
+                            isAbnormal
+                              ? 'bg-slate-100'
+                              : isHold
+                              ? 'bg-rose-50'
+                              : 'bg-white group-hover:bg-slate-50'
+                          }`}
+                        >
+                          <div className="font-semibold text-slate-900">{p.fullName}</div>
+                          <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                            <span>@{p.username}</span>
+                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-medium">
+                              {p.position || 'Nhân viên'}
+                            </span>
+                          </div>
+                        </td>
+                        <td className={`${cellPy} font-mono`}>
+                          <div className="flex items-center gap-1.5">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${getBankColor(p.bankName)}`}>
+                              {p.bankName || 'Vietcombank'}
+                            </span>
+                          </div>
+                          <div className="text-slate-900 font-bold flex items-center gap-1 mt-0.5">
+                            <span>{p.bankAccountNumber || '—'}</span>
+                            {p.bankAccountNumber && (
+                              <button
+                                type="button"
+                                onClick={() => handleCopyAccount(p.bankAccountNumber!, p.fullName)}
+                                title="Sao chép số tài khoản"
+                                className="text-slate-400 hover:text-blue-600 p-0.5 rounded transition-colors"
+                              >
+                                {copiedAccount === p.bankAccountNumber ? (
+                                  <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                ) : (
+                                  <Copy className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                        <td className={`${cellPy} text-right font-medium text-slate-700`}>
+                          {p.baseSalary.toLocaleString('vi-VN')} đ
+                        </td>
+                        <td className={`${cellPy} text-center`}>
+                          <div className="flex items-center justify-center gap-1">
+                            <span className="font-extrabold text-slate-900">
+                              {p.actualWorkDays}
+                            </span>
+                            <span className="text-[11px] text-slate-400">/{p.standardWorkDays}</span>
                             <button
                               type="button"
-                              onClick={() => handleQuickUnlockUniform(p)}
-                              className="btn-touch mt-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[11px] flex items-center gap-1 shadow-sm active:scale-95 transition-all"
+                              onClick={() => handleOpenEditWorkDays(p)}
+                              title="Chỉnh sửa chấm công (hỗ trợ 0.5 công / nửa ca)"
+                              className="p-1 hover:bg-slate-200 text-slate-500 rounded transition-colors"
                             >
-                              <CheckCircle2 className="h-3.5 w-3.5" />
-                              <span>Thu hồi & Mở khóa</span>
+                              <Edit3 className="w-3 h-3 text-blue-600" />
                             </button>
-                          )}
-                          {(p.status === 'BO_VIEC' || p.isAbandoned || p.excludedFromCost) && (
-                            <span className="text-[10px] text-rose-600 font-semibold italic">
-                              Bỏ việc — không trả theo quy định
+                          </div>
+                          {p.actualWorkDays % 1 !== 0 && (
+                            <span className="inline-block px-1.5 py-0.2 bg-teal-100 border border-teal-300 text-teal-800 text-[9px] font-bold rounded-full mt-0.5">
+                              +0.5 công
                             </span>
                           )}
-                          {p.holdReason && (p.status === 'DANG_GIU_LUONG' || p.isUniformRetained) && (
-                            <span className="text-[10px] text-rose-700 font-semibold bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
-                              {p.holdReason}
+                        </td>
+                        <td className={`${cellPy} text-right font-semibold text-slate-800`}>
+                          {(p.workSalary || Math.round((p.baseSalary / p.standardWorkDays) * p.actualWorkDays)).toLocaleString('vi-VN')} đ
+                        </td>
+                        <td className={`${cellPy} text-right text-emerald-600 font-semibold`}>
+                          {(p.attendanceBonus || 0) > 0 ? `+${(p.attendanceBonus || 0).toLocaleString('vi-VN')} đ` : '—'}
+                        </td>
+                        <td className={`${cellPy} text-right text-blue-600 font-semibold`}>
+                          {(p.responsibilityAllowance || p.allowance || 0) > 0
+                            ? `+${(p.responsibilityAllowance || p.allowance || 0).toLocaleString('vi-VN')} đ`
+                            : '—'}
+                        </td>
+                        <td className={`${cellPy} text-right text-purple-700 font-semibold`}>
+                          {(p.insuranceDeduction || 0) > 0 ? `-${(p.insuranceDeduction || 0).toLocaleString('vi-VN')} đ` : '—'}
+                        </td>
+                        <td className={`${cellPy} text-right text-amber-600 font-semibold`}>
+                          {(p.advanceDeduction || 0) > 0 ? `-${(p.advanceDeduction || 0).toLocaleString('vi-VN')} đ` : '—'}
+                        </td>
+                        <td className={`${cellPy} text-right text-rose-600 font-semibold`}>
+                          {(p.penaltyDeduction || 0) > 0 ? `-${(p.penaltyDeduction || 0).toLocaleString('vi-VN')} đ` : '—'}
+                        </td>
+                        <td className={`${cellPy} text-right font-mono font-bold ${density === 'compact' ? 'text-xs' : 'text-sm'}`}>
+                          {isAbnormal ? (
+                            <div className="flex flex-col items-end">
+                              <span className="text-slate-400 line-through">0 đ</span>
+                              <span className="text-[10px] text-slate-400 font-normal">Tách khỏi chi phí</span>
+                            </div>
+                          ) : (
+                            <span
+                              className={
+                                isHold
+                                  ? 'text-rose-600 font-black'
+                                  : 'text-emerald-700 font-black'
+                              }
+                            >
+                              {p.netSalary.toLocaleString('vi-VN')} đ
                             </span>
                           )}
-                          {p.note && p.status !== 'BO_VIEC' && !p.isAbandoned && (
-                            <span className="text-[10px] text-slate-500 italic">{p.note}</span>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))
+                        </td>
+                        <td
+                          className={`sticky right-0 z-20 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)] ${cellPy} ${
+                            isAbnormal
+                              ? 'bg-slate-100'
+                              : isHold
+                              ? 'bg-rose-50'
+                              : 'bg-white group-hover:bg-slate-50'
+                          }`}
+                        >
+                          <div className="flex flex-col gap-1 items-start">
+                            <span
+                              className={`px-2.5 py-1 rounded-full text-[11px] font-black ${
+                                isAbnormal
+                                  ? 'bg-slate-200 text-slate-800'
+                                  : isHold
+                                  ? 'bg-rose-100 text-rose-800 border border-rose-300 animate-pulse'
+                                  : p.isLocked
+                                  ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                                  : 'bg-emerald-100 text-emerald-800'
+                              }`}
+                            >
+                              {isAbnormal
+                                ? 'BỎ VIỆC (LƯƠNG = 0)'
+                                : isHold
+                                ? 'TẠM KHÓA CHI LƯƠNG'
+                                : p.isLocked
+                                ? 'ĐÃ KHÓA'
+                                : 'Đã duyệt'}
+                            </span>
+
+                            {isHold && isManagerOrAccountant && (
+                              <button
+                                type="button"
+                                onClick={() => handleQuickUnlockUniform(p)}
+                                className="btn-touch mt-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[11px] flex items-center gap-1 shadow-sm active:scale-95 transition-all"
+                              >
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                <span>Thu hồi & Mở khóa</span>
+                              </button>
+                            )}
+                            {isAbnormal && (
+                              <span className="text-[10px] text-rose-600 font-semibold italic">
+                                Bỏ việc — không trả theo quy định
+                              </span>
+                            )}
+                            {p.holdReason && isHold && (
+                              <span className="text-[10px] text-rose-700 font-semibold bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
+                                {p.holdReason}
+                              </span>
+                            )}
+                            {p.note && !isAbnormal && (
+                              <span className="text-[10px] text-slate-500 italic">{p.note}</span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
+          </div>
+
+          {/* 4 Ô CHỮ KÝ CHUẨN A4 LANDSCAPE (TASK-PC-08) */}
+          <div className="hidden print:grid grid-cols-4 gap-4 mt-8 pt-4 border-t border-slate-300 text-center text-xs print-avoid-break">
+            <div className="space-y-1">
+              <span className="font-bold block uppercase text-slate-800">Người Lập Biểu</span>
+              <span className="text-[10px] text-slate-500 italic block">(Ký, ghi rõ họ tên)</span>
+              <div className="h-16" />
+              <span className="font-bold text-slate-700">Kế toán tiền lương</span>
+            </div>
+            <div className="space-y-1">
+              <span className="font-bold block uppercase text-slate-800">Quản Lý Cơ Sở</span>
+              <span className="text-[10px] text-slate-500 italic block">(Ký, ghi rõ họ tên)</span>
+              <div className="h-16" />
+              <span className="font-bold text-slate-700">Giám đốc chi nhánh</span>
+            </div>
+            <div className="space-y-1">
+              <span className="font-bold block uppercase text-slate-800">Kế Toán Trưởng</span>
+              <span className="text-[10px] text-slate-500 italic block">(Ký, ghi rõ họ tên)</span>
+              <div className="h-16" />
+              <span className="font-bold text-slate-700">Vũ Thủy</span>
+            </div>
+            <div className="space-y-1">
+              <span className="font-bold block uppercase text-slate-800">Tổng Giám Đốc</span>
+              <span className="text-[10px] text-slate-500 italic block">(Ký, đóng dấu)</span>
+              <div className="h-16" />
+              <span className="font-bold text-slate-700">Ban Điều Hành Sen Việt</span>
+            </div>
           </div>
         </div>
       )}

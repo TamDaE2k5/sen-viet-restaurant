@@ -184,6 +184,7 @@ interface StockCardsTabProps {
   buffetItems: Item[];
   documents: WarehouseDocument[];
   onOpenDocModal: (type: 'NHAP' | 'XUAT_CHUYEN' | 'HUY') => void;
+  hideFinancials?: boolean;
 }
 
 export const StockCardsTab: React.FC<StockCardsTabProps> = ({
@@ -192,6 +193,7 @@ export const StockCardsTab: React.FC<StockCardsTabProps> = ({
   buffetItems,
   documents,
   onOpenDocModal,
+  hideFinancials = false,
 }) => {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
@@ -699,7 +701,7 @@ export const StockCardsTab: React.FC<StockCardsTabProps> = ({
             <Package className="h-4 w-4 text-emerald-600" />
           </div>
           <div className="text-xl font-black font-mono text-indigo-950 mt-1">
-            {totalStockValue.toLocaleString('vi-VN')} đ
+            {hideFinancials ? '*** (Bảo mật tài chính)' : `${totalStockValue.toLocaleString('vi-VN')} đ`}
           </div>
           <div className="text-[10px] text-emerald-700 font-semibold mt-0.5">
             ✓ Đã đồng bộ với kết quả kiểm kê gần nhất
@@ -798,14 +800,16 @@ export const StockCardsTab: React.FC<StockCardsTabProps> = ({
         </div>
       </div>
 
-      {/* Bảng Danh Sách Tồn Kho & Thẻ Kho Tức Thời */}
+      {/* Bảng Danh Sách Tồn Kho & Thẻ Kho Tức Thời (TASK-PC-04: Freeze Columns & Sticky Header) */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-h-[calc(100vh-270px)] relative">
           <table className="w-full text-left border-collapse text-xs sm:text-sm">
-            <thead>
-              <tr className="bg-slate-100 border-b border-slate-200 text-slate-600 font-extrabold text-[11px] uppercase tracking-wider">
-                <th className="p-3.5">Mã Hàng</th>
-                <th className="p-3.5">Tên Mặt Hàng / Quy Cách</th>
+            <thead className="bg-slate-100 border-b border-slate-200 text-slate-600 font-extrabold text-[11px] uppercase tracking-wider sticky top-0 z-30 shadow-sm">
+              <tr>
+                <th className="p-3.5 sticky left-0 z-40 bg-slate-100 w-28">Mã Hàng</th>
+                <th className="p-3.5 sticky left-28 z-40 bg-slate-100 min-w-[200px] border-r border-slate-300 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                  Tên Mặt Hàng / Quy Cách
+                </th>
                 <th className="p-3.5">Chi Nhánh</th>
                 <th className="p-3.5">Nhóm Thực Phẩm Buffet</th>
                 <th className="p-3.5 text-center">ĐVT</th>
@@ -814,7 +818,9 @@ export const StockCardsTab: React.FC<StockCardsTabProps> = ({
                 <th className="p-3.5 text-right">Max Stock</th>
                 <th className="p-3.5 text-right font-mono">Giá Trị Tồn (VNĐ)</th>
                 <th className="p-3.5 text-center">Trạng Thái Màu</th>
-                <th className="p-3.5 text-right">Thẻ Kho</th>
+                <th className="p-3.5 text-right sticky right-0 z-40 bg-slate-100 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                  Thẻ Kho
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -835,14 +841,22 @@ export const StockCardsTab: React.FC<StockCardsTabProps> = ({
                   return (
                     <tr
                       key={`${item.branchId}-${item.itemId}`}
-                      className={`hover:bg-slate-50 transition-colors ${
+                      className={`hover:bg-slate-50 transition-colors group ${
                         isCritical ? 'bg-rose-50/40' : ''
                       }`}
                     >
-                      <td className="p-3.5 font-mono font-bold text-indigo-700">
+                      <td
+                        className={`p-3.5 font-mono font-bold text-indigo-700 sticky left-0 z-20 w-28 ${
+                          isCritical ? 'bg-rose-50' : 'bg-white group-hover:bg-slate-50'
+                        }`}
+                      >
                         {item.itemCode}
                       </td>
-                      <td className="p-3.5 font-bold text-slate-900">
+                      <td
+                        className={`p-3.5 font-bold text-slate-900 sticky left-28 z-20 min-w-[200px] border-r border-slate-300 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${
+                          isCritical ? 'bg-rose-50' : 'bg-white group-hover:bg-slate-50'
+                        }`}
+                      >
                         <div>{item.itemName}</div>
                         <div className="text-[10px] text-slate-400 font-normal flex items-center gap-1 mt-0.5">
                           <ThermometerSnowflake className="h-3 w-3 text-cyan-600" />
@@ -909,7 +923,7 @@ export const StockCardsTab: React.FC<StockCardsTabProps> = ({
                         {item.maxStock} {item.unit}
                       </td>
                       <td className="p-3.5 text-right font-mono font-black text-indigo-950">
-                        {(item.currentStock * item.unitPrice).toLocaleString('vi-VN')} đ
+                        {hideFinancials ? '***' : `${(item.currentStock * item.unitPrice).toLocaleString('vi-VN')} đ`}
                       </td>
                       <td className="p-3.5 text-center">
                         {isCritical ? (
@@ -933,7 +947,11 @@ export const StockCardsTab: React.FC<StockCardsTabProps> = ({
                           </span>
                         )}
                       </td>
-                      <td className="p-3.5 text-right">
+                      <td
+                        className={`p-3.5 text-right sticky right-0 z-20 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)] ${
+                          isCritical ? 'bg-rose-50' : 'bg-white group-hover:bg-slate-50'
+                        }`}
+                      >
                         <button
                           type="button"
                           onClick={() => setSelectedStockItem(item)}

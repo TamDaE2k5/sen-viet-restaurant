@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   FileSpreadsheet,
   TrendingDown,
@@ -14,7 +14,10 @@ import {
   Plus,
   ArrowUpDown,
   DollarSign,
-  AlertCircle
+  AlertCircle,
+  Printer,
+  LayoutList,
+  Rows
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { SEED_NXT_RECORDS, NXTRecord } from './nxtData';
@@ -32,10 +35,28 @@ export const AutoNXTTable: React.FC<AutoNXTTableProps> = ({
   const [records, setRecords] = useState<NXTRecord[]>(SEED_NXT_RECORDS);
   const [selectedBranchId, setSelectedBranchId] = useState<number>(branchId);
 
-  // Filters
+  // TASK-PC-05: Chế độ Compact Density Mode (32px vs 48px)
+  const [density, setDensity] = useState<'comfortable' | 'compact'>('comfortable');
+
+  // Filters & Search
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [lossOnly, setLossOnly] = useState<boolean>(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // TASK-PC-07: Phím tắt PC (F2 hoặc / focus ô tìm kiếm, Escape hủy)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F2' || (e.key === '/' && document.activeElement?.tagName !== 'INPUT')) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      } else if (e.key === 'Escape') {
+        if (showAddModal) setShowAddModal(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Configurable guest count for dynamic re-calculation
   const [totalGuests, setTotalGuests] = useState<number>(selectedBranchId === 1 ? 1529.5 : 1245);
@@ -389,6 +410,47 @@ export const AutoNXTTable: React.FC<AutoNXTTableProps> = ({
             />
           </div>
 
+          {/* TASK-PC-05: Chế độ hiển thị Compact vs Comfortable */}
+          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
+            <button
+              type="button"
+              onClick={() => setDensity('comfortable')}
+              title="Chế độ tiêu chuẩn (48px/hàng)"
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                density === 'comfortable'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              <LayoutList className="h-3.5 w-3.5 text-slate-500" />
+              <span className="hidden sm:inline">Tiêu chuẩn (48px)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setDensity('compact')}
+              title="Chế độ cô đọng (32px/hàng - xem nhiều dòng dữ liệu)"
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                density === 'compact'
+                  ? 'bg-white text-indigo-700 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              <Rows className="h-3.5 w-3.5 text-indigo-600" />
+              <span className="hidden sm:inline">Cô đọng (32px)</span>
+            </button>
+          </div>
+
+          {/* TASK-PC-08: In A4 Landscape */}
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="btn-touch px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs flex items-center gap-1.5 shadow-md transition-all"
+            title="In ấn khổ A4 Landscape (Ctrl+P)"
+          >
+            <Printer className="h-4 w-4" />
+            <span className="hidden sm:inline">In A4 Ngang</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setShowAddModal(true)}
@@ -461,12 +523,13 @@ export const AutoNXTTable: React.FC<AutoNXTTableProps> = ({
       {/* FILTER TOOLBAR */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-[280px]">
-          {/* Search box */}
+          {/* Search box (TASK-PC-07: F2 hoặc / để focus) */}
           <div className="relative flex-1 min-w-[200px]">
             <Search className="h-4 w-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
+              ref={searchInputRef}
               type="text"
-              placeholder="Tìm theo mã hàng, tên hàng, phân nhóm..."
+              placeholder="Tìm theo mã hàng, tên hàng... (F2 hoặc /)"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
@@ -513,88 +576,106 @@ export const AutoNXTTable: React.FC<AutoNXTTableProps> = ({
         </button>
       </div>
 
-      {/* MASTER NXT TABLE */}
+      {/* KHỐI TIÊU ĐỀ IN ẤN (CHỈ XUẤT HIỆN KHI IN KHỔ A4 LANDSCAPE) */}
+      <div className="hidden print:block mb-4 text-center">
+        <div className="font-extrabold text-xs uppercase text-slate-600">
+          CÔNG TY T&T NGUYỄN DƯƠNG — HỆ THỐNG BUFFET SEN VIỆT
+        </div>
+        <div className="font-black text-base uppercase text-slate-900 mt-1">
+          BẢNG TỔNG HỢP NHẬP - XUẤT - TỒN & ĐỐI SOÁT ĐỊNH LƯỢNG
+        </div>
+        <div className="text-xs text-slate-600 mt-0.5">
+          {selectedBranchId === 1 ? 'Chi nhánh Thái Nguyên' : 'Chi nhánh Quế Võ'} • Tháng 11/2026 (18 ngày đối soát thật)
+        </div>
+      </div>
+
+      {/* MASTER NXT TABLE (TASK-PC-04: Freeze Columns, Sticky Header & TASK-PC-05: Density) */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto max-h-[700px] relative">
+        <div className="overflow-x-auto max-h-[calc(100vh-270px)] relative">
           <table className="w-full text-left border-collapse text-xs">
             <thead className="bg-slate-100 text-slate-700 font-bold sticky top-0 z-30 shadow-sm">
               {/* Group header row */}
               <tr className="border-b border-slate-200 text-[11px] uppercase tracking-wider text-slate-600">
-                <th colSpan={4} className="p-2.5 border-r border-slate-200 text-center bg-slate-200/70">
+                <th colSpan={3} className="p-2 border-r border-slate-300 text-center bg-slate-200/90 sticky left-0 z-40">
                   Thông Tin Mặt Hàng
                 </th>
-                <th colSpan={2} className="p-2.5 border-r border-slate-200 text-center bg-slate-100">
+                <th className="p-2 border-r border-slate-200 text-center bg-slate-100">
+                  ĐVT
+                </th>
+                <th colSpan={2} className="p-2 border-r border-slate-200 text-center bg-slate-100">
                   Phân Loại
                 </th>
-                <th colSpan={2} className="p-2.5 border-r border-slate-200 text-center bg-slate-200/70">
+                <th colSpan={2} className="p-2 border-r border-slate-200 text-center bg-slate-200/70">
                   1. Tồn Đầu Kỳ
                 </th>
-                <th colSpan={2} className="p-2.5 border-r border-slate-200 text-center bg-emerald-50 text-emerald-800">
+                <th colSpan={2} className="p-2 border-r border-slate-200 text-center bg-emerald-50 text-emerald-800">
                   2. Nhập Trong Kỳ
                 </th>
-                <th colSpan={2} className="p-2.5 border-r border-slate-200 text-center bg-blue-50 text-blue-800">
+                <th colSpan={2} className="p-2 border-r border-slate-200 text-center bg-blue-50 text-blue-800">
                   3. Xuất Trong Kỳ
                 </th>
-                <th colSpan={2} className="p-2.5 border-r border-slate-200 text-center bg-indigo-50 text-indigo-900 font-black">
+                <th colSpan={2} className="p-2 border-r border-slate-200 text-center bg-indigo-50 text-indigo-900 font-black">
                   4. Tồn Cuối (Đầu+Nhập-Xuất)
                 </th>
-                <th className="p-2.5 border-r border-slate-200 text-right bg-slate-100">
+                <th className="p-2 border-r border-slate-200 text-right bg-slate-100">
                   Giá TB
                 </th>
-                <th colSpan={2} className="p-2.5 border-r border-slate-200 text-center bg-purple-50 text-purple-900">
+                <th colSpan={2} className="p-2 border-r border-slate-200 text-center bg-purple-50 text-purple-900">
                   5. Tỷ Lệ Lý Thuyết
                 </th>
-                <th colSpan={2} className="p-2.5 border-r border-slate-200 text-center bg-sky-50 text-sky-900">
+                <th colSpan={2} className="p-2 border-r border-slate-200 text-center bg-sky-50 text-sky-900">
                   6. Tỷ Lệ Thực Tế
                 </th>
-                <th colSpan={2} className="p-2.5 text-center bg-rose-100 text-rose-900 font-black">
+                <th colSpan={2} className="p-2 text-center bg-rose-100 text-rose-900 font-black sticky right-0 z-40 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                   7. So Sánh (Thất Thoát Âm)
                 </th>
               </tr>
 
               {/* Sub-header row */}
               <tr className="border-b border-slate-300 text-[10px] text-slate-500 bg-slate-50">
-                <th className="p-2.5 w-10 text-center">STT</th>
-                <th className="p-2.5 w-20">Mã hàng</th>
-                <th className="p-2.5 min-w-[150px] sticky left-0 z-20 bg-slate-50 border-r border-slate-200 shadow-sm">
+                <th className="py-2 px-1.5 w-12 text-center sticky left-0 z-40 bg-slate-100">STT</th>
+                <th className="py-2 px-2 w-24 sticky left-12 z-40 bg-slate-100">Mã hàng</th>
+                <th className="py-2 px-2 min-w-[170px] sticky left-36 z-40 bg-slate-100 border-r border-slate-300 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                   Tên mặt hàng
                 </th>
-                <th className="p-2.5 w-12 text-center border-r border-slate-200">ĐVT</th>
-                <th className="p-2.5">Loại CP</th>
-                <th className="p-2.5 border-r border-slate-200">Phân nhóm</th>
+                <th className="py-2 px-1.5 w-12 text-center border-r border-slate-200">ĐVT</th>
+                <th className="py-2 px-2">Loại CP</th>
+                <th className="py-2 px-2 border-r border-slate-200">Phân nhóm</th>
 
                 {/* Tồn đầu */}
-                <th className="p-2.5 text-right">SL</th>
-                <th className="p-2.5 text-right border-r border-slate-200">Thành tiền (đ)</th>
+                <th className="py-2 px-2 text-right">SL</th>
+                <th className="py-2 px-2 text-right border-r border-slate-200">Thành tiền (đ)</th>
 
                 {/* Nhập */}
-                <th className="p-2.5 text-right bg-emerald-50/50">SL</th>
-                <th className="p-2.5 text-right bg-emerald-50/50 border-r border-slate-200">Thành tiền (đ)</th>
+                <th className="py-2 px-2 text-right bg-emerald-50/50">SL</th>
+                <th className="py-2 px-2 text-right bg-emerald-50/50 border-r border-slate-200">Thành tiền (đ)</th>
 
                 {/* Xuất */}
-                <th className="p-2.5 text-right bg-blue-50/50">SL</th>
-                <th className="p-2.5 text-right bg-blue-50/50 border-r border-slate-200">Thành tiền (đ)</th>
+                <th className="py-2 px-2 text-right bg-blue-50/50">SL</th>
+                <th className="py-2 px-2 text-right bg-blue-50/50 border-r border-slate-200">Thành tiền (đ)</th>
 
                 {/* Tồn cuối */}
-                <th className="p-2.5 text-right font-black text-indigo-900 bg-indigo-50/60">SL</th>
-                <th className="p-2.5 text-right font-black text-indigo-900 bg-indigo-50/60 border-r border-slate-200">
+                <th className="py-2 px-2 text-right font-black text-indigo-900 bg-indigo-50/60">SL</th>
+                <th className="py-2 px-2 text-right font-black text-indigo-900 bg-indigo-50/60 border-r border-slate-200">
                   Thành tiền (đ)
                 </th>
 
                 {/* Giá TB */}
-                <th className="p-2.5 text-right font-mono border-r border-slate-200">Đơn giá</th>
+                <th className="py-2 px-2 text-right font-mono border-r border-slate-200">Đơn giá</th>
 
                 {/* Lý thuyết */}
-                <th className="p-2.5 text-right bg-purple-50/40">1 Người (kg)</th>
-                <th className="p-2.5 text-right bg-purple-50/40 border-r border-slate-200">Tổng tiêu hao (đ)</th>
+                <th className="py-2 px-2 text-right bg-purple-50/40">1 Người (kg)</th>
+                <th className="py-2 px-2 text-right bg-purple-50/40 border-r border-slate-200">Tổng tiêu hao (đ)</th>
 
                 {/* Thực tế */}
-                <th className="p-2.5 text-right bg-sky-50/40">1 Người (kg)</th>
-                <th className="p-2.5 text-right bg-sky-50/40 border-r border-slate-200">1 Khách ăn (đ)</th>
+                <th className="py-2 px-2 text-right bg-sky-50/40">1 Người (kg)</th>
+                <th className="py-2 px-2 text-right bg-sky-50/40 border-r border-slate-200">1 Khách ăn (đ)</th>
 
                 {/* So sánh */}
-                <th className="p-2.5 text-right bg-rose-50 font-bold">Lệch kg/người</th>
-                <th className="p-2.5 text-right bg-rose-50 font-black text-rose-900">Lệch tổng tiền (đ)</th>
+                <th className="py-2 px-2 text-right bg-rose-50 font-bold">Lệch kg/người</th>
+                <th className="py-2 px-2 text-right bg-rose-100 font-black text-rose-900 sticky right-0 z-40 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                  Lệch tổng tiền (đ)
+                </th>
               </tr>
             </thead>
 
@@ -609,86 +690,105 @@ export const AutoNXTTable: React.FC<AutoNXTTableProps> = ({
               ) : (
                 processedRecords.map((r, idx) => {
                   const isRed = r.isLossWarning;
+                  const cellP = density === 'compact' ? 'py-1 px-2 text-[11px]' : 'py-2.5 px-3 text-xs';
 
                   return (
                     <tr
                       key={r.id}
-                      className={`hover:bg-slate-50 transition-colors ${
+                      className={`hover:bg-slate-50 transition-colors group ${
                         isRed ? 'bg-rose-50/60 text-slate-900 font-semibold' : ''
                       }`}
                     >
-                      <td className="p-2.5 text-center font-mono text-[11px] text-slate-400">{idx + 1}</td>
-                      <td className="p-2.5 font-mono font-bold text-slate-800">{r.itemCode}</td>
+                      {/* Cột 1: STT (Freeze left-0) */}
                       <td
-                        className={`p-2.5 sticky left-0 z-10 border-r border-slate-200 font-bold ${
-                          isRed ? 'bg-rose-50 text-rose-950' : 'bg-white text-slate-900'
+                        className={`${cellP} text-center font-mono text-[11px] sticky left-0 z-20 w-12 ${
+                          isRed ? 'bg-rose-50 text-slate-600' : 'bg-white group-hover:bg-slate-50 text-slate-400'
+                        }`}
+                      >
+                        {idx + 1}
+                      </td>
+
+                      {/* Cột 2: Mã hàng (Freeze left-12) */}
+                      <td
+                        className={`${cellP} font-mono font-bold sticky left-12 z-20 w-24 ${
+                          isRed ? 'bg-rose-50 text-slate-900' : 'bg-white group-hover:bg-slate-50 text-slate-800'
+                        }`}
+                      >
+                        {r.itemCode}
+                      </td>
+
+                      {/* Cột 3: Tên mặt hàng (Freeze left-36) */}
+                      <td
+                        className={`${cellP} sticky left-36 z-20 border-r border-slate-300 font-bold min-w-[170px] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${
+                          isRed ? 'bg-rose-50 text-rose-950' : 'bg-white group-hover:bg-slate-50 text-slate-900'
                         }`}
                       >
                         <div className="flex items-center gap-1.5">
                           {isRed && (
                             <AlertTriangle className="h-3.5 w-3.5 text-rose-600 flex-shrink-0 animate-pulse" />
                           )}
-                          <span>{r.itemName}</span>
+                          <span className="truncate">{r.itemName}</span>
                         </div>
                       </td>
-                      <td className="p-2.5 text-center text-slate-500 font-mono text-[11px] border-r border-slate-200">
+
+                      <td className={`${cellP} text-center text-slate-500 font-mono text-[11px] border-r border-slate-200`}>
                         {r.unit}
                       </td>
-                      <td className="p-2.5 text-[11px] text-slate-600">{r.costCategory}</td>
-                      <td className="p-2.5 text-[11px] text-slate-500 border-r border-slate-200">
+                      <td className={`${cellP} text-[11px] text-slate-600`}>{r.costCategory}</td>
+                      <td className={`${cellP} text-[11px] text-slate-500 border-r border-slate-200`}>
                         {r.subCategory || '—'}
                       </td>
 
                       {/* 1. Tồn đầu */}
-                      <td className="p-2.5 text-right font-mono font-semibold">
+                      <td className={`${cellP} text-right font-mono font-semibold`}>
                         {r.openingStockQty > 0 ? r.openingStockQty.toLocaleString('vi-VN') : '0'}
                       </td>
-                      <td className="p-2.5 text-right font-mono text-slate-600 border-r border-slate-200">
+                      <td className={`${cellP} text-right font-mono text-slate-600 border-r border-slate-200`}>
                         {r.openingStockAmount > 0 ? r.openingStockAmount.toLocaleString('vi-VN') : '0'}
                       </td>
 
                       {/* 2. Nhập */}
-                      <td className="p-2.5 text-right font-mono font-bold text-emerald-700 bg-emerald-50/20">
+                      <td className={`${cellP} text-right font-mono font-bold text-emerald-700 bg-emerald-50/20`}>
                         {r.importedQty > 0 ? r.importedQty.toLocaleString('vi-VN') : '0'}
                       </td>
-                      <td className="p-2.5 text-right font-mono text-emerald-800 bg-emerald-50/20 border-r border-slate-200">
+                      <td className={`${cellP} text-right font-mono text-emerald-800 bg-emerald-50/20 border-r border-slate-200`}>
                         {r.importedAmount > 0 ? r.importedAmount.toLocaleString('vi-VN') : '0'}
                       </td>
 
                       {/* 3. Xuất */}
-                      <td className="p-2.5 text-right font-mono font-bold text-blue-700 bg-blue-50/20">
+                      <td className={`${cellP} text-right font-mono font-bold text-blue-700 bg-blue-50/20`}>
                         {r.exportedQty > 0 ? r.exportedQty.toLocaleString('vi-VN') : '0'}
                       </td>
-                      <td className="p-2.5 text-right font-mono text-blue-800 bg-blue-50/20 border-r border-slate-200">
+                      <td className={`${cellP} text-right font-mono text-blue-800 bg-blue-50/20 border-r border-slate-200`}>
                         {r.exportedAmount > 0 ? r.exportedAmount.toLocaleString('vi-VN') : '0'}
                       </td>
 
                       {/* 4. Tồn cuối = Đầu + Nhập - Xuất */}
-                      <td className="p-2.5 text-right font-mono font-black text-indigo-700 bg-indigo-50/30">
+                      <td className={`${cellP} text-right font-mono font-black text-indigo-700 bg-indigo-50/30`}>
                         {r.closingStockQty.toLocaleString('vi-VN')}
                       </td>
-                      <td className="p-2.5 text-right font-mono font-black text-indigo-900 bg-indigo-50/30 border-r border-slate-200">
+                      <td className={`${cellP} text-right font-mono font-black text-indigo-900 bg-indigo-50/30 border-r border-slate-200`}>
                         {r.closingStockAmount.toLocaleString('vi-VN')}
                       </td>
 
                       {/* Giá TB */}
-                      <td className="p-2.5 text-right font-mono text-slate-700 border-r border-slate-200">
+                      <td className={`${cellP} text-right font-mono text-slate-700 border-r border-slate-200`}>
                         {r.avgPrice.toLocaleString('vi-VN')}
                       </td>
 
                       {/* 5. Lý thuyết */}
-                      <td className="p-2.5 text-right font-mono text-purple-700 bg-purple-50/20">
+                      <td className={`${cellP} text-right font-mono text-purple-700 bg-purple-50/20`}>
                         {r.theoreticalNormPerGuest > 0 ? r.theoreticalNormPerGuest.toFixed(3) : '—'}
                       </td>
-                      <td className="p-2.5 text-right font-mono text-purple-900 bg-purple-50/20 border-r border-slate-200">
+                      <td className={`${cellP} text-right font-mono text-purple-900 bg-purple-50/20 border-r border-slate-200`}>
                         {r.theoreticalTotalAmount > 0 ? r.theoreticalTotalAmount.toLocaleString('vi-VN') : '—'}
                       </td>
 
                       {/* 6. Thực tế */}
-                      <td className="p-2.5 text-right font-mono text-sky-700 bg-sky-50/20">
+                      <td className={`${cellP} text-right font-mono text-sky-700 bg-sky-50/20`}>
                         {r.actualUsagePerGuest > 0 ? r.actualUsagePerGuest.toFixed(3) : '—'}
                       </td>
-                      <td className="p-2.5 text-right font-mono text-sky-900 bg-sky-50/20 border-r border-slate-200">
+                      <td className={`${cellP} text-right font-mono text-sky-900 bg-sky-50/20 border-r border-slate-200`}>
                         {r.actualUsagePerGuestAmount > 0
                           ? r.actualUsagePerGuestAmount.toLocaleString('vi-VN')
                           : '—'}
@@ -696,18 +796,19 @@ export const AutoNXTTable: React.FC<AutoNXTTableProps> = ({
 
                       {/* 7. So sánh (Lệch âm là vượt định mức / thất thoát) */}
                       <td
-                        className={`p-2.5 text-right font-mono font-bold ${
+                        className={`${cellP} text-right font-mono font-bold ${
                           r.diffPerGuest < 0 ? 'text-rose-600' : 'text-emerald-600'
                         }`}
                       >
                         {r.diffPerGuest !== 0 ? (r.diffPerGuest > 0 ? `+${r.diffPerGuest.toFixed(3)}` : r.diffPerGuest.toFixed(3)) : '0.000'}
                       </td>
 
+                      {/* Cột Cuối: Lệch Tổng Tiền (Freeze right-0) */}
                       <td
-                        className={`p-2.5 text-right font-mono font-black ${
+                        className={`${cellP} text-right font-mono font-black sticky right-0 z-20 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)] ${
                           r.diffTotalAmount < 0
-                            ? 'text-rose-700 bg-rose-100/80 font-black'
-                            : 'text-emerald-700 bg-emerald-50/40'
+                            ? 'text-rose-700 bg-rose-100 font-black'
+                            : 'text-emerald-700 bg-white group-hover:bg-slate-50'
                         }`}
                       >
                         {r.diffTotalAmount < 0 ? (
@@ -725,6 +826,34 @@ export const AutoNXTTable: React.FC<AutoNXTTableProps> = ({
               )}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* 4 Ô CHỮ KÝ CHUẨN A4 LANDSCAPE (TASK-PC-08) */}
+      <div className="hidden print:grid grid-cols-4 gap-4 mt-8 pt-4 border-t border-slate-300 text-center text-xs print-avoid-break">
+        <div className="space-y-1">
+          <span className="font-bold block uppercase text-slate-800">Người Lập Biểu</span>
+          <span className="text-[10px] text-slate-500 italic block">(Ký, ghi rõ họ tên)</span>
+          <div className="h-16" />
+          <span className="font-bold text-slate-700">Kế toán kho</span>
+        </div>
+        <div className="space-y-1">
+          <span className="font-bold block uppercase text-slate-800">Thủ Kho</span>
+          <span className="text-[10px] text-slate-500 italic block">(Ký, ghi rõ họ tên)</span>
+          <div className="h-16" />
+          <span className="font-bold text-slate-700">Thủ kho chi nhánh</span>
+        </div>
+        <div className="space-y-1">
+          <span className="font-bold block uppercase text-slate-800">Kế Toán Trưởng</span>
+          <span className="text-[10px] text-slate-500 italic block">(Ký, ghi rõ họ tên)</span>
+          <div className="h-16" />
+          <span className="font-bold text-slate-700">Vũ Thủy</span>
+        </div>
+        <div className="space-y-1">
+          <span className="font-bold block uppercase text-slate-800">Giám Đốc Duyệt</span>
+          <span className="text-[10px] text-slate-500 italic block">(Ký, đóng dấu)</span>
+          <div className="h-16" />
+          <span className="font-bold text-slate-700">Ban Giám Đốc Sen Việt</span>
         </div>
       </div>
 

@@ -35,7 +35,13 @@ import {
   Eye,
   Flame,
   Scale,
+  Boxes,
+  ArrowRight,
 } from 'lucide-react';
+
+export interface BranchManagerCenterProps {
+  onNavigateToWarehouse?: () => void;
+}
 
 export interface ShiftAttendance {
   id: number;
@@ -273,7 +279,7 @@ const INITIAL_EXAMS: SkillExamRecord[] = [
   },
 ];
 
-export const BranchManagerCenter: React.FC = () => {
+export const BranchManagerCenter: React.FC<BranchManagerCenterProps> = ({ onNavigateToWarehouse }) => {
   const { user } = useAuth();
   const { showSuccess, showError } = useNotification();
 
@@ -635,6 +641,22 @@ export const BranchManagerCenter: React.FC = () => {
               <span className="flex items-center gap-1">
                 <Clock className="w-3.5 h-3.5 text-emerald-400" /> Ca Sáng (08:00 - 16:30) • 18 Nhân Sự Trực
               </span>
+            </div>
+
+            {/* Quick Action: Chuyển nhanh đến phân hệ Kho cơ sở */}
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (onNavigateToWarehouse) onNavigateToWarehouse();
+                  else window.dispatchEvent(new CustomEvent('app-navigate', { detail: 'warehouse' }));
+                }}
+                className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white font-extrabold text-xs shadow-md transition-all active:scale-95"
+              >
+                <Boxes className="w-4 h-4 text-indigo-200" />
+                <span>Xem Kho Cơ Sở & Lô Hàng</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
             </div>
           </div>
 
